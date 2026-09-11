@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- BLE: en Android 12+ basta con los permisos nuevos; ACCESS_FINE_LOCATION
+         solo se pide en versiones anteriores, donde el escaneo lo exigia. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Localizacion: ya no solo para el escaneo BLE antiguo. Desde que la descarga
+         registra la posicion en los metadatos hace falta en cualquier version, asi que el
+         tope de maxSdkVersion desaparece. El neverForLocation de BLUETOOTH_SCAN se queda:
+         sigue siendo cierto que el escaneo no se usa para deducir posicion. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+
+    <application
+        android:label="GlacioTools"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GlacioTools">
+        <!-- adjustResize: sin esto Android DESPLAZA la ventana para descubrir el campo
+             enfocado, y la cabecera y las pestanas se salen por arriba. Al redimensionar,
+             el terminal cede el espacio que haga falta, porque lleva weight(1f). -->
+        <activity
+            android:name=".app.MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

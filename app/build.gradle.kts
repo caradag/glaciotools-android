@@ -1,0 +1,69 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "cl.umag.glaciertemp"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "cl.umag.glaciertemp"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "0.1"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        debug {
+            // El transporte TCP de depuracion solo existe en debug: habla con
+            // tools/fake_glaciertemp.py, que el emulador alcanza en 10.0.2.2.
+            buildConfigField("boolean", "ENABLE_TCP_TRANSPORT", "true")
+        }
+        release {
+            isMinifyEnabled = false
+            buildConfigField("boolean", "ENABLE_TCP_TRANSPORT", "false")
+        }
+    }
+
+    buildFeatures { compose = true; buildConfig = true }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+    kotlinOptions { jvmTarget = "11" }
+    sourceSets["main"].kotlin.srcDir("src/main/kotlin")
+    sourceSets["androidTest"].kotlin.srcDir("src/androidTest/kotlin")
+}
+
+dependencies {
+    implementation(project(":core"))
+    implementation(project(":transport"))
+    implementation(project(":transport-android"))
+
+    val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
+    implementation(composeBom)
+    androidTestImplementation(composeBom)
+
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
+    implementation("androidx.activity:activity-compose:1.9.2")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // Espresso < 3.7 usa reflexion sobre InputManager.getInstance(), que ya no existe en
+    // Android moderno: el test instrumentado moria con NoSuchMethodException en API 37.
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+}

@@ -1,0 +1,23 @@
+# Artefactos de compilacion
+build/
+.gradle/
+.kotlin/
+local.properties
+*.apk
+*.aab
+
+# Firmas: NUNCA en el repositorio
+*.jks
+*.keystore
+keystore.properties
+
+# Herramientas y editores
+.idea/
+*.iml
+.DS_Store
+__pycache__/
+*.pyc
+
+# Salidas de las pruebas y capturas
+/samples/*.hex
+/samples/*.bin
