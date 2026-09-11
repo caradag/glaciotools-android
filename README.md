@@ -4,7 +4,19 @@ App que se conecta a la placa GlacierTemp por Bluetooth LE y por cable (USB OTG)
 descarga el log en binario -- completo o por rango --, lo exporta a CSV, lo visualiza
 y ofrece un front-end para los comandos de configuracion.
 
+Requiere **firmware 3.0 o posterior** (protocolo 4):
+https://github.com/caradag/glaciertemp-firmware
+
 Plan completo: `electronics-kb/plans/app-android-glaciertemp.md` en el KB.
+
+## Compilar
+
+    source ~/.glaciertemp-app-env.sh
+    ./gradlew :core:test :transport:test     # 176 tests, sin hardware ni emulador
+    ./gradlew :app:assembleDebug             # APK en app/build/outputs/apk/debug/
+
+Las pruebas de punta a punta arrancan `tools/fake_glaciertemp.py`, que habla el mismo
+protocolo que la placa: no hacen falta ni el telefono ni el equipo.
 
 ## Entorno
 
