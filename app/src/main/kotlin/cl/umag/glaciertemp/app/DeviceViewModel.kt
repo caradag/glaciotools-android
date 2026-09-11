@@ -415,6 +415,26 @@ class DeviceViewModel : ViewModel() {
         _state.value = _state.value.copy(error = aviso, status = "No answer from the board")
     }
 
+    /**
+     * Cierra el ciclo del terminal al terminar CUALQUIER operacion: vacia lo que el espia
+     * tenga a medias y publica el buffer en la pantalla.
+     *
+     * Son dos cosas distintas y hacian falta las dos. `tap.flush()` saca del espia la linea
+     * que no acabo en salto de linea; `flushTerminal()` publica el buffer en el estado. Y el
+     * publicado esta limitado a una vez cada 150 ms para que un volcado de miles de lineas
+     * no repinte la pantalla por cada una -- con lo que el ULTIMO tramo, el que llega cuando
+     * ya no viene nada mas detras, se quedaba dentro de esa ventana y no se veia nunca. Por
+     * eso cambiar el intervalo no mostraba la respuesta de la placa: estaba en el buffer,
+     * sin publicar.
+     *
+     * Va en launchGuarded y no en cada ruta por lo mismo que el espia va en el transporte:
+     * lo que hay que recordar hacer en cada sitio acaba olvidandose en alguno.
+     */
+    private fun publicarTerminal() {
+        tap?.flush()
+        flushTerminal()
+    }
+
     private fun flushTerminal() {
         lastTerminalFlush = System.currentTimeMillis()
         _state.value = _state.value.copy(terminal = terminalBuffer.toList())
@@ -452,8 +472,7 @@ class DeviceViewModel : ViewModel() {
         // El resto de linea se guarda entre trozos porque un fragmento puede cortar una
         // linea por la mitad, y pintarla partida en dos desalinea las columnas.
         val reply = String(s.exchange(cmd, quietMs = 800, overallTimeoutMs = 10 * 60_000))
-        tap?.flush()
-        flushTerminal()
+        publicarTerminal()
         if (reply.isBlank()) {
             reportarSilencio("the command \"$cmd\"")
         }
@@ -519,7 +538,7 @@ class DeviceViewModel : ViewModel() {
     fun checkClock() = launchGuarded("Reading the board clock...") {
         val s = checkNotNull(session) { "not connected" }
         val reply = String(s.exchange(Protocol.TIME, quietMs = 800))
-        tap?.flush()
+        publicarTerminal()
         val boardNow = BoardClock.parse(reply)
         if (boardNow == null) {
             reportarSilencio("the TIME command")
@@ -741,7 +760,7 @@ class DeviceViewModel : ViewModel() {
                     isCancelled = { session?.cancelled == true },
                 )
             }
-            tap?.flush()
+            publicarTerminal()
             val resumen = buildString {
                 append("${r.recordsWritten} records written")
                 if (r.recordsRejected > 0) append("  ·  ${r.recordsRejected} dropped (bad checksum)")
@@ -792,7 +811,7 @@ class DeviceViewModel : ViewModel() {
         val s = checkNotNull(session) { "not connected" }
         spec.validate(value)?.let { error(it) }
         val reply = s.writeVariable(spec, value)
-        tap?.flush()
+        publicarTerminal()
         if (reply.isBlank()) {
             reportarSilencio("the ${spec.code} command")
             return@launchGuarded
@@ -980,14 +999,16 @@ class DeviceViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { block() }
+                publicarTerminal()
                 _state.value = _state.value.copy(busy = false)
             } catch (e: cl.umag.glaciertemp.transport.DownloadCancelled) {
                 // Cancelar no es fallar: no se pinta en rojo.
+                publicarTerminal()
                 _state.value = _state.value.copy(
                     busy = false, progress = null,
                     status = "Download aborted after ${e.recordsDone} records")
             } catch (e: Throwable) {
-                tap?.flush()
+                publicarTerminal()
                 // Un fallo por SILENCIO tiene casi siempre una sola causa: la placa duerme y
                 // la consola solo escucha 30 s tras un reinicio. Decir "no respondio" a
                 // secas manda a buscarlo en el cable o en el comando, que es donde no esta.

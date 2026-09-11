@@ -58,6 +58,18 @@ class AppFlowTest {
         rule.onNodeWithTag("set-INT").performScrollTo().performClick()
         waitForText("INT = 900", 15_000)
 
+        // 3b. Y la respuesta de la placa tiene que verse en el TERMINAL, no solo en la linea
+        // de estado. El publicado a la pantalla esta limitado a una vez cada 150 ms para que
+        // un volcado largo no repinte por cada linea, y el ultimo tramo --el que llega
+        // cuando ya no viene nada detras-- se quedaba dentro de esa ventana sin publicar.
+        rule.onNodeWithTag("tab-terminal").performClick()
+        waitForText("Interval between measurements", 10_000)
+        // El eco de lo ENVIADO tambien: el terminal ensena los dos sentidos.
+        rule.onAllNodesWithText("INT=900", substring = true)
+            .fetchSemanticsNodes().isNotEmpty()
+        rule.onNodeWithTag("tab-device").performClick()
+        rule.waitForIdle()
+
         // 4. Descarga por rango: el caso habitual, no el volcado completo.
         rule.onNodeWithTag("range-from").performScrollTo().performTextInput("10")
         rule.onNodeWithTag("range-to").performTextInput("29")
@@ -146,6 +158,17 @@ class AppFlowTest {
         rule.onNodeWithTag("var-TZN").assertDoesNotExist()
         rule.onNodeWithTag("var-INT").performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("raw-log").assertDoesNotExist()
+
+        // 12. Volver al terminal conserva la posicion del scroll en vez de barrer de arriba
+        // abajo otra vez. Se comprueba que el primer elemento visible NO es el cero, que es
+        // donde arrancaba el barrido cada vez que se entraba.
+        rule.onNodeWithTag("tab-terminal").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("tab-device").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("tab-terminal").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("terminal").assertIsDisplayed()
     }
 
     /**

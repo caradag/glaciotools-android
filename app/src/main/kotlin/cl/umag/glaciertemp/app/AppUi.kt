@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -104,10 +105,16 @@ fun GlacierTempApp(vm: DeviceViewModel) {
         // weight(1f) sobre el contenido: al encogerse la ventana con el teclado, lo que se
         // reduce es el contenido y no la cabecera. Sin esto las pestanas se salian por
         // arriba y no se podia volver a Device sin cerrar el teclado.
+        // El estado del scroll del terminal vive AQUI y no dentro de la pestana. Al cambiar
+        // de pestana el subarbol se destruye, asi que un rememberLazyListState de dentro
+        // volvia a nacer en la posicion cero y el efecto de seguimiento lo arrastraba otra
+        // vez hasta el final: de ahi el barrido de arriba abajo cada vez que se entraba.
+        // Manteniendolo fuera, la posicion es la misma que se dejo.
+        val terminalScroll = rememberLazyListState()
         Box(Modifier.weight(1f)) {
             when (tab) {
                 0 -> DeviceTab(vm, s)
-                else -> TerminalTab(vm, s)
+                else -> TerminalTab(vm, s, terminalScroll)
             }
         }
     }
@@ -163,10 +170,9 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
  * else every time you want to type.
  */
 @Composable
-private fun TerminalTab(vm: DeviceViewModel, s: UiState) {
+private fun TerminalTab(vm: DeviceViewModel, s: UiState, listState: LazyListState) {
     var command by remember { mutableStateOf("") }
     var historyAt by remember { mutableStateOf(-1) }
-    val listState = rememberLazyListState()
     val hScroll = rememberScrollState()
     val ctx = androidx.compose.ui.platform.LocalContext.current
     // SAF, igual que el CSV: el usuario elige donde y no hacen falta permisos.
@@ -178,8 +184,24 @@ private fun TerminalTab(vm: DeviceViewModel, s: UiState) {
         }
     }
 
+    // Al entrar en la pestana se salta al final SIN animar. Animar desde la posicion cero
+    // era el barrido de arriba abajo; y saltar es ademas lo que uno quiere al abrir un
+    // terminal: lo ultimo que dijo la placa.
+    LaunchedEffect(Unit) {
+        if (s.terminal.isNotEmpty()) listState.scrollToItem(s.terminal.lastIndex)
+    }
+
+    // Solo se sigue lo nuevo si ya se estaba mirando el final. Quien ha subido a leer algo
+    // no quiere que la linea siguiente le arrastre la pantalla: perder el sitio mientras se
+    // lee es peor que no ver la ultima linea, que ademas llega sola al bajar.
+    val alFinal by remember {
+        derivedStateOf {
+            val ultimo = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            ultimo >= listState.layoutInfo.totalItemsCount - 2
+        }
+    }
     LaunchedEffect(s.terminal.size) {
-        if (s.terminal.isNotEmpty()) listState.animateScrollToItem(s.terminal.lastIndex)
+        if (s.terminal.isNotEmpty() && alFinal) listState.scrollToItem(s.terminal.lastIndex)
     }
 
     Column(
