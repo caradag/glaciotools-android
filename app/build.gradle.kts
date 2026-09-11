@@ -12,8 +12,10 @@ android {
         applicationId = "cl.umag.glaciertemp"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1"
+        // Primera version que se distribuye para instalar. El versionCode tiene que subir
+        // en cada APK que se publique, o Android se niega a instalarlo encima del anterior.
+        versionCode = 2
+        versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
