@@ -34,6 +34,21 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Al enchufar un cable serie, Android pregunta que app abrir y GlacioTools
+                 tiene que estar en esa lista. Elegirla ahi hace ademas algo que no se ve:
+                 CONCEDE el permiso USB para ese aparato, con lo que desaparece el paso de
+                 autorizar el adaptador a mano antes de poder conectar. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <!-- La lista de aparatos la GENERA tools/gen_usb_device_filter.py a partir de
+                 los drivers de usb-serial-for-android. Escrita a mano se desfasa en
+                 silencio: la app se ofreceria para un chip que no sabe abrir, o no se
+                 ofreceria para uno que si. -->
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
         </activity>
     </application>
 </manifest>

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GENERADO por tools/gen_usb_device_filter.py. No editar a mano.
+     Fuente: usb-serial-for-android-3.9.0.aar
+     6 fabricantes, 20 productos.
+
+     Esta lista es la que hace que Android ofrezca GlacioTools al enchufar un
+     cable serie, y ademas CONCEDE el permiso USB para ese aparato: elegir la app
+     en ese dialogo ahorra el paso de autorizar el adaptador a mano. -->
+<resources>
+    <usb-device vendor-id="1027" product-id="24577" />   <!-- 0x0403:0x6001 -->
+    <usb-device vendor-id="1027" product-id="24592" />   <!-- 0x0403:0x6010 -->
+    <usb-device vendor-id="1027" product-id="24593" />   <!-- 0x0403:0x6011 -->
+    <usb-device vendor-id="1027" product-id="24596" />   <!-- 0x0403:0x6014 -->
+    <usb-device vendor-id="1027" product-id="24597" />   <!-- 0x0403:0x6015 -->
+    <usb-device vendor-id="1659" product-id="8963" />   <!-- 0x067B:0x2303 -->
+    <usb-device vendor-id="1659" product-id="9123" />   <!-- 0x067B:0x23A3 -->
+    <usb-device vendor-id="1659" product-id="9139" />   <!-- 0x067B:0x23B3 -->
+    <usb-device vendor-id="1659" product-id="9155" />   <!-- 0x067B:0x23C3 -->
+    <usb-device vendor-id="1659" product-id="9171" />   <!-- 0x067B:0x23D3 -->
+    <usb-device vendor-id="1659" product-id="9187" />   <!-- 0x067B:0x23E3 -->
+    <usb-device vendor-id="1659" product-id="9203" />   <!-- 0x067B:0x23F3 -->
+    <usb-device vendor-id="4292" product-id="60000" />   <!-- 0x10C4:0xEA60 -->
+    <usb-device vendor-id="4292" product-id="60016" />   <!-- 0x10C4:0xEA70 -->
+    <usb-device vendor-id="4292" product-id="60017" />   <!-- 0x10C4:0xEA71 -->
+    <usb-device vendor-id="6018" product-id="19728" />   <!-- 0x1782:0x4D10 -->
+    <usb-device vendor-id="6018" product-id="19730" />   <!-- 0x1782:0x4D12 -->
+    <usb-device vendor-id="6353" product-id="20500" />   <!-- 0x18D1:0x5014 -->
+    <usb-device vendor-id="6790" product-id="21795" />   <!-- 0x1A86:0x5523 -->
+    <usb-device vendor-id="6790" product-id="29987" />   <!-- 0x1A86:0x7523 -->
+
+    <!-- CDC-ACM se reconoce por CLASE y no por identificador: es un estandar, no
+         un chip concreto, y CdcAcmSerialDriver lo prueba igual. La clase 2 a nivel
+         de DISPOSITIVO son los de comunicaciones, que es justo lo que se busca. -->
+    <usb-device class="2" />
+</resources>

@@ -21,6 +21,27 @@ class MainActivity : ComponentActivity() {
     private val askLocationPermission =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
+    /**
+     * Cuando el sistema lanza la app porque se ha enchufado un cable serie.
+     *
+     * La actividad es `singleTop` por defecto en su modo estandar: con la app ya abierta,
+     * Android crea OTRA instancia en vez de reutilizarla, asi que hace falta atender tambien
+     * onNewIntent. Sin esto, enchufar el cable con la app delante no refrescaba la lista y
+     * el adaptador no aparecia hasta pulsar Scan.
+     */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        atenderCableEnchufado(intent)
+    }
+
+    private fun atenderCableEnchufado(intent: android.content.Intent?) {
+        if (intent?.action != android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        // Llegar por aqui significa que el usuario eligio GlacioTools en el dialogo del
+        // sistema, y eso YA concede el permiso para ese aparato: no hay que volver a pedirlo.
+        vm.refreshUsb()
+    }
+
     /** Sin insistir: denegarlo degrada los metadatos, no la funcion principal. */
     private fun askLocation() {
         val src = vm.location as? AndroidLocationSource ?: return
@@ -43,6 +64,7 @@ class MainActivity : ComponentActivity() {
         askLocation()
         vm.runningOnEmulator = isEmulator()
         vm.refreshUsb()
+        atenderCableEnchufado(intent)
         setContent {
             GlacioToolsTheme {
                 Surface { GlacierTempApp(vm) }
