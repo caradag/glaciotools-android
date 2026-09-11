@@ -79,6 +79,9 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
     private fun Location.toFix(fromSatellites: Boolean = false): GeoFix = GeoFix(
         latitude = latitude,
         longitude = longitude,
+        // hasAltitude() y no `altitude` a secas: sin arreglo tridimensional Android
+        // devuelve 0.0, que a nivel del mar es indistinguible de una medida buena.
+        altitudeMetres = if (hasAltitude()) altitude else null,
         accuracyMetres = if (hasAccuracy()) accuracy.toDouble() else null,
         ageSeconds = ((System.currentTimeMillis() - time) / 1000).coerceAtLeast(0),
         clockSkewSeconds = if (fromSatellites) (time - System.currentTimeMillis()) / 1000

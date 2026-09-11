@@ -27,6 +27,24 @@ enum class ClockReference(val label: String) {
 data class GeoFix(
     val latitude: Double,
     val longitude: Double,
+    // A partir de aqui, SOLO por nombre. Insertar un campo en medio de una lista de Double
+    // cambia en silencio el significado de cualquier llamada posicional: al anadir la
+    // altitud, `GeoFix(lat, lon, 12.0, 5)` paso a decir "altitud 12 m" en vez de
+    // "exactitud 12 m", y solo se detecto porque el cuarto argumento era un Int.
+    // Kotlin no tiene forma de exigirlo, asi que queda escrito aqui.
+    /**
+     * Altitud sobre el elipsoide WGS84 en metros, o null si el arreglo no la trae.
+     *
+     * Null y no cero: en un glaciar, cero es una altitud PLAUSIBLE y un dato ausente
+     * disfrazado de medida es peor que un hueco. Un arreglo de red casi nunca la da, y uno
+     * de GPS con pocos satelites tampoco.
+     *
+     * Es altura sobre el ELIPSOIDE y no sobre el nivel del mar: el GPS mide contra el
+     * elipsoide, y la diferencia con el geoide llega a decenas de metros. Se anota tal cual
+     * para que quien la use sepa contra que esta referida y pueda convertirla si le hace
+     * falta.
+     */
+    val altitudeMetres: Double? = null,
     val accuracyMetres: Double? = null,
     val ageSeconds: Long = 0,
     /**
@@ -72,6 +90,29 @@ data class DownloadMetadata(
             val r = referenceTime ?: return null
             return Duration.between(r, b).seconds
         }
+
+    /**
+     * La posicion en una linea, y la misma que va al CSV.
+     *
+     * Se formatea AQUI y no en la pantalla ni en el exportador para que las dos vistas no
+     * puedan divergir: lo que se lee en las estadisticas es exactamente lo que quedara
+     * escrito en la cabecera del fichero, y si alguna vez se anade un campo aparece en los
+     * dos sitios sin tener que acordarse del segundo.
+     */
+    fun positionDescription(): String? {
+        val p = position ?: return null
+        return "%.5f, %.5f".format(p.latitude, p.longitude)
+    }
+
+    /** Altitud, exactitud y antiguedad: lo que permite juzgar si la posicion sirve. */
+    fun positionDetail(): String? {
+        val p = position ?: return null
+        val partes = ArrayList<String>()
+        p.altitudeMetres?.let { partes += "%.0f m (WGS84)".format(it) }
+        p.accuracyMetres?.let { partes += "accuracy %.0f m".format(it) }
+        partes += "fix ${BoardClock.format(p.ageSeconds)} old"
+        return partes.joinToString("  ·  ")
+    }
 
     /** El desfase en palabras, porque un "+37 s" a secas se interpreta al reves. */
     fun offsetDescription(): String? {

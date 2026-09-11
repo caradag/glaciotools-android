@@ -49,11 +49,18 @@ object CsvExporter {
 
         val p = meta.position
         if (p != null) {
+            // Las coordenadas se formatean en DownloadMetadata y no aqui: la pantalla de
+            // estadisticas las muestra tambien, y dos `%.5f` en dos sitios acabarian
+            // divergiendo el dia que alguien cambie uno.
             val extra = ArrayList<String>()
             p.accuracyMetres?.let { extra += "accuracy %.0f m".format(it) }
             extra += "fix ${BoardClock.format(p.ageSeconds)} old"
-            add("position: %.5f, %.5f  (${extra.joinToString(", ")})"
-                    .format(p.latitude, p.longitude))
+            add("position: ${meta.positionDescription()}  (${extra.joinToString(", ")})")
+            // En su propia linea y solo si la hay. Escribirla como "0 m" cuando falta seria
+            // una altitud perfectamente plausible y un dato ausente disfrazado de medida.
+            p.altitudeMetres?.let {
+                add("altitude: %.0f m (WGS84 ellipsoid)".format(it))
+            }
         } else {
             meta.positionNote?.let { add("position: not recorded -- $it") }
         }

@@ -157,6 +157,18 @@ private fun StatsBlock(records: List<Record>, signature: Int, channel: String,
         metadata?.offsetDescription()?.let {
             StatRow("Board clock offset", it, "stat-clock-offset")
         }
+        // La posicion desde donde se descargo, con el MISMO texto que va a la cabecera del
+        // CSV: las dos vistas salen de DownloadMetadata y no pueden divergir. Solo aparece
+        // si los datos vienen de una descarga; un fichero abierto no la trae.
+        metadata?.positionDescription()?.let {
+            StatRow("Downloaded from", it, "stat-position")
+            metadata.positionDetail()?.let { d -> StatRow("", d, "stat-position-detail") }
+        }
+        if (metadata?.position == null) {
+            metadata?.positionNote?.let {
+                StatRow("Downloaded from", "no position -- $it", "stat-position")
+            }
+        }
         muestreo?.let { m ->
             StatRow("Sample interval", BoardClock.format(m.typicalSeconds), "stat-interval")
             StatRow("Largest gap", BoardClock.format(m.maxGapSeconds), "stat-maxgap")

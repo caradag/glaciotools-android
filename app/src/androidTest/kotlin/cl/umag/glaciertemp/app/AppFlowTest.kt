@@ -132,6 +132,11 @@ class AppFlowTest {
         rule.onNodeWithTag("export").performScrollTo().assertIsDisplayed()
         rule.onNodeWithTag("export-name").assertTextContains("glaciotools_", substring = true)
 
+        // 8b. La posicion de la descarga aparece entre las estadisticas, con los mismos
+        // datos que van a la cabecera del CSV. En el emulador sin GPS sale el motivo por el
+        // que no hay posicion, que es igual de informativo y tiene que salir tambien.
+        rule.onNodeWithTag("stat-position").performScrollTo().assertIsDisplayed()
+
         // 9. El desfase del reloj aparece entre las estadisticas, no solo como aviso.
         rule.onNodeWithTag("stat-clock-offset").performScrollTo()
             .assertTextContains("board", substring = true)

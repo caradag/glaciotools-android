@@ -123,7 +123,8 @@ class TimeCorrectionTest {
         val rs = records(10)
         val m = meta(rs, 37).copy(
             boardFullId = "0011223344556677",
-            position = GeoFix(-0.14231, -78.83412, accuracyMetres = 8.0, ageSeconds = 41),
+            position = GeoFix(-0.14231, -78.83412, altitudeMetres = 1247.0,
+                              accuracyMetres = 8.0, ageSeconds = 41),
         )
         val csv = CsvExporter.export(rs, SIG, m, corrected = false)
         val comentarios = csv.lines().takeWhile { it.startsWith("#") }
@@ -131,11 +132,42 @@ class TimeCorrectionTest {
         assertTrue(comentarios.any { it.contains("board: GT001-556677") })
         assertTrue(comentarios.any { it.contains("0011223344556677") })
         assertTrue(comentarios.any { it.contains("-0.14231") && it.contains("-78.83412") })
+        assertTrue(comentarios.any { it.contains("altitude: 1247 m") && it.contains("WGS84") },
+                   "la altitud tiene que ir en su propia linea y decir contra que referencia")
         assertTrue(comentarios.any { it.contains("accuracy 8 m") })
         assertTrue(comentarios.any { it.contains("41 seconds old") })
         assertTrue(comentarios.any { it.contains("clock reference: GPS") })
         assertTrue(comentarios.any { it.contains("board ahead") },
                    "el sentido del desfase tiene que ir en palabras")
+    }
+
+    @Test
+    fun `sin altitud no se escribe la linea`() {
+        val rs = records(5)
+        // Un arreglo de red casi nunca da altitud. Escribir "0 m" seria una altitud
+        // perfectamente plausible y un dato ausente disfrazado de medida.
+        val m = meta(rs, 10).copy(position = GeoFix(-53.1, -70.9, accuracyMetres = 30.0))
+        val csv = CsvExporter.export(rs, SIG, m, corrected = false)
+        assertFalse(csv.contains("altitude"))
+    }
+
+    @Test
+    fun `la posicion se formatea en un solo sitio`() {
+        // Las estadisticas del grafico y la cabecera del CSV muestran lo mismo. Si cada una
+        // lo formateara por su cuenta, acabarian divergiendo el dia que alguien toque una.
+        val rs = records(5)
+        val m = meta(rs, 10).copy(
+            position = GeoFix(-53.16895, -70.91493, altitudeMetres = 34.0,
+                              accuracyMetres = 27.0, ageSeconds = 0))
+        val enPantalla = assertNotNull(m.positionDescription())
+        val csv = CsvExporter.export(rs, SIG, m, corrected = false)
+        assertTrue(csv.lines().any { it.startsWith("#") && it.contains(enPantalla) },
+                   "el CSV no lleva el mismo texto de coordenadas que la pantalla")
+
+        val detalle = assertNotNull(m.positionDetail())
+        assertTrue(detalle.contains("34 m (WGS84)"), detalle)
+        assertTrue(detalle.contains("accuracy 27 m"), detalle)
+        assertTrue(detalle.contains("old"), detalle)
     }
 
     @Test
@@ -168,7 +200,7 @@ class TimeCorrectionTest {
         val rs = records(20)
         val m = meta(rs, 90).copy(
             note = "Prueba",
-            position = GeoFix(-53.1, -70.9, 12.0, 5),
+            position = GeoFix(-53.1, -70.9, accuracyMetres = 12.0, ageSeconds = 5),
         )
         val csv = CsvExporter.export(rs, SIG, m, corrected = true)
         assertTrue(csv.startsWith("#"))
