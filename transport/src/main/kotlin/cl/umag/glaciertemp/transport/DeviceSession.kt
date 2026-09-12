@@ -268,6 +268,16 @@ class DeviceSession(private val transport: Transport) {
          * acota cuanto se espera antes de rendirse y decirlo.
          */
         const val ABORT_DRAIN_MS = 8000
+
+        /**
+         * Lo que se espera tras mandar el CAN antes de bajar la velocidad de la linea.
+         *
+         * Solo tiene que cubrir la salida FISICA de ese byte --43 us a 230400-- y nada mas.
+         * La placa tarda unos 60 ms en volver: termina el bloque (11 ms a 230400) y su
+         * `switchBaud` reposa 50. Pasarse de ahi es perder el acuse, asi que este numero
+         * tiene que quedar MUY por debajo, no cerca.
+         */
+        const val CANCEL_SETTLE_MS = 20L
     }
 
     private val bomba = Bomba(transport).also { it.arrancar() }
@@ -280,6 +290,27 @@ class DeviceSession(private val transport: Transport) {
      * por dentro llama a `exchange`.
      */
     private val cerrojo = java.util.concurrent.locks.ReentrantLock()
+
+    /**
+     * Velocidad a la que quedo la LINEA cuando un volcado la subio, y la normal a la que hay
+     * que volver. Cero cuando la linea esta en la de siempre.
+     *
+     * Existe por el aborto. El byte de cancelacion tiene que salir a la velocidad a la que
+     * la placa esta ESCUCHANDO, que durante un volcado rapido por cable es la rapida. Si
+     * quien abandona el volcado baja la velocidad antes de mandarlo --que es lo que hacia--,
+     * el CAN sale a 115200, la placa lo lee a 230400 como un byte cualquiera y sigue
+     * volcando los ocho megabytes enteros. Por BLE no pasaba porque ahi nunca se cambia.
+     */
+    @Volatile private var volcadoRapido = 0
+    @Volatile private var volcadoNormal = 0
+
+    /** Lo declara quien sube la velocidad para un volcado, para que el aborto la conozca. */
+    fun marcarVelocidadDeVolcado(rapida: Int, normal: Int) {
+        volcadoRapido = rapida; volcadoNormal = normal
+    }
+
+    /** Y lo retira quien la baja por la via normal. */
+    fun olvidarVelocidadDeVolcado() { volcadoRapido = 0 }
 
     private inline fun <T> conElEnlace(bloque: () -> T): T {
         cerrojo.lock()
@@ -373,7 +404,26 @@ class DeviceSession(private val transport: Transport) {
      */
     fun abortarVolcado(onDiagnostic: (String) -> Unit = {}): Boolean = conElEnlace {
         cancelled = true
+        val rapida = volcadoRapido
         runCatching { transport.write(byteArrayOf(CANCEL)) }
+        if (rapida > 0) {
+            // La linea esta en la velocidad del volcado, que es justo donde tenia que salir
+            // el CAN. Ahora hay que SEGUIR a la placa de vuelta: en cuanto lo lee termina el
+            // bloque que tuviera a medias, baja a la velocidad normal y solo entonces
+            // anuncia "LOGB aborted". Ese anuncio ya viaja a la normal.
+            //
+            // Se vuelve enseguida, y no tras una espera holgada, porque los dos errores no
+            // cuestan lo mismo: volver pronto solo hace ilegible la cola del volcado --que
+            // se descarta igual-- mientras que volver tarde se come el acuse y la app diria
+            // que la placa no confirmo haber parado cuando si lo hizo.
+            runCatching { Thread.sleep(CANCEL_SETTLE_MS) }
+            bomba.descartarPendiente()
+            runCatching {
+                (transport as? BaudSwitchable)?.setBaudRate(
+                    volcadoNormal.takeIf { it > 0 } ?: DEFAULT_BAUD)
+            }
+            olvidarVelocidadDeVolcado()
+        }
         val acuse = StringBuilder()
         val limite = System.currentTimeMillis() + ABORT_DRAIN_MS
         var idle = 0
@@ -605,10 +655,12 @@ class DeviceSession(private val transport: Transport) {
         // cabecera ya llego sabemos que la placa esta hablando, asi que basta con poco; si no
         // ha llegado nada se espera algo mas, por si la orden sigue en vuelo.
         fun idleLimit(): Int = if (header != null) IDLE_AFTER_HEADER_MS else IDLE_NO_ANSWER_MS
+        val normal = info.baud.takeIf { it > 0 } ?: DEFAULT_BAUD
         fun restore() {
             if (switched) {
-                switcher!!.setBaudRate(info.baud.takeIf { it > 0 } ?: DEFAULT_BAUD)
+                switcher!!.setBaudRate(normal)
                 switched = false
+                olvidarVelocidadDeVolcado()
             }
         }
 
@@ -626,6 +678,7 @@ class DeviceSession(private val transport: Transport) {
                         header = e.header
                         if (fast > 0 && !switched) {
                             switcher!!.setBaudRate(fast); switched = true
+                            marcarVelocidadDeVolcado(fast, normal)
                         }
                     }
                     is LogbEvent.Block -> {
@@ -655,17 +708,23 @@ class DeviceSession(private val transport: Transport) {
                 }
             }
         } finally {
-            restore()
-            // El bucle termina en cuanto llegan todos los bloques, SIN esperar al "LOGB end"
-            // -- esperarlo costaba tres segundos de silencio por tramo. Pero no esperarlo no
-            // es lo mismo que no leerlo: ese texto se quedaba en el transporte y aparecia
-            // pegado al principio de la respuesta del SIGUIENTE comando, donde ademas podia
-            // estropear su parseo. Se recoge lo que ya haya llegado.
-            //
-            // Salvo cuando el cierre YA se leyo: entonces no queda nada que recoger y los
-            // 120 ms de silencio que exige el drenaje se pagan por tramo y por nada. Con
-            // tramos de una decena de registros eso es la mayor parte del tiempo de descarga.
-            if (!visteElFin) drenarCola()
+            // Al ABANDONAR no se limpia nada aqui. La placa sigue volcando, asi que drenar
+            // seria tragar basura durante dos segundos, y bajar la velocidad dejaria el byte
+            // de cancelacion sin llegar. De las dos cosas se encarga [abortarVolcado], que
+            // es quien manda ese byte y necesita la linea como esta.
+            if (!cancelled) {
+                restore()
+                // El bucle termina en cuanto llegan todos los bloques, SIN esperar al "LOGB
+                // end" -- esperarlo costaba tres segundos de silencio por tramo. Pero no
+                // esperarlo no es lo mismo que no leerlo: ese texto se quedaba en el enlace
+                // y aparecia pegado al principio de la respuesta del SIGUIENTE comando,
+                // donde ademas podia estropear su parseo. Se recoge lo que ya haya llegado.
+                //
+                // Salvo cuando el cierre YA se leyo: entonces no queda nada que recoger y
+                // los 120 ms de silencio que exige el drenaje se pagan por tramo y por nada.
+                // Con tramos de una decena de registros eso es la mayor parte del tiempo.
+                if (!visteElFin) drenarCola()
+            }
         }
 
         val h = header ?: run {

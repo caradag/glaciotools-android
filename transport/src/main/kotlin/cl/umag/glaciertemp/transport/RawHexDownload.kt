@@ -95,7 +95,11 @@ object RawHexDownload {
         val fast = if (switcher != null && fastBaud > 0) fastBaud else 0
         var switched = false
         fun restore() {
-            if (switched) { switcher!!.setBaudRate(normalBaud); switched = false }
+            if (switched) {
+                switcher!!.setBaudRate(normalBaud)
+                switched = false
+                session.olvidarVelocidadDeVolcado()
+            }
         }
 
         // Por la sesion y no por el transporte: el puerto lo lee la bomba, y una
@@ -148,7 +152,9 @@ object RawHexDownload {
         while (idle < QUIET_MS) {
             if (isCancelled()) {
                 flushLines(last = true)
-                restore()
+                // NO se baja la velocidad: la placa sigue emitiendo a la rapida y es a esa a
+                // la que tiene que llegarle el byte de cancelacion. De volver a la normal se
+                // encarga quien lo manda, que es `DeviceSession.abortarVolcado`.
                 onDiagnostic("Raw log download cancelled after $written bytes")
                 return RawHexResult(written, records, rejected, sawEof)
             }
@@ -168,6 +174,9 @@ object RawHexDownload {
                 pending.indexOf('\n', pending.indexOf("Intel HEX follows")) >= 0) {
                 switcher!!.setBaudRate(fast)
                 switched = true
+                // Para que el aborto sepa a que velocidad escucha la placa: el byte de
+                // cancelacion tiene que salir a ESTA, no a la normal.
+                session.marcarVelocidadDeVolcado(fast, normalBaud)
                 onDiagnostic("Raw log: line speed raised to $fast baud")
             }
 
