@@ -791,7 +791,72 @@ private fun DownloadCard(vm: DeviceViewModel, s: UiState) {
             if (s.advanced) {
                 RawLogRow(vm, s)
             }
+            ResetCounterRow(vm, s)
         }
+    }
+}
+
+/**
+ * Reiniciar el contador de la placa, al final de la zona de descarga.
+ *
+ * Va con un dialogo porque es irreversible desde la app, y el dialogo dice lo que de verdad
+ * pasa en vez de un "estas seguro" generico: el comando NO borra la flash, mueve el contador
+ * a cero. La descarga normal deja de alcanzar los datos, pero siguen fisicamente ahi hasta
+ * que la placa tome mas mediciones, que escriben desde el principio y los van sobrescribiendo.
+ *
+ * Esa diferencia es la que le sirve a alguien que acaba de equivocarse: el volcado crudo
+ * todavia puede rescatarlos, y solo antes de que la placa vuelva a medir.
+ */
+@Composable
+private fun ResetCounterRow(vm: DeviceViewModel, s: UiState) {
+    var confirmar by remember { mutableStateOf(false) }
+    val registros = s.info?.recordCount ?: 0L
+    val sinDescargar = s.info?.boardId != null && s.records.isEmpty()
+
+    HorizontalDivider()
+    OutlinedButton(
+        onClick = { confirmar = true },
+        enabled = !s.busy,
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = MaterialTheme.colorScheme.error),
+        modifier = Modifier.testTag("reset-counter"),
+    ) { Text("Reset counter") }
+    Text("Starts a new log. The board will record from the beginning again.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    if (confirmar) {
+        AlertDialog(
+            onDismissRequest = { confirmar = false },
+            modifier = Modifier.testTag("reset-warning"),
+            title = { Text("Reset the counter?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("The $registros records now on the board will no longer be " +
+                         "downloadable: the counter goes back to zero and Download can no " +
+                         "longer reach them.")
+                    Text("They are not erased yet. They stay in the flash until the board " +
+                         "takes its next measurements, which start writing from the " +
+                         "beginning and overwrite them one by one. Until then, the raw " +
+                         "memory dump could still recover them.")
+                    if (sinDescargar) {
+                        Text("You have not downloaded anything from this board in this " +
+                             "session. Download first.",
+                             color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmar = false; vm.resetCounter() },
+                           modifier = Modifier.testTag("reset-confirm")) {
+                    Text("Reset counter")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmar = false },
+                           modifier = Modifier.testTag("reset-cancel")) { Text("Cancel") }
+            },
+        )
     }
 }
 

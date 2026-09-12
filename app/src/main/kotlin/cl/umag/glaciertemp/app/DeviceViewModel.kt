@@ -777,6 +777,43 @@ class DeviceViewModel : ViewModel() {
             }
         }
 
+    /**
+     * Reinicia el contador de registros de la placa (comando RC).
+     *
+     * NO borra la flash: mueve el contador a cero, con lo que la descarga normal deja de
+     * poder alcanzar lo que hay escrito. Los datos siguen fisicamente ahi hasta que la placa
+     * tome mas mediciones, que vuelven a escribir desde la direccion 0 y los van
+     * sobrescribiendo uno a uno.
+     *
+     * Esa distincion es la que hace util el aviso: si se reinicia por error, el volcado
+     * crudo todavia puede rescatar los datos, pero solo antes de que la placa vuelva a
+     * medir.
+     */
+    fun resetCounter() = launchGuarded("Resetting the counter...") {
+        val s = checkNotNull(session) { "not connected" }
+        val reply = String(s.exchange(Protocol.RESET_COUNTER, quietMs = 800))
+        publicarTerminal()
+        if (reply.isBlank()) {
+            reportarSilencio("the RC command")
+            return@launchGuarded
+        }
+        // Se vuelve a leer la cabecera para que el contador que se ensena sea el de la placa
+        // y no el que teniamos guardado: si no, la tarjeta seguiria anunciando los registros
+        // de antes y la descarga ofreceria un rango que ya no existe.
+        val info = s.info()
+        _state.value = _state.value.copy(
+            info = info ?: _state.value.info,
+            // Los datos en pantalla son de ANTES del reinicio. Dejarlos con la placa ya
+            // reiniciada invita a creer que se pueden volver a descargar.
+            records = emptyList(), csvPreview = "", metadata = null, exportNote = null,
+            downloadSummary = null, batteryEstimate = null,
+            status = "Counter reset  ·  ${info?.recordCount ?: 0} records",
+        )
+        // La placa vuelve a estar sin descargar: el aviso de sincronizar el reloj tiene que
+        // volver a salir, porque el desfase de lo que grabe desde ahora aun no se ha medido.
+        downloadedFrom = null
+    }
+
     fun setBatterySettings(b: BatterySettings) {
         _state.value = _state.value.copy(battery = b)
         recomputeBattery()

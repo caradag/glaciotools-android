@@ -118,4 +118,25 @@ class SimulatorE2ETest {
             assertTrue(reply.contains("Interval between measurements (sec):"),
                        "el simulador deberia imitar a displayVars(): $reply")
         }
+
+    @Test
+    fun `reiniciar el contador deja el log a cero y lo dice la cabecera`() =
+        withSimulator("--log-size", "137") { t ->
+            val s = DeviceSession(t)
+            s.drainBanner()
+            val antes = assertNotNull(s.requireInfo())
+            assertEquals(137L, antes.recordCount)
+
+            val reply = String(s.exchange(cl.umag.glaciertemp.core.Protocol.RESET_COUNTER,
+                                          quietMs = 500))
+            assertTrue(reply.contains("Memory reset"), "respuesta inesperada de RC: <$reply>")
+
+            // Lo que importa: la app tiene que VOLVER A LEER la cabecera. Fiarse del valor
+            // guardado dejaria la tarjeta anunciando los registros de antes y la descarga
+            // ofreciendo un rango que ya no existe.
+            val despues = assertNotNull(s.info())
+            assertEquals(0L, despues.recordCount,
+                         "tras RC la cabecera sigue anunciando registros")
+            assertEquals(antes.boardId, despues.boardId, "cambio de placa, no de contador")
+        }
 }

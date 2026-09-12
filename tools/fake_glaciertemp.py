@@ -241,7 +241,11 @@ def handle(cmd, board, link, args):
     if up == "M":
         link.line("Measuring..."); link.line("OK"); return
     if up == "RC":
-        board.count = 0; link.line("Counter reset"); return
+        # El texto EXACTO de resetCount(): "Memory reset", no "Counter reset". Un simulador
+        # que contesta algo parecido pero distinto solo sirve para aprobar codigo roto.
+        board.count = 0
+        link.line("Memory reset")
+        return
     if up.startswith("TIME"):
         # Como printRTCTime(): con la etiqueta "Time:" delante.
         # --clock-offset desplaza el reloj de la placa, para probar el aviso de desfase.

@@ -174,6 +174,19 @@ class AppFlowTest {
         rule.onNodeWithTag("tab-terminal").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("terminal").assertIsDisplayed()
+        rule.onNodeWithTag("tab-device").performClick()
+        rule.waitForIdle()
+
+        // 13. Reiniciar el contador avisa ANTES de hacerlo, y se puede cancelar. Se prueba
+        // la cancelacion y no el reinicio porque el reinicio dejaria al simulador sin datos
+        // para el resto del recorrido.
+        rule.onNodeWithTag("reset-counter").performScrollTo().performClick()
+        waitForTag("reset-warning")
+        rule.onNodeWithTag("reset-cancel").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("reset-warning").assertDoesNotExist()
+        // Y el contador sigue intacto: cancelar no puede haber mandado nada.
+        rule.onNodeWithTag("record-count").assertTextContains("240", substring = true)
     }
 
     /**
