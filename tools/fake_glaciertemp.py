@@ -28,7 +28,7 @@ NORMAL_BAUD = 115200
 FAST_BAUD = 230400
 # Version de firmware y de protocolo, en UN solo sitio. Estaban escritas dos veces y ya
 # habian divergido: INFO decia fw=2.7 proto=2 y VER seguia contestando fw=2.0 proto=1.
-FW_VERSION = "3.1"
+FW_VERSION = "3.2"
 PROTOCOL = 4
 # Identidad del hardware, como en el firmware: tipo + revision de placa, NO la del firmware.
 BOARD_TYPE = "GT"
@@ -235,7 +235,10 @@ def handle(cmd, board, link, args):
     if up == "CALC":
         memory_lifetime(board, link); return
     if up == "ID":
-        link.line(f"{board.uid:016X}"); return
+        # La MISMA linea que el arranque, como printBoardIdStandalone(): quien teclea ID
+        # quiere el corto sin perder el completo.
+        link.line(f"Board ID: {short_id(board.uid)}  (full {board.uid:016X})")
+        return
     if up == "VER":
         link.line(f"fw={FW_VERSION} proto={PROTOCOL}"); return
     if up == "M":

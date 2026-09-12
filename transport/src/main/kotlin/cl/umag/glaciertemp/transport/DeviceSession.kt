@@ -146,6 +146,46 @@ class DeviceSession(private val transport: Transport) {
         const val ABORT_DRAIN_MS = 8000
     }
 
+    /**
+     * Un solo lector a la vez sobre el enlace.
+     *
+     * Hace falta desde que el terminal escucha de forma continua: si el lector de reposo y
+     * una operacion leyeran a la vez, el primero se quedaria con los primeros bytes de la
+     * respuesta y la operacion los daria por perdidos. Con el cerrojo eso no puede pasar --
+     * el lector de reposo solo lee cuando no hay operacion en curso, y los bytes que
+     * recoge son por definicion no solicitados.
+     *
+     * Reentrante a proposito: `download` toma el cerrojo y por dentro llama a `exchange`,
+     * que lo vuelve a tomar.
+     */
+    private val cerrojo = java.util.concurrent.locks.ReentrantLock(/* fair = */ true)
+
+    private inline fun <T> conElEnlace(bloque: () -> T): T {
+        cerrojo.lock()
+        try { return bloque() } finally { cerrojo.unlock() }
+    }
+
+    /**
+     * Lectura para el lector de REPOSO del terminal: lo que la placa diga por su cuenta.
+     *
+     * Devuelve vacio sin esperar si hay una operacion en curso. Insistir en el cerrojo
+     * dejaria al lector de reposo compitiendo con la descarga por cada trozo.
+     */
+    fun leerEnReposo(timeoutMs: Int): ByteArray {
+        // tryLock(0, ...) y NO tryLock(): el segundo se cuela por delante de quien ya esta
+        // esperando --esta documentado, y ocurre incluso con el cerrojo declarado justo--
+        // asi que un lector de reposo insistiendo puede dejar a una operacion esperando
+        // indefinidamente. La version con plazo respeta la cola.
+        if (!cerrojo.tryLock(0, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            return ByteArray(0)
+        }
+        try {
+            return transport.read(timeoutMs)
+        } finally {
+            cerrojo.unlock()
+        }
+    }
+
     /** Lee hasta que el enlace queda en silencio [quietMs]; es como termina cada respuesta. */
     fun exchange(
         command: String?,
@@ -161,19 +201,21 @@ class DeviceSession(private val transport: Transport) {
         // Lo que haya en la cola ANTES de mandar el comando es, por definicion, de la
         // operacion anterior. Leerlo como parte de la respuesta es lo que hacia aparecer un
         // "LOGB end" delante del resultado, y con otro texto podria haber falseado un valor.
-        if (command != null) {
-            drenarCola(quietMs = 40)
-            transport.writeLine(command)
+        return conElEnlace {
+            if (command != null) {
+                drenarCola(quietMs = 40)
+                transport.writeLine(command)
+            }
+            val out = java.io.ByteArrayOutputStream()
+            val deadline = System.currentTimeMillis() + overallTimeoutMs
+            var idle = 0
+            while (idle < quietMs && System.currentTimeMillis() < deadline) {
+                val chunk = transport.read(100)
+                if (chunk.isEmpty()) idle += 100
+                else { out.write(chunk); onChunk(chunk); idle = 0 }
+            }
+            out.toByteArray()
         }
-        val out = java.io.ByteArrayOutputStream()
-        val deadline = System.currentTimeMillis() + overallTimeoutMs
-        var idle = 0
-        while (idle < quietMs && System.currentTimeMillis() < deadline) {
-            val chunk = transport.read(100)
-            if (chunk.isEmpty()) idle += 100
-            else { out.write(chunk); onChunk(chunk); idle = 0 }
-        }
-        return out.toByteArray()
     }
 
     fun drainBanner() { exchange(null, quietMs = 600) }
@@ -213,7 +255,7 @@ class DeviceSession(private val transport: Transport) {
      * Con un firmware anterior a 3.1 ese acuse no llega nunca, y entonces esto degrada a lo
      * unico posible: tragarse la cola hasta que el enlace calle. De ahi el tope de tiempo.
      */
-    fun abortarVolcado(onDiagnostic: (String) -> Unit = {}): Boolean {
+    fun abortarVolcado(onDiagnostic: (String) -> Unit = {}): Boolean = conElEnlace {
         cancelled = true
         runCatching { transport.write(byteArrayOf(CANCEL)) }
         val acuse = StringBuilder()
@@ -233,7 +275,7 @@ class DeviceSession(private val transport: Transport) {
                 // Todavia puede quedar el resto de la linea: se recoge y se termina.
                 drenarCola(quietMs = 150, maxMs = 800)
                 onDiagnostic("Dump cancelled by the board")
-                return true
+                return@conElEnlace true
             }
         }
         val sobrante = drenarCola(quietMs = 300, maxMs = ABORT_DRAIN_MS)
@@ -241,7 +283,7 @@ class DeviceSession(private val transport: Transport) {
             onDiagnostic("Dump aborted; discarded ${acuse.length + sobrante.size} bytes " +
                          "still in the link")
         }
-        return false
+        false
     }
 
     fun info(): DeviceInfo? = DeviceInfo.parse(String(exchange(Protocol.METADATA)))
@@ -265,7 +307,10 @@ class DeviceSession(private val transport: Transport) {
         return i
     }
 
-    fun boardId(): String = String(exchange(Protocol.BOARD_ID)).trim()
+    // boardId() retirado. No lo llamaba nadie --la identidad sale de la cabecera INFO, que
+    // es el contrato de maquina-- y desde que el comando ID devuelve la linea con el corto y
+    // el completo, una funcion que prometiera "el identificador" y devolviera texto con
+    // formato solo serviria para que alguien la usara mal.
 
     fun readVariable(spec: VariableSpec): String =
         String(exchange(spec.readCommand())).trim()
@@ -318,6 +363,11 @@ class DeviceSession(private val transport: Transport) {
         val total = b - a + 1
         val started = System.nanoTime()
         val sugerido = transport.recordsPerRequest
+        // Toda la descarga bajo el cerrojo: `downloadRange` lee la linea directamente, no
+        // solo a traves de exchange, y el lector de reposo del terminal no puede colarse a
+        // robar bytes de un bloque a medias.
+        cerrojo.lock()
+        try {
         // Solo se salta el bucle cuando el transporte NO trocea, como el cable. Si trocea, se
         // pasa por el aunque todo quepa en un tramo: de lo contrario una descarga corta no
         // podia adaptarse, y es justo la que se hace para probar si el enlace aguanta.
@@ -325,6 +375,7 @@ class DeviceSession(private val transport: Transport) {
             return downloadRange(info, a, b, retries, 0L, total, started, 0,
                                  onDiagnostic, onProgress)
         }
+
 
         val out = java.io.ByteArrayOutputStream()
         var done = 0L
@@ -407,6 +458,9 @@ class DeviceSession(private val transport: Transport) {
         finalChunk = ultimoUsado
         initialChunk = inicial
         return out.toByteArray()
+        } finally {
+            cerrojo.unlock()
+        }
     }
 
     /** Un unico LOGB. [alreadyDone]/[grandTotal] son solo para que el progreso sea global. */

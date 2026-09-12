@@ -330,6 +330,7 @@ class DeviceViewModel : ViewModel() {
 
         transport = espiado; session = s
         tap = espiado
+        arrancarEscucha(s)
         _state.value = _state.value.copy(
             boardTime = boardNow?.let {
                 java.time.format.DateTimeFormatter
@@ -831,8 +832,11 @@ class DeviceViewModel : ViewModel() {
     }
 
     fun disconnect() {
+        // La escucha PRIMERO: si se cierra el transporte con el bucle vivo, su siguiente
+        // lectura falla sobre un enlace ya cerrado y eso sale como error en pantalla.
+        escucha?.cancel(); escucha = null
         runCatching { transport?.close() }
-        transport = null; session = null
+        transport = null; session = null; tap = null
         // El terminal y el historial SOBREVIVEN a la desconexion: si algo fallo, el registro
         // de lo que dijo la placa es justo lo que hace falta despues, y borrarlo al soltar el
         // enlace obliga a reproducir el fallo para volver a verlo.
@@ -858,6 +862,42 @@ class DeviceViewModel : ViewModel() {
             variables = _state.value.variables + (spec.code to read),
             status = "${spec.code} = $read",
         )
+    }
+
+    private var escucha: kotlinx.coroutines.Job? = null
+
+    /**
+     * Escucha continua del enlace, para que el terminal muestre lo que la placa diga POR SU
+     * CUENTA y no solo lo que responde a un comando.
+     *
+     * El caso que lo hacia falta: pulsar RESET en la placa produce todo el bloque de
+     * arranque --version, memoria detectada, identificador, estado de la flash, hora-- y esa
+     * salida se quedaba en el enlace hasta que alguien escribia un comando, apareciendo
+     * entonces delante de su respuesta. Con una escucha continua sale cuando ocurre, que es
+     * ademas cuando significa algo.
+     *
+     * `leerEnReposo` devuelve vacio sin esperar si hay una operacion en curso, asi que este
+     * bucle no compite por los bytes: los unicos que recoge son los no solicitados.
+     */
+    private fun arrancarEscucha(s: DeviceSession) {
+        escucha?.cancel()
+        escucha = viewModelScope.launch {
+            while (true) {
+                val datos = runCatching {
+                    withContext(Dispatchers.IO) { s.leerEnReposo(250) }
+                }.getOrNull() ?: break
+                if (datos.isNotEmpty()) {
+                    // El espia ya lo ha puesto en el buffer; aqui solo se publica, porque el
+                    // publicado va limitado a una vez cada 150 ms y sin esto la ultima
+                    // tanda se quedaria sin salir.
+                    tap?.flush()
+                    flushTerminal()
+                } else {
+                    // Sin datos: una pausa corta para no girar en vacio consumiendo bateria.
+                    kotlinx.coroutines.delay(150)
+                }
+            }
+        }
     }
 
     /**
