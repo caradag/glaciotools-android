@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyListState
@@ -191,17 +192,32 @@ private fun TerminalTab(vm: DeviceViewModel, s: UiState, listState: LazyListStat
         if (s.terminal.isNotEmpty()) listState.scrollToItem(s.terminal.lastIndex)
     }
 
-    // Solo se sigue lo nuevo si ya se estaba mirando el final. Quien ha subido a leer algo
-    // no quiere que la linea siguiente le arrastre la pantalla: perder el sitio mientras se
-    // lee es peor que no ver la ultima linea, que ademas llega sola al bajar.
-    val alFinal by remember {
-        derivedStateOf {
+    // "Seguir lo nuevo" es un estado PROPIO y no una lectura del layout.
+    //
+    // Antes se decidia mirando `layoutInfo` en el momento de anadir lineas, y ahi esa
+    // informacion todavia describe la lista ANTERIOR: el contador de elementos ya ha
+    // crecido pero los visibles no, asi que la comprobacion "estoy al final" daba falso
+    // justo cuando acababa de llegar la respuesta. De ahi que unas veces siguiera y otras
+    // no, y que a veces se quedara a medio camino.
+    //
+    // Ahora solo se reevalua cuando el usuario TERMINA de arrastrar, que es un instante en
+    // el que el layout ya esta asentado y es ademas el unico momento en que su intencion
+    // cambia de verdad.
+    var seguir by remember { mutableStateOf(true) }
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress && s.terminal.isNotEmpty()) {
             val ultimo = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            ultimo >= listState.layoutInfo.totalItemsCount - 2
+            seguir = ultimo >= listState.layoutInfo.totalItemsCount - 2
         }
     }
-    LaunchedEffect(s.terminal.size) {
-        if (s.terminal.isNotEmpty() && alFinal) listState.scrollToItem(s.terminal.lastIndex)
+
+    // Se sigue mientras lleguen lineas Y no se haya subido a leer. El bucle repite mientras
+    // el tamano cambie: las lineas se publican en tandas cada 150 ms, y un solo salto se
+    // queda corto en cuanto llega la siguiente tanda -- ese era el "no llega hasta el final".
+    LaunchedEffect(s.terminal.size, seguir) {
+        if (s.terminal.isNotEmpty() && seguir) {
+            listState.scrollToItem(s.terminal.lastIndex)
+        }
     }
 
     Column(
@@ -221,25 +237,31 @@ private fun TerminalTab(vm: DeviceViewModel, s: UiState, listState: LazyListStat
                      Modifier.padding(12.dp).testTag("terminal-empty"),
                      style = MaterialTheme.typography.bodySmall)
             } else {
-                LazyColumn(
-                    state = listState,
-                    // Un solo scroll horizontal para TODAS las lineas: puesto en cada linea,
-                    // cada una se desplazaria por su cuenta y las columnas dejarian de
-                    // alinearse, que es justo lo que hace legible un volcado.
-                    modifier = Modifier.fillMaxSize().padding(8.dp)
-                        .horizontalScroll(hScroll).testTag("terminal"),
-                ) {
-                    items(s.terminal) { line ->
-                        Text(
-                            line.text,
-                            fontFamily = FontFamily.Monospace, fontSize = 11.sp,
-                            // Sin ajuste de linea: una fila del log partida en dos deja de
-                            // poder leerse por columnas.
-                            softWrap = false, maxLines = 1,
-                            lineHeight = 13.sp,
-                            color = if (line.fromBoard) MaterialTheme.colorScheme.onSurface
-                                    else MaterialTheme.colorScheme.primary,
-                        )
+                // SelectionContainer alrededor de la lista: mantener pulsado selecciona y
+                // permite copiar. Envuelve al LazyColumn entero y no a cada linea, porque
+                // una seleccion por linea no dejaria arrastrar sobre varias, que es lo que
+                // uno quiere para copiar un tramo del volcado.
+                SelectionContainer {
+                    LazyColumn(
+                        state = listState,
+                        // Un solo scroll horizontal para TODAS las lineas: puesto en cada
+                        // linea, cada una se desplazaria por su cuenta y las columnas
+                        // dejarian de alinearse, que es justo lo que hace legible un volcado.
+                        modifier = Modifier.fillMaxSize().padding(8.dp)
+                            .horizontalScroll(hScroll).testTag("terminal"),
+                    ) {
+                        items(s.terminal) { line ->
+                            Text(
+                                line.text,
+                                fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                                // Sin ajuste de linea: una fila del log partida en dos deja
+                                // de poder leerse por columnas.
+                                softWrap = false, maxLines = 1,
+                                lineHeight = 13.sp,
+                                color = if (line.fromBoard) MaterialTheme.colorScheme.onSurface
+                                        else MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
             }
@@ -282,7 +304,12 @@ private fun TerminalTab(vm: DeviceViewModel, s: UiState, listState: LazyListStat
                     modifier = Modifier.testTag("terminal-history"),
                 ) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Previous command") }
                 Button(
-                    onClick = { vm.sendCommand(command); command = ""; historyAt = -1 },
+                    onClick = {
+                        // Quien manda un comando quiere ver la respuesta, aunque hubiera
+                        // subido a leer algo antes de escribirlo.
+                        seguir = true
+                        vm.sendCommand(command); command = ""; historyAt = -1
+                    },
                     enabled = s.connected && !s.busy && command.isNotBlank(),
                     modifier = Modifier.testTag("terminal-send"),
                 ) { Text("Send") }

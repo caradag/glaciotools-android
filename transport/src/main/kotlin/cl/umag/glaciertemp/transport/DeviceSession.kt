@@ -84,10 +84,18 @@ data class DownloadProgress(
 class DeviceSession(private val transport: Transport) {
 
     /**
-     * Se consulta entre tramos para poder abortar una descarga larga.
+     * Corta una descarga larga. Lo pone el hilo de la interfaz y lo lee el de la descarga,
+     * de ahi el @Volatile.
      *
-     * Entre tramos y no dentro: cortar a mitad de un bloque dejaria bytes sueltos en el
-     * enlace que la siguiente orden leeria como respuesta suya.
+     * Se consulta tanto entre tramos como DENTRO del bucle que lee la linea. Solo entre
+     * tramos no bastaba: por cable `recordsPerRequest` vale 0, el troceo se salta entero y
+     * la descarga completa ocurre dentro de una sola llamada, con lo que el boton de abortar
+     * no tenia ningun efecto.
+     *
+     * Cortar a mitad de un bloque deja bytes sueltos en el enlace --que era el motivo
+     * original de mirar solo entre tramos-- pero eso ya no importa: la cola se drena al
+     * cerrar la operacion y tambien antes de mandar el siguiente comando, asi que no hay
+     * forma de que se lean como respuesta de otra cosa.
      */
     @Volatile
     var cancelled: Boolean = false
@@ -137,7 +145,13 @@ class DeviceSession(private val transport: Transport) {
          */
         onChunk: (ByteArray) -> Unit = {},
     ): ByteArray {
-        if (command != null) transport.writeLine(command)
+        // Lo que haya en la cola ANTES de mandar el comando es, por definicion, de la
+        // operacion anterior. Leerlo como parte de la respuesta es lo que hacia aparecer un
+        // "LOGB end" delante del resultado, y con otro texto podria haber falseado un valor.
+        if (command != null) {
+            drenarCola(quietMs = 40)
+            transport.writeLine(command)
+        }
         val out = java.io.ByteArrayOutputStream()
         val deadline = System.currentTimeMillis() + overallTimeoutMs
         var idle = 0
@@ -150,6 +164,24 @@ class DeviceSession(private val transport: Transport) {
     }
 
     fun drainBanner() { exchange(null, quietMs = 600) }
+
+    /**
+     * Recoge lo que YA haya llegado, sin esperar. Se usa al cerrar una operacion para que su
+     * ultimo texto no se quede en la cola, y antes de mandar un comando para que lo que
+     * quedara no se confunda con la respuesta.
+     *
+     * Una espera larga aqui devolveria el coste que costo quitar: el volcado por tramos
+     * terminaba tres segundos tarde cada vez por esperar un texto que ya no hacia falta.
+     */
+    fun drenarCola(quietMs: Int = 120): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        var idle = 0
+        while (idle < quietMs) {
+            val c = transport.read(40)
+            if (c.isEmpty()) idle += 40 else { out.write(c); idle = 0 }
+        }
+        return out.toByteArray()
+    }
 
     fun info(): DeviceInfo? = DeviceInfo.parse(String(exchange(Protocol.METADATA)))
 
@@ -349,6 +381,10 @@ class DeviceSession(private val transport: Transport) {
 
         try {
             while (!finished && idle < idleLimit() && System.currentTimeMillis() < deadline) {
+                // Se comprueba AQUI y no solo en el bucle de troceo. Por cable
+                // recordsPerRequest vale 0, el troceo se salta entero y toda la descarga
+                // ocurre dentro de esta funcion: abortar no tenia ningun efecto.
+                if (cancelled) throw DownloadCancelled(alreadyDone + bytes / info.recordBytes)
                 val chunk = transport.read(100)
                 if (chunk.isEmpty()) { idle += 100; continue }
                 idle = 0
@@ -387,6 +423,12 @@ class DeviceSession(private val transport: Transport) {
             }
         } finally {
             restore()
+            // El bucle termina en cuanto llegan todos los bloques, SIN esperar al "LOGB end"
+            // -- esperarlo costaba tres segundos de silencio por tramo. Pero no esperarlo no
+            // es lo mismo que no leerlo: ese texto se quedaba en el transporte y aparecia
+            // pegado al principio de la respuesta del SIGUIENTE comando, donde ademas podia
+            // estropear su parseo. Se recoge lo que ya haya llegado, sin esperar a nada.
+            drenarCola()
         }
 
         val h = header ?: run {
