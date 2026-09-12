@@ -823,10 +823,35 @@ class DeviceViewModel : ViewModel() {
         )
     }
 
-    /** Aborta la descarga en curso; surte efecto al terminar el tramo que este en vuelo. */
+    /**
+     * Aborta la descarga en curso y deja la linea limpia antes de devolver el control.
+     *
+     * Poner la bandera no basta: la placa sigue volcando contra un enlace que ya no se lee,
+     * y esa cola se cuela despues como si fuera la respuesta de los comandos siguientes. Se
+     * le manda el byte de cancelacion y se espera su acuse, y hasta entonces la interfaz
+     * queda ocupada -- que es lo honesto, porque hasta entonces no se puede mandar nada.
+     */
     fun abortDownload() {
-        session?.cancelled = true
-        _state.value = _state.value.copy(status = "Aborting...")
+        val s = session ?: return
+        s.cancelled = true
+        _state.value = _state.value.copy(status = "Stopping the board...", busy = true)
+        viewModelScope.launch {
+            val paro = withContext(Dispatchers.IO) {
+                runCatching {
+                    s.abortarVolcado { appendTerminal(it, fromBoard = true) }
+                }.getOrDefault(false)
+            }
+            publicarTerminal()
+            _state.value = _state.value.copy(
+                busy = false, progress = null,
+                status = if (paro) "Download aborted; the link is clear"
+                         else "Download aborted",
+                error = if (paro) null else
+                    "The board did not confirm that it stopped dumping.\n\n" +
+                    "With firmware older than 3.1 there is no way to tell it to stop, so " +
+                    "whatever it had left may still be arriving. If the terminal shows " +
+                    "leftover download output, press RESET on the board.")
+        }
     }
 
     fun download(from: Long?, to: Long?) = launchGuarded("Downloading...") {

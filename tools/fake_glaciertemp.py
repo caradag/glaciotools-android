@@ -28,7 +28,7 @@ NORMAL_BAUD = 115200
 FAST_BAUD = 230400
 # Version de firmware y de protocolo, en UN solo sitio. Estaban escritas dos veces y ya
 # habian divergido: INFO decia fw=2.7 proto=2 y VER seguia contestando fw=2.0 proto=1.
-FW_VERSION = "3.0"
+FW_VERSION = "3.1"
 PROTOCOL = 4
 # Identidad del hardware, como en el firmware: tipo + revision de placa, NO la del firmware.
 BOARD_TYPE = "GT"

@@ -131,6 +131,19 @@ class DeviceSession(private val transport: Transport) {
 
         /** Silencio que se tolera cuando no ha llegado nada: la orden puede seguir en vuelo. */
         const val IDLE_NO_ANSWER_MS = 1500
+
+        /** CAN de ASCII: "cancela lo que estas haciendo". Lo atiende el firmware 3.1+. */
+        const val CANCEL: Byte = 0x18
+
+        /** Como dice la placa que dejo de volcar. */
+        val ACUSES = listOf("LOGB aborted", "LOGH aborted")
+
+        /**
+         * Tope de la limpieza tras abortar. Con firmware 3.1 la placa para en milisegundos y
+         * no se llega ni de lejos; con uno anterior hay que tragarse lo que queda, y esto
+         * acota cuanto se espera antes de rendirse y decirlo.
+         */
+        const val ABORT_DRAIN_MS = 8000
     }
 
     /** Lee hasta que el enlace queda en silencio [quietMs]; es como termina cada respuesta. */
@@ -173,14 +186,62 @@ class DeviceSession(private val transport: Transport) {
      * Una espera larga aqui devolveria el coste que costo quitar: el volcado por tramos
      * terminaba tres segundos tarde cada vez por esperar un texto que ya no hacia falta.
      */
-    fun drenarCola(quietMs: Int = 120): ByteArray {
+    fun drenarCola(quietMs: Int = 120, maxMs: Int = 2000): ByteArray {
         val out = java.io.ByteArrayOutputStream()
+        val limite = System.currentTimeMillis() + maxMs
         var idle = 0
-        while (idle < quietMs) {
+        while (idle < quietMs && System.currentTimeMillis() < limite) {
             val c = transport.read(40)
             if (c.isEmpty()) idle += 40 else { out.write(c); idle = 0 }
         }
         return out.toByteArray()
+    }
+
+    /**
+     * Corta un volcado en curso y deja la linea LIMPIA.
+     *
+     * Parar de leer NO para de emitir. Abandonar una descarga larga dejaba a la placa
+     * volcando megabytes contra un enlace que ya no lee, y esa cola se iba colando despues
+     * como si fuera la respuesta de los comandos siguientes: uno escribia VER y recibia
+     * bloques del volcado anterior durante minutos, hasta que la cola se agotaba sola.
+     *
+     * Se manda [CANCEL] --CAN de ASCII-- que el firmware atiende en los mismos puntos en
+     * que atiende la pausa, y se espera su acuse: "LOGB aborted" o "LOGH aborted". Ese texto
+     * es la prueba de que la placa dejo de emitir; sin el no hay forma de saber si lo que
+     * deja de llegar es que paro o que va lento.
+     *
+     * Con un firmware anterior a 3.1 ese acuse no llega nunca, y entonces esto degrada a lo
+     * unico posible: tragarse la cola hasta que el enlace calle. De ahi el tope de tiempo.
+     */
+    fun abortarVolcado(onDiagnostic: (String) -> Unit = {}): Boolean {
+        cancelled = true
+        runCatching { transport.write(byteArrayOf(CANCEL)) }
+        val acuse = StringBuilder()
+        val limite = System.currentTimeMillis() + ABORT_DRAIN_MS
+        var idle = 0
+        while (System.currentTimeMillis() < limite) {
+            val c = transport.read(50)
+            if (c.isEmpty()) {
+                idle += 50
+                // Silencio prolongado: o paro, o nunca estuvo emitiendo.
+                if (idle >= 400) break
+                continue
+            }
+            idle = 0
+            acuse.append(String(c, Charsets.ISO_8859_1))
+            if (ACUSES.any { acuse.contains(it) }) {
+                // Todavia puede quedar el resto de la linea: se recoge y se termina.
+                drenarCola(quietMs = 150, maxMs = 800)
+                onDiagnostic("Dump cancelled by the board")
+                return true
+            }
+        }
+        val sobrante = drenarCola(quietMs = 300, maxMs = ABORT_DRAIN_MS)
+        if (sobrante.isNotEmpty() || acuse.isNotEmpty()) {
+            onDiagnostic("Dump aborted; discarded ${acuse.length + sobrante.size} bytes " +
+                         "still in the link")
+        }
+        return false
     }
 
     fun info(): DeviceInfo? = DeviceInfo.parse(String(exchange(Protocol.METADATA)))
