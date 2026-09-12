@@ -317,6 +317,18 @@ class DeviceSession(private val transport: Transport) {
         try { return bloque() } finally { cerrojo.unlock() }
     }
 
+    /**
+     * Avisa al terminal de que lo que viene son datos, no texto, mientras dure [bloque].
+     *
+     * Quien no sepa de volcados --un transporte pelado, en los tests-- no se entera y no
+     * pasa nada: el resumen es cosa del terminal, no del protocolo.
+     */
+    private inline fun <T> comoVolcado(bloque: () -> T): T {
+        val avisable = transport as? DumpAware
+        avisable?.volcadoEmpieza()
+        try { return bloque() } finally { avisable?.volcadoTermina() }
+    }
+
     /** Bytes del enlace, ya leidos por la bomba. Vacio si no llego nada en [timeoutMs]. */
     fun leerFlujo(timeoutMs: Int): ByteArray = bomba.leer(timeoutMs)
 
@@ -402,7 +414,7 @@ class DeviceSession(private val transport: Transport) {
      * Con un firmware anterior a 3.1 ese acuse no llega nunca, y entonces esto degrada a lo
      * unico posible: tragarse la cola hasta que el enlace calle. De ahi el tope de tiempo.
      */
-    fun abortarVolcado(onDiagnostic: (String) -> Unit = {}): Boolean = conElEnlace {
+    fun abortarVolcado(onDiagnostic: (String) -> Unit = {}): Boolean = conElEnlace { comoVolcado {
         cancelled = true
         val rapida = volcadoRapido
         runCatching { transport.write(byteArrayOf(CANCEL)) }
@@ -441,7 +453,7 @@ class DeviceSession(private val transport: Transport) {
                 // Todavia puede quedar el resto de la linea: se recoge y se termina.
                 drenarCola(quietMs = 150, maxMs = 800)
                 onDiagnostic("Dump cancelled by the board")
-                return@conElEnlace true
+                return@comoVolcado true
             }
         }
         val sobrante = drenarCola(quietMs = 300, maxMs = ABORT_DRAIN_MS)
@@ -450,7 +462,7 @@ class DeviceSession(private val transport: Transport) {
                          "still in the link")
         }
         false
-    }
+    } }
 
     fun info(): DeviceInfo? = DeviceInfo.parse(String(exchange(Protocol.METADATA)))
 
@@ -534,6 +546,12 @@ class DeviceSession(private val transport: Transport) {
         // robar bytes de un bloque a medias.
         cerrojo.lock()
         try {
+        comoVolcado {
+        // El rango y el tamano van al terminal como TEXTO, una vez. Antes esto se leia de la
+        // linea "LOGB begin" que manda la placa, pero por radio esa linea llega una vez por
+        // tramo --miles-- y todas dicen lo mismo salvo dos numeros.
+        onDiagnostic("LOGB $a..$b  ·  $total records  ·  " +
+                     "${"%.1f".format(total * info.recordBytes / 1024.0)} kB")
         // Solo se salta el bucle cuando el transporte NO trocea, como el cable. Si trocea, se
         // pasa por el aunque todo quepa en un tramo: de lo contrario una descarga corta no
         // podia adaptarse, y es justo la que se hace para probar si el enlace aguanta.
@@ -624,6 +642,7 @@ class DeviceSession(private val transport: Transport) {
         finalChunk = ultimoUsado
         initialChunk = inicial
         return out.toByteArray()
+        }
         } finally {
             cerrojo.unlock()
         }
@@ -675,6 +694,15 @@ class DeviceSession(private val transport: Transport) {
                 idle = 0
                 for (e in reader.feed(chunk)) when (e) {
                     is LogbEvent.Header -> {
+                        // La cabecera se anuncia UNA vez por operacion, no una por tramo.
+                        // Trae lo unico que no se sabia de antemano --la firma del formato y
+                        // el tamano de bloque-- y por radio llega miles de veces diciendo
+                        // siempre lo mismo salvo dos numeros.
+                        if (header == null && alreadyDone == 0L) {
+                            onDiagnostic("LOGB sig=0x%04X rec=%d blocks=%d blocksize=%d"
+                                .format(e.header.signature, e.header.recordBytes,
+                                        e.header.blocks, e.header.blockSize))
+                        }
                         header = e.header
                         if (fast > 0 && !switched) {
                             switcher!!.setBaudRate(fast); switched = true

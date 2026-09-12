@@ -91,6 +91,13 @@ object RawHexDownload {
         // Solo se pide si el enlace SABE cambiar de velocidad. Por BLE la fija el modulo por
         // su lado: pedirla dejaria a la placa emitiendo a 230400 contra un modulo que sigue
         // en 115200, y no llegaria nada legible.
+        // Lo que viene es un volcado: el terminal lo pesa en vez de intentar leerlo. Sin
+        // esto son veintiocho megabytes de Intel HEX linea a linea, que nadie lee y que
+        // dejan el terminal inservible justo cuando hace falta mirarlo.
+        val avisable = transport as? DumpAware
+        avisable?.volcadoEmpieza()
+        try {
+
         val switcher = transport as? BaudSwitchable
         val fast = if (switcher != null && fastBaud > 0) fastBaud else 0
         var switched = false
@@ -211,6 +218,10 @@ object RawHexDownload {
                          "and were dropped")
         }
         return RawHexResult(written, records, rejected, sawEof)
+
+        } finally {
+            avisable?.volcadoTermina()
+        }
     }
 
     /**

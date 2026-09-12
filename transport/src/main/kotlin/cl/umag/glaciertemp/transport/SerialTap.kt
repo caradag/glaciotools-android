@@ -31,12 +31,27 @@ package cl.umag.glaciertemp.transport
  * linea que llega mientras se escribe un comando puede salir partida o perderse -- y seria
  * un fallo intermitente en la unica ventana donde uno mira cuando algo va mal.
  */
+/**
+ * Algo que puede avisar de que lo que viene AHORA son datos y no texto.
+ *
+ * Lo implementa el espia y lo usan las operaciones de volcado. No forma parte de [Transport]
+ * a proposito: un transporte no tiene por que saber que es un volcado, y quien no lo
+ * implemente simplemente no se entera, que es el comportamiento correcto.
+ */
+interface DumpAware {
+    fun volcadoEmpieza()
+    fun volcadoTermina()
+}
+
 open class SerialTap(
     private val inner: Transport,
     private val sink: (String, Boolean) -> Unit,
-) : Transport by inner {
+) : Transport by inner, DumpAware {
 
     companion object {
+        /** Cada cuantos bytes de volcado sale una linea de resumen. */
+        const val AVISO_CADA = 64L * 1024
+
         /** Envuelve conservando si el transporte de debajo sabe cambiar de velocidad. */
         fun wrap(inner: Transport, sink: (String, Boolean) -> Unit): SerialTap =
             if (inner is BaudSwitchable) SwitchableSerialTap(inner, sink)
@@ -47,6 +62,26 @@ open class SerialTap(
     /** Caracteres sueltos no imprimibles que no valen la pena resumir. */
     private val entrada = Buffer(fromBoard = true)
     private val salida = Buffer(fromBoard = false)
+
+    /**
+     * Profundidad del volcado, no un booleano: una descarga por radio son miles de LOGB
+     * dentro de una sola operacion, y con un booleano el primero que terminara apagaria el
+     * modo para todos los demas.
+     */
+    private val enVolcado = java.util.concurrent.atomic.AtomicInteger(0)
+
+    override fun volcadoEmpieza() {
+        if (enVolcado.getAndIncrement() == 0) {
+            entrada.empezarVolcado(); salida.empezarVolcado()
+        }
+    }
+
+    override fun volcadoTermina() {
+        if (enVolcado.decrementAndGet() <= 0) {
+            enVolcado.set(0)
+            entrada.terminarVolcado(); salida.terminarVolcado()
+        }
+    }
 
     override fun write(data: ByteArray) {
         salida.absorber(data)
@@ -68,6 +103,52 @@ open class SerialTap(
     private inner class Buffer(val fromBoard: Boolean) {
         private val texto = StringBuilder()
         private var binarios = 0L
+
+        /**
+         * Durante un volcado el flujo no es texto con algun byte raro, sino al reves, y el
+         * resumen normal se vuelve ilegible: de los 256 valores de un byte, 95 son ASCII
+         * imprimible, asi que uno de cada 2,7 bytes de dato rompe el `[N bytes]` y sale
+         * como un caracter suelto. Medido sobre datos reales son unos 2.585 caracteres de
+         * terminal por cada 1.024 bytes descargados -- dos veces y media lo que se esta
+         * bajando, en lineas de cientos de caracteres cortadas donde cayo un 0x0A.
+         *
+         * Aqui los bytes se PESAN en vez de leerse: una linea cada [AVISO_CADA]. Lo que
+         * significa algo --que empieza, cuanto ocupa, como termino-- ya lo cuenta la
+         * operacion por su cuenta, que ademas lo sabe de verdad porque ha parseado la
+         * cabecera, en vez de deducirlo de los bytes que pasan.
+         */
+        private var volcado = false
+        private var delVolcado = 0L
+        private var avisado = 0L
+
+        @Synchronized fun empezarVolcado() {
+            // Lo que hubiera a medias es texto de verdad y sale ahora: despues ya no habria
+            // con que distinguirlo de los datos.
+            flushAll()
+            volcado = true; delVolcado = 0; avisado = 0
+        }
+
+        @Synchronized fun terminarVolcado() {
+            if (!volcado) return
+            volcado = false
+            if (delVolcado > avisado) resumir(delVolcado)
+            texto.setLength(0); binarios = 0
+            delVolcado = 0; avisado = 0
+        }
+
+        private fun resumir(n: Long) {
+            val cuanto = if (n >= 1024) "%.1f kB".format(n / 1024.0) else "$n B"
+            sink("[dump: $cuanto]", true)
+        }
+
+        /** Pesa lo que llega y avisa al cruzar cada multiplo. */
+        private fun contar(data: ByteArray) {
+            delVolcado += data.size
+            while (delVolcado - avisado >= AVISO_CADA) {
+                avisado += AVISO_CADA
+                resumir(avisado)
+            }
+        }
 
         @Synchronized fun feed(data: ByteArray) {
             for (b in data) {
@@ -115,6 +196,13 @@ open class SerialTap(
 
         /** Alimentar y publicar, en UNA sola seccion critica. */
         @Synchronized fun absorber(data: ByteArray) {
+            if (volcado) {
+                // Lo que sale hacia la placa durante un volcado son las peticiones troceadas
+                // y los XOFF/XON del control de flujo: miles de lineas que repiten lo mismo.
+                // No se pesan siquiera, porque su tamano no le dice nada a nadie.
+                if (fromBoard) contar(data)
+                return
+            }
             feed(data)
             flushLines()
         }
