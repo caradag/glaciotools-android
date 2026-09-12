@@ -26,18 +26,31 @@ class AdaptiveChunkTest {
         private val omitEnd: Boolean = false,
     ) : Transport {
         private val pending = ArrayDeque<Byte>()
+        /** La bomba lee desde su propio hilo mientras el test escribe desde el suyo. */
+        private val cerrojo = Object()
         override var isOpen = false
         override fun open() { isOpen = true }
         override fun close() { isOpen = false }
         val requested = mutableListOf<Int>()
 
         override fun read(timeoutMs: Int): ByteArray {
-            if (pending.isEmpty()) return ByteArray(0)
-            val out = ByteArray(pending.size) { pending.removeFirst() }
-            return out
+            // Se respeta el plazo: devolver en el acto cuando no hay nada convierte el bucle
+            // de la bomba en una espera activa que se come una CPU entera.
+            val limite = System.currentTimeMillis() + timeoutMs
+            while (true) {
+                synchronized(cerrojo) {
+                    if (pending.isNotEmpty()) {
+                        return ByteArray(pending.size) { pending.removeFirst() }
+                    }
+                }
+                if (System.currentTimeMillis() >= limite) return ByteArray(0)
+                Thread.sleep(5)
+            }
         }
 
-        override fun write(data: ByteArray) {
+        override fun write(data: ByteArray) = synchronized(cerrojo) { escribir(data) }
+
+        private fun escribir(data: ByteArray) {
             val cmd = String(data).trim()
             if (!cmd.startsWith("LOGB=")) return
             val (a, b) = cmd.removePrefix("LOGB=").split(",").let {

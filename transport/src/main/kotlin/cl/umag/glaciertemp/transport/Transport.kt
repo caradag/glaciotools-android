@@ -19,8 +19,25 @@ interface Transport : AutoCloseable {
     val recordsPerRequest: Int get() = 0
 
     fun open()
+
+    /**
+     * CONTRATO DE HILOS: [read] lo llama un hilo DEDICADO --el de la bomba de DeviceSession,
+     * que no para nunca-- mientras [write] puede llamarse desde otro al mismo tiempo. Una
+     * implementacion tiene que soportar esa concurrencia.
+     *
+     * Los transportes reales ya la soportan: el de USB y el de BLE reciben en un hilo de la
+     * libreria y publican en una cola sincronizada, y el de tuberias usa dos streams
+     * distintos para cada sentido. Lo que hay que cuidar son los dobles de prueba, que antes
+     * podian ser estructuras sin sincronizar porque solo las tocaba el hilo del test.
+     */
     fun write(data: ByteArray)
-    /** Devuelve lo disponible, o un array vacio si no llego nada antes del timeout. */
+
+    /**
+     * Devuelve lo disponible, o un array vacio si no llego nada antes del timeout.
+     *
+     * Debe RESPETAR el plazo y no volver en el acto cuando no hay nada: quien llama es un
+     * bucle continuo, y un retorno inmediato lo convierte en una espera activa.
+     */
     fun read(timeoutMs: Int): ByteArray
     val isOpen: Boolean
 }

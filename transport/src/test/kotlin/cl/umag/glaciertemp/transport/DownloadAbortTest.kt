@@ -63,20 +63,28 @@ class DownloadAbortTest {
      * pasaria por azar tanto con el arreglo como sin el.
      */
     private class ConCola(cola: String, private val respuesta: String) : Transport {
-        private var pendiente = cola.toByteArray().toMutableList()
+        private val pendiente = cola.toByteArray().toMutableList()
         private var respondiendo = false
+        // La bomba lee desde su hilo mientras el test escribe desde el suyo.
+        private val cerrojo = Object()
         override var isOpen = true
         override fun open() {}
-        override fun write(data: ByteArray) { respondiendo = true }
+        override fun write(data: ByteArray) = synchronized(cerrojo) { respondiendo = true }
         override fun read(timeoutMs: Int): ByteArray {
-            if (pendiente.isNotEmpty()) {
-                val d = pendiente.toByteArray(); pendiente.clear(); return d
+            val limite = System.currentTimeMillis() + timeoutMs
+            while (true) {
+                synchronized(cerrojo) {
+                    if (pendiente.isNotEmpty()) {
+                        val d = pendiente.toByteArray(); pendiente.clear(); return d
+                    }
+                    if (respondiendo) {
+                        respondiendo = false
+                        return respuesta.toByteArray()
+                    }
+                }
+                if (System.currentTimeMillis() >= limite) return ByteArray(0)
+                Thread.sleep(5)
             }
-            if (respondiendo) {
-                respondiendo = false
-                return respuesta.toByteArray()
-            }
-            return ByteArray(0)
         }
         override fun close() { isOpen = false }
     }
@@ -85,6 +93,11 @@ class DownloadAbortTest {
     fun `un comando no lee como suya la cola de la operacion anterior`() {
         val t = ConCola(cola = "LOGB end\n", respuesta = "fw=3.0 proto=4\n")
         val s = DeviceSession(t)
+        // La premisa del caso es que la cola YA esta en el buffer cuando se manda el
+        // comando, que es como queda tras un volcado. Se le da tiempo a la bomba a
+        // recogerla: sin esto el test comprobaria otra cosa --una cola que llega DESPUES
+        // del comando-- que ningun descarte puede resolver.
+        Thread.sleep(200)
         val reply = String(s.exchange("VER", quietMs = 200))
 
         assertFalse(reply.contains("LOGB"),
@@ -100,6 +113,7 @@ class DownloadAbortTest {
         val t = ConCola(cola = "Time Zone (hours): 99\n",
                         respuesta = "Time Zone (hours): -3\n")
         val s = DeviceSession(t)
+        Thread.sleep(200)
         val tz = assertNotNull(cl.umag.glaciertemp.core.Variables.byCode("TZN"))
         val valor = cl.umag.glaciertemp.core.VariableSpec.parseValue(s.readVariable(tz))
         assertEquals("-3", valor, "se leyo el valor que habia quedado en la cola")

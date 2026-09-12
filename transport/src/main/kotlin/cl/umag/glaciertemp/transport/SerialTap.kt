@@ -24,6 +24,12 @@ package cl.umag.glaciertemp.transport
  *    pedirselo, y el espia no puede romperlo.
  *
  * De ahi que haya dos clases y una fabrica: [wrap] devuelve la variante que corresponde.
+ *
+ * HILOS. Desde que el enlace tiene un unico lector propio, `read` lo llama ESE hilo mientras
+ * `write` lo llama el de la operacion en curso y `flush` el que la cierra. Los dos buffers
+ * son estado mutable compartido, asi que cada uno se sincroniza sobre si mismo. Sin eso, una
+ * linea que llega mientras se escribe un comando puede salir partida o perderse -- y seria
+ * un fallo intermitente en la unica ventana donde uno mira cuando algo va mal.
  */
 open class SerialTap(
     private val inner: Transport,
@@ -43,17 +49,13 @@ open class SerialTap(
     private val salida = Buffer(fromBoard = false)
 
     override fun write(data: ByteArray) {
-        salida.feed(data)
-        salida.flushLines()
+        salida.absorber(data)
         inner.write(data)
     }
 
     override fun read(timeoutMs: Int): ByteArray {
         val d = inner.read(timeoutMs)
-        if (d.isNotEmpty()) {
-            entrada.feed(d)
-            entrada.flushLines()
-        }
+        if (d.isNotEmpty()) entrada.absorber(d)
         return d
     }
 
@@ -67,7 +69,7 @@ open class SerialTap(
         private val texto = StringBuilder()
         private var binarios = 0L
 
-        fun feed(data: ByteArray) {
+        @Synchronized fun feed(data: ByteArray) {
             for (b in data) {
                 val c = b.toInt() and 0xFF
                 when {
@@ -87,7 +89,7 @@ open class SerialTap(
         }
 
         /** Publica las lineas completas y deja el resto para el siguiente trozo. */
-        fun flushLines() {
+        @Synchronized fun flushLines() {
             var i = texto.indexOf("\n")
             while (i >= 0) {
                 emitir(texto.substring(0, i))
@@ -103,12 +105,18 @@ open class SerialTap(
             }
         }
 
-        fun flushAll() {
+        @Synchronized fun flushAll() {
             cerrarBinario()
             if (texto.isNotEmpty()) {
                 emitir(texto.toString())
                 texto.setLength(0)
             }
+        }
+
+        /** Alimentar y publicar, en UNA sola seccion critica. */
+        @Synchronized fun absorber(data: ByteArray) {
+            feed(data)
+            flushLines()
         }
 
         private fun emitir(linea: String) {

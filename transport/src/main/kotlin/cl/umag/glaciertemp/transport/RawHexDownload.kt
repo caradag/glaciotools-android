@@ -98,7 +98,9 @@ object RawHexDownload {
             if (switched) { switcher!!.setBaudRate(normalBaud); switched = false }
         }
 
-        transport.writeLine(Protocol.logHex(0, fast))
+        // Por la sesion y no por el transporte: el puerto lo lee la bomba, y una
+        // lectura directa desde aqui competiria con ella por los mismos bytes.
+        session.escribir((Protocol.logHex(0, fast) + "\n").toByteArray())
 
         val started = System.currentTimeMillis()
         var received = 0L
@@ -150,7 +152,7 @@ object RawHexDownload {
                 onDiagnostic("Raw log download cancelled after $written bytes")
                 return RawHexResult(written, records, rejected, sawEof)
             }
-            val chunk = transport.read(100)
+            val chunk = session.leerFlujo(100)
             if (chunk.isEmpty()) {
                 idle += 100
                 if (sawEof && pending.isEmpty()) break
@@ -172,13 +174,13 @@ object RawHexDownload {
             // Se frena ANTES de procesar: si el buffer pendiente ya crecio, seguir leyendo
             // sin pedir la pausa es exactamente lo que desborda al modulo.
             if (!paused && pending.length > PAUSE_ABOVE_BYTES) {
-                transport.write(byteArrayOf(XOFF))
+                session.escribir(byteArrayOf(XOFF))
                 paused = true
                 onDiagnostic("Asked the board to pause (${pending.length} bytes pending)")
             }
             flushLines(last = false)
             if (paused && pending.length < RESUME_BELOW_BYTES) {
-                transport.write(byteArrayOf(XON))
+                session.escribir(byteArrayOf(XON))
                 paused = false
             }
             onProgress(RawHexProgress(received, expectedBytes,
@@ -186,7 +188,7 @@ object RawHexDownload {
             if (sawEof) break
         }
         flushLines(last = true)
-        if (paused) transport.write(byteArrayOf(XON))
+        if (paused) session.escribir(byteArrayOf(XON))
         // Si el fin de fichero nunca llego --volcado cortado, placa dormida-- la linea se
         // habria quedado en la velocidad rapida y el siguiente comando saldria ilegible.
         restore()

@@ -27,13 +27,17 @@ class AbortDumpTest {
         private val restante: Int = 200_000,
         private val cierre: String = "LOGB aborted\n",
     ) : Transport {
-        var cancelRecibido = false; private set
+        // Sincronizado: con la bomba, `read` lo llama un hilo propio mientras el hilo del
+        // test llama a `write`. Sin esto la cola de respuestas se corrompe y el fallo sale
+        // una vez de cada tantas ejecuciones, que es la peor clase de test.
+        @Volatile var cancelRecibido = false; private set
         private var emitido = 0
         private var acuseEnviado = false
         private val respuestas = ArrayDeque<String>()
         override var isOpen = true
         override fun open() {}
 
+        @Synchronized
         override fun write(data: ByteArray) {
             if (data.size == 1 && data[0] == DeviceSession.CANCEL) {
                 cancelRecibido = true
@@ -44,6 +48,16 @@ class AbortDumpTest {
         }
 
         override fun read(timeoutMs: Int): ByteArray {
+            val d = siguiente()
+            // Respetar el timeout importa ahora que quien lee es un hilo dedicado en bucle:
+            // devolver vacio al instante lo convertiria en una espera activa que se come un
+            // nucleo entero durante todo el test.
+            if (d.isEmpty() && timeoutMs > 0) Thread.sleep(timeoutMs.toLong())
+            return d
+        }
+
+        @Synchronized
+        private fun siguiente(): ByteArray {
             if (cancelRecibido && acusa && !acuseEnviado) {
                 acuseEnviado = true
                 return cierre.toByteArray()

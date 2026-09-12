@@ -330,7 +330,7 @@ class DeviceViewModel : ViewModel() {
 
         transport = espiado; session = s
         tap = espiado
-        arrancarEscucha(s)
+        arrancarPublicador()
         _state.value = _state.value.copy(
             boardTime = boardNow?.let {
                 java.time.format.DateTimeFormatter
@@ -378,9 +378,28 @@ class DeviceViewModel : ViewModel() {
      * decenas de miles de recomposiciones. La escritura en vivo se volvia mas lenta que
      * esperar al final, que era justamente lo que se queria evitar.
      */
+    /**
+     * Las lineas del terminal, y el cerrojo que las protege.
+     *
+     * Las escriben VARIOS hilos: el lector del enlace --que es quien ve lo que la placa dice
+     * por su cuenta--, el de la operacion en curso, que publica el eco de cada comando, y el
+     * de la interfaz. Y las lee el publicador. Un ArrayDeque sin cerrojo entre esos cuatro se
+     * corrompe, o lanza una excepcion al copiarlo justo mientras otro le quita el primero.
+     */
     private val terminalBuffer = ArrayDeque<TerminalLine>()
+    private val cerrojoTerminal = Any()
     private var lastTerminalFlush = 0L
     private val terminalFlushMs = 150L
+
+    /**
+     * Cuantas lineas se han anadido EN TOTAL, no cuantas quedan.
+     *
+     * El publicador mira este numero para saber si hay algo nuevo, y por eso no puede ser el
+     * tamano: pasado el limite se descarta una linea por cada una que entra y el tamano se
+     * queda fijo, con lo que el terminal se congelaria justo en la sesion larga, que es
+     * cuando uno lo necesita.
+     */
+    private var anadidas = 0L
 
     private fun appendTerminal(text: String, fromBoard: Boolean) =
         appendTerminalLines(text.trimEnd('\n').split("\n"), fromBoard)
@@ -388,14 +407,19 @@ class DeviceViewModel : ViewModel() {
     private fun appendTerminalLines(lines: List<String>, fromBoard: Boolean, force: Boolean = false) {
         val utiles = lines.filter { it.isNotBlank() || fromBoard }
         if (utiles.isEmpty() && !force) return
-        utiles.forEach { terminalBuffer.addLast(TerminalLine(it, fromBoard)) }
-        while (terminalBuffer.size > terminalLimit) terminalBuffer.removeFirst()
+        val instantanea: List<TerminalLine>?
+        synchronized(cerrojoTerminal) {
+            utiles.forEach { terminalBuffer.addLast(TerminalLine(it, fromBoard)) }
+            anadidas += utiles.size
+            while (terminalBuffer.size > terminalLimit) terminalBuffer.removeFirst()
 
-        val ahora = System.currentTimeMillis()
-        if (force || ahora - lastTerminalFlush >= terminalFlushMs) {
-            lastTerminalFlush = ahora
-            _state.value = _state.value.copy(terminal = terminalBuffer.toList())
+            val ahora = System.currentTimeMillis()
+            instantanea = if (force || ahora - lastTerminalFlush >= terminalFlushMs) {
+                lastTerminalFlush = ahora
+                terminalBuffer.toList()
+            } else null
         }
+        instantanea?.let { _state.value = _state.value.copy(terminal = it) }
     }
 
     /**
@@ -437,13 +461,17 @@ class DeviceViewModel : ViewModel() {
     }
 
     private fun flushTerminal() {
-        lastTerminalFlush = System.currentTimeMillis()
-        _state.value = _state.value.copy(terminal = terminalBuffer.toList())
+        val instantanea = synchronized(cerrojoTerminal) {
+            lastTerminalFlush = System.currentTimeMillis()
+            terminalBuffer.toList()
+        }
+        _state.value = _state.value.copy(terminal = instantanea)
     }
 
     /** Todo el terminal como texto, para guardarlo en un fichero. */
-    fun terminalText(): ByteArray =
+    fun terminalText(): ByteArray = synchronized(cerrojoTerminal) {
         terminalBuffer.joinToString("\n") { it.text }.toByteArray()
+    }
 
     fun terminalFileName(): String {
         val id = _state.value.info?.displayId ?: "session"
@@ -453,7 +481,7 @@ class DeviceViewModel : ViewModel() {
     }
 
     fun clearTerminal() {
-        terminalBuffer.clear()
+        synchronized(cerrojoTerminal) { terminalBuffer.clear() }
         flushTerminal()
     }
 
@@ -832,9 +860,10 @@ class DeviceViewModel : ViewModel() {
     }
 
     fun disconnect() {
-        // La escucha PRIMERO: si se cierra el transporte con el bucle vivo, su siguiente
-        // lectura falla sobre un enlace ya cerrado y eso sale como error en pantalla.
-        escucha?.cancel(); escucha = null
+        publicador?.cancel(); publicador = null
+        // La sesion suelta su hilo lector ANTES de cerrar el transporte: al reves, la
+        // siguiente lectura fallaria sobre un enlace ya cerrado.
+        runCatching { session?.cerrar() }
         runCatching { transport?.close() }
         transport = null; session = null; tap = null
         // El terminal y el historial SOBREVIVEN a la desconexion: si algo fallo, el registro
@@ -864,41 +893,35 @@ class DeviceViewModel : ViewModel() {
         )
     }
 
-    private var escucha: kotlinx.coroutines.Job? = null
+    private var publicador: kotlinx.coroutines.Job? = null
 
     /**
-     * Escucha continua del enlace, para que el terminal muestre lo que la placa diga POR SU
-     * CUENTA y no solo lo que responde a un comando.
+     * Publica en pantalla lo que la bomba va recogiendo.
      *
-     * El caso que lo hacia falta: pulsar RESET en la placa produce todo el bloque de
-     * arranque --version, memoria detectada, identificador, estado de la flash, hora-- y esa
-     * salida se quedaba en el enlace hasta que alguien escribia un comando, apareciendo
-     * entonces delante de su respuesta. Con una escucha continua sale cuando ocurre, que es
-     * ademas cuando significa algo.
+     * Ya no lee nada del puerto: de eso se encarga el hilo de la bomba, que nunca para, y el
+     * espia va poniendo cada linea completa en el buffer del terminal. Aqui solo se empuja
+     * ese buffer al estado, porque el publicado esta limitado a una vez cada 150 ms para que
+     * un volcado de miles de lineas no repinte la pantalla por cada una -- y sin alguien que
+     * insista, la ultima tanda se quedaria sin salir.
      *
-     * `leerEnReposo` devuelve vacio sin esperar si hay una operacion en curso, asi que este
-     * bucle no compite por los bytes: los unicos que recoge son los no solicitados.
+     * NO se llama a `tap.flush()` en cada vuelta: eso saca tambien la linea a medio llegar, y
+     * publicarla partida en dos desalinea las columnas. Se reserva para el final de cada
+     * operacion, donde ya no viene nada detras.
      */
-    private fun arrancarEscucha(s: DeviceSession) {
-        escucha?.cancel()
-        escucha = viewModelScope.launch {
+    private fun arrancarPublicador() {
+        publicador?.cancel()
+        publicador = viewModelScope.launch {
             while (true) {
-                val datos = runCatching {
-                    withContext(Dispatchers.IO) { s.leerEnReposo(250) }
-                }.getOrNull() ?: break
-                if (datos.isNotEmpty()) {
-                    // El espia ya lo ha puesto en el buffer; aqui solo se publica, porque el
-                    // publicado va limitado a una vez cada 150 ms y sin esto la ultima
-                    // tanda se quedaria sin salir.
-                    tap?.flush()
+                kotlinx.coroutines.delay(200)
+                if (anadidas != publicadas) {
+                    publicadas = anadidas
                     flushTerminal()
-                } else {
-                    // Sin datos: una pausa corta para no girar en vacio consumiendo bateria.
-                    kotlinx.coroutines.delay(150)
                 }
             }
         }
     }
+
+    private var publicadas = 0L
 
     /**
      * Aborta la descarga en curso y deja la linea limpia antes de devolver el control.

@@ -81,6 +81,130 @@ data class DownloadProgress(
  * Conversacion con la placa sobre un [Transport]. Cable y BLE hablan el mismo protocolo,
  * asi que esta clase no sabe cual de los dos hay debajo.
  */
+/**
+ * El UNICO lector del enlace.
+ *
+ * Un puerto serie tiene un solo flujo de bytes: quien llame a `read()` primero se los lleva.
+ * Mientras las operaciones leian el puerto directamente, cualquier otra cosa que quisiera ver
+ * el trafico --el terminal-- tenia que competir por esas mismas lecturas, y arbitrar esa
+ * competencia con cerrojos no es resolverla: solo la vuelve intermitente.
+ *
+ * Aqui lee un hilo y nada mas. Todo lo que llega entra en este buffer, de donde lo consumen
+ * las operaciones, y de paso pasa por el espia que alimenta el terminal. La salida que la
+ * placa produce por su cuenta --el bloque de arranque tras un RESET-- aparece porque este
+ * hilo no deja de leer, no porque nadie se acuerde de mirarla.
+ */
+private class Bomba(private val transport: Transport) {
+
+    private val cerrojo = java.util.concurrent.locks.ReentrantLock()
+    private val hayDatos = cerrojo.newCondition()
+
+    /** Buffer circular degenerado: se consume por delante y se compacta al vaciarse. */
+    private var buf = ByteArray(32 * 1024)
+    private var ini = 0
+    private var fin = 0
+
+    @Volatile private var vivo = true
+    @Volatile var fallo: Throwable? = null; private set
+    private var hilo: Thread? = null
+
+    fun arrancar() {
+        if (hilo != null) return
+        hilo = Thread({
+            try {
+                while (vivo) {
+                    val d = transport.read(50)
+                    if (d.isNotEmpty()) guardar(d)
+                }
+            } catch (e: Throwable) {
+                // El enlace se cerro o fallo. Se anota y se termina; quien este esperando lo
+                // vera como silencio, que es lo que de verdad hay.
+                fallo = e
+            } finally {
+                vivo = false
+                cerrojo.lock()
+                try { hayDatos.signalAll() } finally { cerrojo.unlock() }
+            }
+        }, "glaciotools-enlace").apply {
+            // Demonio: si la app termina, este hilo no puede ser lo que la mantenga viva.
+            isDaemon = true
+            start()
+        }
+    }
+
+    fun parar() {
+        vivo = false
+        hilo?.interrupt()
+        hilo = null
+    }
+
+    private fun guardar(d: ByteArray) {
+        cerrojo.lock()
+        try {
+            hacerSitio(d.size)
+            System.arraycopy(d, 0, buf, fin, d.size)
+            fin += d.size
+            hayDatos.signalAll()
+        } finally {
+            cerrojo.unlock()
+        }
+    }
+
+    /** Compacta primero y solo crece si aun no cabe: una descarga larga no puede ir
+     *  duplicando el buffer indefinidamente mientras el consumidor va al dia. */
+    private fun hacerSitio(n: Int) {
+        if (fin + n <= buf.size) return
+        val pendiente = fin - ini
+        if (pendiente + n <= buf.size) {
+            System.arraycopy(buf, ini, buf, 0, pendiente)
+            ini = 0; fin = pendiente
+            return
+        }
+        var nuevo = buf.size
+        while (pendiente + n > nuevo) nuevo *= 2
+        val otro = ByteArray(nuevo)
+        System.arraycopy(buf, ini, otro, 0, pendiente)
+        buf = otro; ini = 0; fin = pendiente
+    }
+
+    /** Lo que haya, esperando hasta [timeoutMs] si no hay nada. Vacio si sigue sin haberlo. */
+    fun leer(timeoutMs: Int): ByteArray {
+        cerrojo.lock()
+        try {
+            if (ini == fin && vivo) {
+                hayDatos.await(timeoutMs.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+            if (ini == fin) return ByteArray(0)
+            val out = buf.copyOfRange(ini, fin)
+            ini = 0; fin = 0
+            return out
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return ByteArray(0)
+        } finally {
+            cerrojo.unlock()
+        }
+    }
+
+    /**
+     * Tira lo que haya pendiente y devuelve cuanto era.
+     *
+     * Se usa justo antes de mandar un comando: lo que estaba en el buffer en ese momento es,
+     * por definicion, de la operacion anterior. Antes esto exigia una lectura con espera
+     * --y adivinar cuanto esperar--; con la bomba es mover un indice.
+     */
+    fun descartarPendiente(): Int {
+        cerrojo.lock()
+        try {
+            val n = fin - ini
+            ini = 0; fin = 0
+            return n
+        } finally {
+            cerrojo.unlock()
+        }
+    }
+}
+
 class DeviceSession(private val transport: Transport) {
 
     /**
@@ -146,45 +270,30 @@ class DeviceSession(private val transport: Transport) {
         const val ABORT_DRAIN_MS = 8000
     }
 
+    private val bomba = Bomba(transport).also { it.arrancar() }
+
     /**
-     * Un solo lector a la vez sobre el enlace.
+     * Serializa OPERACIONES, no lecturas.
      *
-     * Hace falta desde que el terminal escucha de forma continua: si el lector de reposo y
-     * una operacion leyeran a la vez, el primero se quedaria con los primeros bytes de la
-     * respuesta y la operacion los daria por perdidos. Con el cerrojo eso no puede pasar --
-     * el lector de reposo solo lee cuando no hay operacion en curso, y los bytes que
-     * recoge son por definicion no solicitados.
-     *
-     * Reentrante a proposito: `download` toma el cerrojo y por dentro llama a `exchange`,
-     * que lo vuelve a tomar.
+     * Ya no hay nada que arbitrar en el puerto --lo lee solo la bomba-- pero sigue sin tener
+     * sentido que dos comandos viajen entremezclados. Reentrante porque `download` lo toma y
+     * por dentro llama a `exchange`.
      */
-    private val cerrojo = java.util.concurrent.locks.ReentrantLock(/* fair = */ true)
+    private val cerrojo = java.util.concurrent.locks.ReentrantLock()
 
     private inline fun <T> conElEnlace(bloque: () -> T): T {
         cerrojo.lock()
         try { return bloque() } finally { cerrojo.unlock() }
     }
 
-    /**
-     * Lectura para el lector de REPOSO del terminal: lo que la placa diga por su cuenta.
-     *
-     * Devuelve vacio sin esperar si hay una operacion en curso. Insistir en el cerrojo
-     * dejaria al lector de reposo compitiendo con la descarga por cada trozo.
-     */
-    fun leerEnReposo(timeoutMs: Int): ByteArray {
-        // tryLock(0, ...) y NO tryLock(): el segundo se cuela por delante de quien ya esta
-        // esperando --esta documentado, y ocurre incluso con el cerrojo declarado justo--
-        // asi que un lector de reposo insistiendo puede dejar a una operacion esperando
-        // indefinidamente. La version con plazo respeta la cola.
-        if (!cerrojo.tryLock(0, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            return ByteArray(0)
-        }
-        try {
-            return transport.read(timeoutMs)
-        } finally {
-            cerrojo.unlock()
-        }
-    }
+    /** Bytes del enlace, ya leidos por la bomba. Vacio si no llego nada en [timeoutMs]. */
+    fun leerFlujo(timeoutMs: Int): ByteArray = bomba.leer(timeoutMs)
+
+    /** Escribe en el enlace. Las escrituras no necesitan arbitraje: cada una es atomica. */
+    fun escribir(data: ByteArray) = transport.write(data)
+
+    /** Suelta el hilo lector. Se llama ANTES de cerrar el transporte. */
+    fun cerrar() = bomba.parar()
 
     /** Lee hasta que el enlace queda en silencio [quietMs]; es como termina cada respuesta. */
     fun exchange(
@@ -203,14 +312,16 @@ class DeviceSession(private val transport: Transport) {
         // "LOGB end" delante del resultado, y con otro texto podria haber falseado un valor.
         return conElEnlace {
             if (command != null) {
-                drenarCola(quietMs = 40)
+                // Lo que hay en el buffer ANTES de escribir es de la operacion anterior. Con
+                // la bomba esto es mover un indice, no leer con una espera adivinada.
+                bomba.descartarPendiente()
                 transport.writeLine(command)
             }
             val out = java.io.ByteArrayOutputStream()
             val deadline = System.currentTimeMillis() + overallTimeoutMs
             var idle = 0
             while (idle < quietMs && System.currentTimeMillis() < deadline) {
-                val chunk = transport.read(100)
+                val chunk = bomba.leer(100)
                 if (chunk.isEmpty()) idle += 100
                 else { out.write(chunk); onChunk(chunk); idle = 0 }
             }
@@ -221,19 +332,24 @@ class DeviceSession(private val transport: Transport) {
     fun drainBanner() { exchange(null, quietMs = 600) }
 
     /**
-     * Recoge lo que YA haya llegado, sin esperar. Se usa al cerrar una operacion para que su
-     * ultimo texto no se quede en la cola, y antes de mandar un comando para que lo que
-     * quedara no se confunda con la respuesta.
+     * Recoge la cola de una operacion: lee hasta que el enlace lleve [quietMs] callado, con
+     * [maxMs] de tope. Se usa al cerrarla para que su ultimo texto no se quede esperando, y
+     * antes de mandar un comando para que lo que quedara no se confunda con la respuesta.
      *
-     * Una espera larga aqui devolveria el coste que costo quitar: el volcado por tramos
-     * terminaba tres segundos tarde cada vez por esperar un texto que ya no hacia falta.
+     * Espera de verdad, y tiene que hacerlo: el "LOGB end" llega unos milisegundos DESPUES
+     * del ultimo bloque --el bucle de descarga termina sin esperarlo-- asi que quedarse con
+     * lo que ya hay en el buffer lo dejaria para el comando siguiente, que es justo lo que
+     * esto viene a evitar.
+     *
+     * Por eso mismo no se llama cuando el cierre ya se leyo: esos [quietMs] se pagan por
+     * tramo, y con tramos cortos eran la mayor parte del tiempo de una descarga.
      */
     fun drenarCola(quietMs: Int = 120, maxMs: Int = 2000): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         val limite = System.currentTimeMillis() + maxMs
         var idle = 0
         while (idle < quietMs && System.currentTimeMillis() < limite) {
-            val c = transport.read(40)
+            val c = bomba.leer(40)
             if (c.isEmpty()) idle += 40 else { out.write(c); idle = 0 }
         }
         return out.toByteArray()
@@ -262,7 +378,7 @@ class DeviceSession(private val transport: Transport) {
         val limite = System.currentTimeMillis() + ABORT_DRAIN_MS
         var idle = 0
         while (System.currentTimeMillis() < limite) {
-            val c = transport.read(50)
+            val c = bomba.leer(50)
             if (c.isEmpty()) {
                 idle += 50
                 // Silencio prolongado: o paro, o nunca estuvo emitiendo.
@@ -483,6 +599,8 @@ class DeviceSession(private val transport: Transport) {
         var idle = 0
         var finished = false
         var switched = false
+        // Si el "LOGB end" llego, no hay cola que drenar: ya se leyo.
+        var visteElFin = false
         // Tres segundos era una eternidad para un tramo de una decena de registros. Cuando la
         // cabecera ya llego sabemos que la placa esta hablando, asi que basta con poco; si no
         // ha llegado nada se espera algo mas, por si la orden sigue en vuelo.
@@ -500,7 +618,7 @@ class DeviceSession(private val transport: Transport) {
                 // recordsPerRequest vale 0, el troceo se salta entero y toda la descarga
                 // ocurre dentro de esta funcion: abortar no tenia ningun efecto.
                 if (cancelled) throw DownloadCancelled(alreadyDone + bytes / info.recordBytes)
-                val chunk = transport.read(100)
+                val chunk = bomba.leer(100)
                 if (chunk.isEmpty()) { idle += 100; continue }
                 idle = 0
                 for (e in reader.feed(chunk)) when (e) {
@@ -533,7 +651,7 @@ class DeviceSession(private val transport: Transport) {
                             if (blocks.size >= h.blocks) finished = true
                         }
                     }
-                    LogbEvent.End -> finished = true
+                    LogbEvent.End -> { finished = true; visteElFin = true }
                 }
             }
         } finally {
@@ -542,8 +660,12 @@ class DeviceSession(private val transport: Transport) {
             // -- esperarlo costaba tres segundos de silencio por tramo. Pero no esperarlo no
             // es lo mismo que no leerlo: ese texto se quedaba en el transporte y aparecia
             // pegado al principio de la respuesta del SIGUIENTE comando, donde ademas podia
-            // estropear su parseo. Se recoge lo que ya haya llegado, sin esperar a nada.
-            drenarCola()
+            // estropear su parseo. Se recoge lo que ya haya llegado.
+            //
+            // Salvo cuando el cierre YA se leyo: entonces no queda nada que recoger y los
+            // 120 ms de silencio que exige el drenaje se pagan por tramo y por nada. Con
+            // tramos de una decena de registros eso es la mayor parte del tiempo de descarga.
+            if (!visteElFin) drenarCola()
         }
 
         val h = header ?: run {
