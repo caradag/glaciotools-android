@@ -21,15 +21,15 @@ class GpsExportTest {
         val lineas = csv.trim().lines()
         val datos = lineas.filterNot { it.startsWith("#") }
         assertEquals(1 + muestras.size, datos.size, "faltan o sobran filas")
-        assertTrue(datos[0].startsWith("index,time_utc,"))
+        assertTrue(datos[0].startsWith("index,session,time_utc,"))
         val primera = datos[1].split(",")
         assertEquals("1", primera[0])
-        assertEquals("2023-11-14T22:13:20Z", primera[1])
+        assertEquals("2023-11-14T22:13:20Z", primera[2])
         // El easting proyectado tiene que coincidir con proyectar esa muestra a mano, en la
         // zona del punto: si el export proyectara por su cuenta podria elegir otra.
         val esperado = Utm.fromLatLon(muestras[0].latitude, muestras[0].longitude,
                                       forceZone = stats.zone)
-        assertEquals(esperado.easting, primera[6].toDouble(), 0.01)
+        assertEquals(esperado.easting, primera[8].toDouble(), 0.01)
     }
 
     @Test
@@ -62,12 +62,12 @@ class GpsExportTest {
         assertTrue(gpx.startsWith("<?xml"))
         assertEquals(1, Regex("<wpt ").findAll(gpx).count())
         assertTrue("<name>Estaca 3</name>" in gpx)
-        assertTrue("Median of 20 fixes" in gpx, "el waypoint no dice de donde sale")
+        assertTrue("Weighted mean of 20 fixes" in gpx, "el waypoint no dice de donde sale")
         assertTrue("uncertainty of the estimate" in gpx)
         assertTrue(gpx.trimEnd().endsWith("</gpx>"))
         // La latitud del waypoint es la de la mediana proyectada, no la de una muestra.
         val lat = Regex("""lat="([-\d.]+)"""").find(gpx)!!.groupValues[1].toDouble()
-        assertEquals(stats.medianLatitude, lat, 1e-7)
+        assertEquals(stats.estimateLatitude, lat, 1e-7)
     }
 
     @Test

@@ -100,6 +100,10 @@ class GpsViewModel : ViewModel() {
 
         val previas = pointId?.let { store?.load(it)?.samples } ?: emptyList()
         averager.addAll(previas)
+        // El tramo se abre DESPUES de cargar lo viejo: las muestras de disco traen el suyo y
+        // heredar el de ahora haria que dos visitas contaran como una sola, prometiendo mas
+        // informacion independiente de la que hay.
+        averager.startSession()
 
         _state.value = _state.value.copy(
             error = null, note = null, gpsUnavailable = false,
@@ -115,7 +119,32 @@ class GpsViewModel : ViewModel() {
                 // viejas ya estan en pantalla y decir "esperando la primera" seria mentir.
                 waiting = previas.isEmpty(),
             ))
+        escuchar(loc)
+    }
 
+    /**
+     * Reanuda tras una pausa SIN perder nada de lo medido.
+     *
+     * Antes esto llamaba a `startAveraging`, que rehace el promediador desde cero y recarga
+     * de disco: todo lo que no estuviera guardado se perdia al reanudar, que es justo lo
+     * contrario de lo que hace una pausa.
+     *
+     * Se abre un tramo NUEVO. Entre pausar y reanudar pasa tiempo, y ese tiempo decorrelaciona:
+     * tratar los dos lados de la pausa como un solo tramo prometeria menos incertidumbre de
+     * la que hay.
+     */
+    fun resumeAveraging() {
+        val loc = location ?: return
+        if (_state.value.averaging == null) return
+        requestLocationPermission?.invoke()
+        averager.startSession()
+        _state.value = _state.value.copy(
+            error = null, gpsUnavailable = false,
+            averaging = _state.value.averaging?.copy(running = true))
+        escuchar(loc)
+    }
+
+    private fun escuchar(loc: LocationSource) {
         recogida?.cancel()
         recogida = viewModelScope.launch {
             var llego = false
@@ -162,8 +191,10 @@ class GpsViewModel : ViewModel() {
     }
 
     /**
-     * Guarda lo acumulado en esta sesion. Se puede llamar varias veces: escribe solo lo
-     * pendiente, asi que guardar a mitad y seguir midiendo no duplica nada.
+     * Guarda lo medido y vuelve a la lista.
+     *
+     * Escribe solo lo PENDIENTE, no todo: guardar un punto al que ya se le habian anadido
+     * muestras en otra visita no las duplica.
      */
     fun saveAveraging(name: String) {
         val s = store ?: return
@@ -176,10 +207,12 @@ class GpsViewModel : ViewModel() {
         if (a.pointId != null && name.isNotBlank() && name != a.name) s.rename(id, name)
         s.append(id, pendientes.toList())
         pendientes.clear()
+        recogida?.cancel(); recogida = null
+        averager = GpsAverager()
         _state.value = _state.value.copy(
             points = s.list(),
-            note = "Saved: ${a.samples.size} fixes",
-            averaging = a.copy(pointId = id, name = name.ifBlank { a.name }, unsaved = 0))
+            note = "Saved “${name.ifBlank { a.name }}”: ${a.samples.size} fixes",
+            averaging = null)
     }
 
     /** Cierra la sesion. Lo no guardado se pierde, y quien llama ya lo ha advertido. */

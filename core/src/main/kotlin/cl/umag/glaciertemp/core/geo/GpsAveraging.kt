@@ -2,83 +2,49 @@ package cl.umag.glaciertemp.core.geo
 
 import kotlin.math.sqrt
 
-/** Una lectura suelta del receptor. Es el dato crudo: no se promedia ni se filtra nada. */
+/**
+ * Una lectura suelta del receptor. Es el dato crudo: no se promedia ni se filtra nada.
+ *
+ * [sessionStartMillis] dice a que TRAMO CONTINUO de medida pertenece, y se identifica por el
+ * instante en que empezo ese tramo en vez de por un numero de orden. Un instante significa
+ * lo mismo se lea el fichero cuando se lea y se mezcle con lo que se mezcle; un indice
+ * depende de cuantos tramos hubiera antes, y al anadir muestras a un fichero ya escrito
+ * habria que saber por cual iba.
+ *
+ * El tramo importa porque dos muestras del mismo tramo se parecen mucho mas entre si que dos
+ * de tramos distintos, y de eso depende cuanta informacion hay de verdad. Ver [WeightedEstimate].
+ */
 data class GpsSample(
     val epochMillis: Long,
     val latitude: Double,
     val longitude: Double,
     val altitudeMetres: Double? = null,
+    /** Radio de confianza del 68 % en horizontal, tal como lo declara el receptor. */
     val accuracyMetres: Double? = null,
+    /** Lo mismo en vertical. Es peor que el horizontal, tipicamente por un factor de dos. */
+    val verticalAccuracyMetres: Double? = null,
+    val sessionStartMillis: Long = 0L,
 )
-
-/**
- * Como se reparte una magnitud a lo largo de las muestras.
- *
- * Lleva TRES numeros y no uno porque responden a preguntas distintas:
- *
- *  - [median] es la estimacion. Mediana y no media porque un GPS suelta de vez en cuando una
- *    posicion muy lejos del resto, y una sola de esas arrastra la media varios metros
- *    mientras que a la mediana no le hace nada.
- *  - [sd] es lo que se dispersan las muestras. NO baja al seguir midiendo; describe al
- *    receptor y al sitio, no a la estimacion.
- *  - [standardError] es lo que baja. Es la incertidumbre de la propia mediana, y es el
- *    numero que de verdad mejora mientras uno deja el aparato quieto.
- *
- * Ensenar solo [sd] es lo que hace que alguien mire la pantalla diez minutos, vea que el
- * numero no baja y concluya que promediar no sirve para nada.
- */
-data class Dispersion(
-    val n: Int,
-    val median: Double,
-    val mean: Double,
-    val sd: Double,
-) {
-    /**
-     * Incertidumbre de la estimacion: sd partido por la raiz de n.
-     *
-     * OPTIMISTA a proposito conocido. La formula supone muestras independientes y las
-     * posiciones sucesivas de un GPS no lo son ni de lejos -- la misma geometria de
-     * satelites y la misma ionosfera sesgan minutos enteros en la misma direccion. El error
-     * real baja mas despacio que esto. Sirve para saber CUANDO deja de valer la pena seguir,
-     * no para escribir una barra de error en un articulo.
-     */
-    val standardError: Double get() = if (n > 1) sd / sqrt(n.toDouble()) else sd
-
-    companion object {
-        fun of(values: List<Double>): Dispersion {
-            if (values.isEmpty()) return Dispersion(0, Double.NaN, Double.NaN, Double.NaN)
-            val orden = values.sorted()
-            val n = orden.size
-            val mediana = if (n % 2 == 1) orden[n / 2]
-                          else (orden[n / 2 - 1] + orden[n / 2]) / 2.0
-            val media = values.sum() / n
-            // Con n-1 y no con n: con una sola muestra no hay dispersion que medir, y
-            // dividir por n daria cero, que se lee como "medida perfecta".
-            val sd = if (n < 2) 0.0
-                     else sqrt(values.sumOf { (it - media) * (it - media) } / (n - 1))
-            return Dispersion(n, mediana, media, sd)
-        }
-    }
-}
 
 /** Lo que se sabe de un punto tras promediar. Todo se deriva de las muestras, nada se guarda. */
 data class GpsPointStats(
     val samples: Int,
+    val sessions: Int,
     val zone: Int,
     val north: Boolean,
     val band: Char,
-    val easting: Dispersion,
-    val northing: Dispersion,
+    val easting: Axis,
+    val northing: Axis,
     /** null cuando ninguna muestra trajo altitud: un arreglo 2D no la tiene. */
-    val altitude: Dispersion?,
-    val medianLatitude: Double,
-    val medianLongitude: Double,
+    val altitude: Axis?,
+    val estimateLatitude: Double,
+    val estimateLongitude: Double,
     val firstEpochMillis: Long,
     val lastEpochMillis: Long,
 ) {
-    /** La mediana como coordenada UTM, que es como se ensena y como se escribe en la libreta. */
-    val medianUtm: UtmCoord
-        get() = UtmCoord(zone, north, easting.median, northing.median, band)
+    /** La estimacion como coordenada UTM, que es como se escribe en la libreta. */
+    val estimateUtm: UtmCoord
+        get() = UtmCoord(zone, north, easting.estimate, northing.estimate, band)
 
     /** Incertidumbre horizontal combinada de la estimacion, en metros. */
     val horizontalStandardError: Double
@@ -88,6 +54,9 @@ data class GpsPointStats(
     /** Dispersion horizontal de las muestras, en metros. */
     val horizontalSd: Double
         get() = sqrt(easting.sd * easting.sd + northing.sd * northing.sd)
+
+    /** Cuantas muestras se descartaron por apartarse demasiado del resto. */
+    val rejected: Int get() = maxOf(easting.rejected, northing.rejected)
 
     val durationSeconds: Long get() = (lastEpochMillis - firstEpochMillis) / 1000
 }
@@ -112,6 +81,17 @@ class GpsAverager(primera: GpsSample? = null) {
     private val este = ArrayList<Double>()
     private val norte = ArrayList<Double>()
 
+    /**
+     * El tramo al que se apuntan las muestras nuevas.
+     *
+     * Cada vez que se empieza o se reanuda la recogida se abre uno: entre pulsar Pausa y
+     * pulsar Reanudar pasa tiempo, y ese tiempo decorrelaciona. Tratar los dos lados de la
+     * pausa como un solo tramo prometeria menos incertidumbre de la que hay.
+     */
+    var currentSession: Long = 0L; private set
+
+    fun startSession(atMillis: Long = System.currentTimeMillis()) { currentSession = atMillis }
+
     /** Zona y hemisferio en los que se proyecta TODO, fijados por la primera muestra. */
     var zone: Int = 0; private set
     var north: Boolean = true; private set
@@ -125,7 +105,12 @@ class GpsAverager(primera: GpsSample? = null) {
     val size: Int get() = muestras.size
     fun samples(): List<GpsSample> = muestras.toList()
 
-    fun add(s: GpsSample) {
+    fun add(raw: GpsSample) {
+        // La muestra se apunta al tramo abierto salvo que ya venga con uno --que es lo que
+        // pasa al cargar de disco, donde el tramo ya esta decidido.
+        val s = if (raw.sessionStartMillis != 0L) raw
+                else raw.copy(sessionStartMillis =
+                    if (currentSession != 0L) currentSession else raw.epochMillis)
         if (muestras.isEmpty()) {
             zone = Utm.zoneFor(s.latitude, s.longitude)
             north = s.latitude >= 0
@@ -148,16 +133,31 @@ class GpsAverager(primera: GpsSample? = null) {
 
     fun stats(): GpsPointStats? {
         if (muestras.isEmpty()) return null
-        val alturas = muestras.mapNotNull { it.altitudeMetres }
-        val e = Dispersion.of(este)
-        val n = Dispersion.of(norte)
-        val (lat, lon) = Utm.toLatLon(UtmCoord(zone, north, e.median, n.median, band))
+        // Los tramos se numeran de forma densa a partir de sus instantes de inicio: al
+        // estimador le basta con saber cuales van juntas, no cuando fue cada una.
+        val orden = muestras.map { it.sessionStartMillis }.distinct().sorted()
+        val tramo = muestras.map { orden.indexOf(it.sessionStartMillis) }
+
+        val e = WeightedEstimate.of(este, muestras.map { it.accuracyMetres }, tramo)
+        val n = WeightedEstimate.of(norte, muestras.map { it.accuracyMetres }, tramo)
+        if (e == null || n == null) return null
+
+        // La altitud se pondera con SU propia precision, no con la horizontal: un GNSS la
+        // estima peor, tipicamente por un factor de dos, y usar el numero horizontal
+        // afirmaria una calidad vertical que el receptor no ha declarado.
+        val conAltura = muestras.indices.filter { muestras[it].altitudeMetres != null }
+        val alt = if (conAltura.isEmpty()) null else WeightedEstimate.of(
+            conAltura.map { muestras[it].altitudeMetres!! },
+            conAltura.map { muestras[it].verticalAccuracyMetres },
+            conAltura.map { tramo[it] })
+
+        val (lat, lon) = Utm.toLatLon(UtmCoord(zone, north, e.estimate, n.estimate, band))
         return GpsPointStats(
             samples = muestras.size,
+            sessions = orden.size,
             zone = zone, north = north, band = band,
-            easting = e, northing = n,
-            altitude = if (alturas.isEmpty()) null else Dispersion.of(alturas),
-            medianLatitude = lat, medianLongitude = lon,
+            easting = e, northing = n, altitude = alt,
+            estimateLatitude = lat, estimateLongitude = lon,
             firstEpochMillis = muestras.minOf { it.epochMillis },
             lastEpochMillis = muestras.maxOf { it.epochMillis },
         )

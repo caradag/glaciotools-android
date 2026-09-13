@@ -43,42 +43,74 @@ class GpsAveragingTest {
         assertEquals(400, s.samples)
         // Con cuatrocientas muestras y cuatro metros de ruido, la mediana tiene que quedarse
         // muy dentro del metro. Se compara contra el punto de verdad, no contra si misma.
-        assertTrue(Utm.planarDistance(s.medianUtm, verdadero) < 1.0,
-                   "la mediana quedo a ${Utm.planarDistance(s.medianUtm, verdadero)} m")
+        assertTrue(Utm.planarDistance(s.estimateUtm, verdadero) < 1.0,
+                   "la mediana quedo a ${Utm.planarDistance(s.estimateUtm, verdadero)} m")
     }
 
     @Test
-    fun `una muestra disparatada no arrastra la mediana, pero si la media`() {
-        // Es la razon entera de usar mediana: un GPS suelta de vez en cuando una posicion a
-        // cientos de metros, y con la media basta UNA para estropear media hora de trabajo.
-        val buenas = nube(200, sigma = 3.0).toMutableList()
-        val a = GpsAverager(); a.addAll(buenas)
-        val medianaAntes = assertNotNull(a.stats()).easting.median
-        val mediaAntes = a.stats()!!.easting.mean
+    fun `una muestra disparatada se descarta antes de ponderar`() {
+        // La media ponderada no aguanta sola un arreglo a cientos de metros -- y menos aun
+        // si el receptor lo declara preciso, porque entonces le daria MAS peso. De ahi el
+        // cribado por MAD antes de ponderar nada.
+        val a = GpsAverager(); a.addAll(nube(200, sigma = 3.0))
+        val antes = assertNotNull(a.stats()).easting.estimate
 
-        a.add(GpsSample(1_700_000_999_000L, lat0 + 0.005, lon0 + 0.005, 120.0, 50.0))
+        a.add(GpsSample(1_700_000_999_000L, lat0 + 0.005, lon0 + 0.005, 120.0, 0.5))
         val despues = assertNotNull(a.stats())
 
-        assertTrue(abs(despues.easting.median - medianaAntes) < 1.0,
-                   "la mediana se movio ${abs(despues.easting.median - medianaAntes)} m")
-        assertTrue(abs(despues.easting.mean - mediaAntes) > 1.0,
-                   "la media no se movio, asi que el caso de prueba no prueba nada")
+        assertEquals(1, despues.rejected, "no se descarto el disparate")
+        assertTrue(abs(despues.easting.estimate - antes) < 0.5,
+                   "el disparate movio la estimacion ${abs(despues.easting.estimate - antes)} m")
     }
 
     @Test
-    fun `la incertidumbre baja al seguir midiendo y la dispersion no`() {
-        // La distincion que hace util la pantalla. Si solo se ensenara la desviacion tipica,
-        // uno mira diez minutos, ve que el numero no baja y concluye que promediar no sirve.
+    fun `mas muestras independientes reducen la incertidumbre de la estimacion`() {
+        // Lo que baja al seguir midiendo es la incertidumbre de la estimacion, no la
+        // dispersion de las muestras: son dos cosas y responden a preguntas distintas.
         val corta = GpsAverager().apply { addAll(nube(25, sigma = 5.0)) }.stats()!!
         val larga = GpsAverager().apply { addAll(nube(1600, sigma = 5.0)) }.stats()!!
 
         assertTrue(larga.horizontalStandardError < corta.horizontalStandardError / 4,
                    "la incertidumbre no bajo: ${corta.horizontalStandardError} -> " +
                    "${larga.horizontalStandardError}")
-        // La dispersion describe al receptor y al sitio: con mas muestras se estima mejor,
-        // pero no se hace pequena.
-        assertTrue(abs(larga.horizontalSd - corta.horizontalSd) < corta.horizontalSd * 0.5,
-                   "la dispersion cambio de orden: ${corta.horizontalSd} -> ${larga.horizontalSd}")
+    }
+
+    @Test
+    fun `la dispersion mide el ruido del receptor y puede subir o bajar`() {
+        // La dispersion NO esta atada al numero de muestras: describe como de ruidoso esta
+        // el receptor. Si el receptor mejora a mitad de sesion --que es lo normal, los
+        // primeros arreglos son los peores-- la dispersion baja; si empeora, sube.
+        val malas = nube(200, sigma = 10.0, semilla = 1)
+        val buenas = nube(200, sigma = 2.0, semilla = 2)
+
+        val empeorando = GpsAverager().apply { addAll(buenas); addAll(malas) }.stats()!!
+        val mejorando = GpsAverager().apply { addAll(malas); addAll(buenas) }.stats()!!
+        val soloBuenas = GpsAverager().apply { addAll(buenas) }.stats()!!
+
+        assertTrue(soloBuenas.horizontalSd < mejorando.horizontalSd,
+                   "un tramo ruidoso al principio tiene que dejarse notar en la dispersion")
+        // Y no depende del ORDEN: la dispersion es una propiedad del conjunto.
+        assertEquals(mejorando.horizontalSd, empeorando.horizontalSd, 1e-9)
+    }
+
+    @Test
+    fun `un arreglo preciso pesa mas que uno impreciso`() {
+        // Dos tandas contradictorias; la que el receptor declara buena manda.
+        val a = GpsAverager()
+        repeat(50) { i ->
+            a.add(GpsSample(1_700_000_000_000L + i * 1000L, lat0, lon0, 120.0, 20.0))
+        }
+        repeat(50) { i ->
+            a.add(GpsSample(1_700_000_100_000L + i * 1000L,
+                            lat0 + 0.0001, lon0, 120.0, 1.0))
+        }
+        val s = assertNotNull(a.stats())
+        val flojo = Utm.fromLatLon(lat0, lon0, forceZone = s.zone)
+        val bueno = Utm.fromLatLon(lat0 + 0.0001, lon0, forceZone = s.zone)
+
+        assertTrue(Utm.planarDistance(s.estimateUtm, bueno) <
+                   Utm.planarDistance(s.estimateUtm, flojo),
+                   "la estimacion no se fue hacia los arreglos precisos")
     }
 
     @Test
@@ -90,6 +122,41 @@ class GpsAveragingTest {
     }
 
     @Test
+    fun `pausar y reanudar conserva lo medido y abre un tramo nuevo`() {
+        // El fallo que esto fija: reanudar rehacia el promediador desde cero y recargaba de
+        // disco, con lo que todo lo que no estuviera guardado se perdia -- justo lo contrario
+        // de lo que hace una pausa.
+        val a = GpsAverager()
+        a.startSession(1_700_000_000_000L)
+        a.addAll(nube(40, sigma = 4.0, semilla = 1))
+
+        // Pausa. Nada se toca. Reanudar solo abre tramo.
+        a.startSession(1_700_000_300_000L)
+        a.addAll(nube(40, sigma = 4.0, semilla = 2))
+
+        val s = assertNotNull(a.stats())
+        assertEquals(80, a.size, "reanudar se llevo por delante lo de antes")
+        assertEquals(80, s.samples)
+        // Y los dos lados de la pausa no son el mismo tramo: entre uno y otro pasa tiempo, y
+        // ese tiempo decorrelaciona. Contarlos como uno prometeria menos error del que hay.
+        assertEquals(2, s.sessions)
+    }
+
+    @Test
+    fun `dos visitas cuentan como dos tramos y no como uno`() {
+        val a = GpsAverager()
+        a.startSession(1_700_000_000_000L)
+        a.addAll(nube(100, sigma = 4.0, semilla = 1))
+        a.startSession(1_700_600_000_000L)     // una semana despues
+        a.addAll(nube(100, sigma = 4.0, semilla = 2).map {
+            it.copy(epochMillis = it.epochMillis + 600_000_000L) })
+
+        val s = assertNotNull(a.stats())
+        assertEquals(2, s.sessions)
+        assertEquals(200, s.samples)
+    }
+
+    @Test
     fun `junto a un meridiano de zona la nube no se parte en dos`() {
         // El fallo que esto evita es espectacular: media nube con easting 700.000 y la otra
         // media con 300.000, y la mediana en medio del oceano a cientos de kilometros.
@@ -98,8 +165,8 @@ class GpsAveragingTest {
         val s = assertNotNull(a.stats())
         val verdadero = Utm.fromLatLon(-53.0, -72.0, forceZone = s.zone)
 
-        assertTrue(Utm.planarDistance(s.medianUtm, verdadero) < 2.0,
-                   "la mediana quedo a ${Utm.planarDistance(s.medianUtm, verdadero)} m")
+        assertTrue(Utm.planarDistance(s.estimateUtm, verdadero) < 2.0,
+                   "la mediana quedo a ${Utm.planarDistance(s.estimateUtm, verdadero)} m")
         assertTrue(s.easting.sd < 20.0, "la nube se partio: sd = ${s.easting.sd} m")
         // Y se dice cuantas cayeron al otro lado, en vez de callarlo.
         assertTrue(a.outOfZone > 0, "el caso de prueba no esta sobre el meridiano")
@@ -117,29 +184,20 @@ class GpsAveragingTest {
     }
 
     @Test
-    fun `con una sola muestra no se finge precision`() {
+    fun `con una sola muestra la incertidumbre es la que declara el receptor`() {
         val a = GpsAverager(GpsSample(1_700_000_000_000L, lat0, lon0, 120.0, 8.0))
         val s = assertNotNull(a.stats())
         assertEquals(1, s.samples)
-        // Cero dispersion es correcto --no hay dos valores que comparar-- pero la
-        // incertidumbre NO puede salir cero: eso se leeria como una medida perfecta.
+        // Cero dispersion es correcto: no hay dos valores que comparar. Pero la
+        // incertidumbre NO puede salir cero, que se leeria como una medida perfecta; es la
+        // precision que el propio receptor declaro.
         assertEquals(0.0, s.easting.sd)
-        assertEquals(0.0, s.horizontalStandardError)
+        assertEquals(8.0, s.easting.standardError, 0.01)
         assertEquals(1, s.easting.n)
     }
 
     @Test
     fun `sin muestras no hay estadistica que dar`() {
         assertNull(GpsAverager().stats())
-        assertEquals(0, Dispersion.of(emptyList()).n)
-    }
-
-    @Test
-    fun `la mediana de un numero par de valores es el promedio de los dos de en medio`() {
-        val d = Dispersion.of(listOf(1.0, 2.0, 3.0, 4.0))
-        assertEquals(2.5, d.median)
-        assertEquals(2.5, d.mean)
-        val impar = Dispersion.of(listOf(1.0, 2.0, 100.0))
-        assertEquals(2.0, impar.median, "la mediana ignora el valor disparatado")
     }
 }

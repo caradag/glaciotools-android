@@ -53,7 +53,7 @@ class GpsPointStore(private val dir: File) {
         if (samples.isEmpty()) return
         val f = file(id)
         if (!f.exists()) return
-        f.appendText(samples.joinToString("") { GpsPointFile.sampleLine(it) })
+        f.appendText(GpsPointFile.appendBlock(samples))
     }
 
     fun load(id: String): GpsPointFile.Parsed? =
@@ -66,7 +66,7 @@ class GpsPointStore(private val dir: File) {
         // intacto y lo que se pierde es el cambio de nombre, no las muestras.
         val tmp = File(dir, "$id.tmp")
         tmp.writeText(GpsPointFile.header(p.header.copy(name = name)) +
-                      p.samples.joinToString("") { GpsPointFile.sampleLine(it) })
+                      GpsPointFile.appendBlock(p.samples))
         val ok = tmp.renameTo(file(id))
         if (!ok) tmp.delete()
         return ok

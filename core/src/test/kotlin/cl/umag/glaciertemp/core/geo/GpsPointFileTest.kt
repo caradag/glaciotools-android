@@ -59,6 +59,40 @@ class GpsPointFileTest {
     }
 
     @Test
+    fun `las marcas separan los tramos, y repetirlas no abre uno nuevo`() {
+        val a = muestras.map { it.copy(sessionStartMillis = 1000L) }
+        val b = muestras.map { it.copy(sessionStartMillis = 9000L, epochMillis = it.epochMillis + 999999) }
+        // Dos guardados dentro del MISMO tramo: la marca se escribe dos veces a proposito,
+        // porque asi quien escribe no necesita saber que habia ya en el fichero.
+        val texto = GpsPointFile.header(cabecera) +
+                    GpsPointFile.appendBlock(a.take(2)) +
+                    GpsPointFile.appendBlock(a.drop(2)) +
+                    GpsPointFile.appendBlock(b)
+
+        val p = assertNotNull(GpsPointFile.parse(texto))
+        assertEquals(listOf(1000L, 9000L), p.sessionStarts, "la marca repetida partio el tramo")
+        assertEquals(6, p.samples.size)
+        assertEquals(0, p.skipped, "las marcas se contaron como lineas rotas")
+    }
+
+    @Test
+    fun `un fichero sin marcas reparte los tramos por los huecos`() {
+        // Ficheros escritos antes de que existieran las marcas. Tratar dos visitas como una
+        // sola haria creer que hay mucha mas informacion independiente de la que hay.
+        val seguidas = (0 until 5).map {
+            GpsSample(1_700_000_000_000L + it * 1000L, -53.1638, -70.9171) }
+        val otroDia = (0 until 5).map {
+            GpsSample(1_700_500_000_000L + it * 1000L, -53.1638, -70.9171) }
+        val texto = GpsPointFile.header(cabecera) +
+                    (seguidas + otroDia).joinToString("") { GpsPointFile.sampleLine(it) }
+
+        val p = assertNotNull(GpsPointFile.parse(texto))
+        assertEquals(2, p.sessionStarts.size, "no separo las dos visitas")
+        assertEquals(1_700_000_000_000L, p.samples.first().sessionStartMillis)
+        assertEquals(1_700_500_000_000L, p.samples.last().sessionStartMillis)
+    }
+
+    @Test
     fun `un fichero que no lo es se rechaza en vez de dar un punto vacio`() {
         assertNull(GpsPointFile.parse("cualquier cosa"))
         assertNull(GpsPointFile.parse(""))
@@ -75,7 +109,8 @@ class GpsPointFileTest {
             java.util.Locale.setDefault(java.util.Locale.forLanguageTag("es-CL"))
             val linea = GpsPointFile.sampleLine(muestras[0])
             assertFalse(linea.contains(","+"53"), "escribio la latitud con coma decimal: $linea")
-            assertEquals(5, linea.trim().split(",").size, "columnas de mas: $linea")
+            assertEquals(GpsPointFile.COLUMNS.split(",").size,
+                         linea.trim().split(",").size, "columnas de mas: $linea")
             assertNotNull(GpsPointFile.parse(fichero()))
         } finally {
             java.util.Locale.setDefault(previo)

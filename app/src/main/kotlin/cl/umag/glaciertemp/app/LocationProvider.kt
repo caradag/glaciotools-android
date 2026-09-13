@@ -151,6 +151,12 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
                     // Android devuelve 0.0, que a nivel del mar pasa por una medida buena.
                     altitudeMetres = if (loc.hasAltitude()) loc.altitude else null,
                     accuracyMetres = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null,
+                    // La vertical por separado: un GNSS la estima peor que la horizontal,
+                    // tipicamente por un factor de dos. Usar el numero horizontal para
+                    // ponderar la altitud afirmaria una calidad que el receptor no dio.
+                    verticalAccuracyMetres =
+                        if (loc.hasVerticalAccuracy()) loc.verticalAccuracyMeters.toDouble()
+                        else null,
                 ))
             }
             runCatching {

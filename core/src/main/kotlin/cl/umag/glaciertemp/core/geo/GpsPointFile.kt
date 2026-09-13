@@ -17,7 +17,23 @@ package cl.umag.glaciertemp.core.geo
 object GpsPointFile {
 
     const val SEPARATOR = "---"
-    const val COLUMNS = "epochMillis,latitude,longitude,altitudeMetres,accuracyMetres"
+    const val COLUMNS =
+        "epochMillis,latitude,longitude,altitudeMetres,accuracyMetres,verticalAccuracyMetres"
+
+    /**
+     * Marca de tramo. Lleva el instante en que empezo el tramo y no un numero de orden: al
+     * anadir muestras a un fichero ya escrito habria que saber por cual iba, y el instante
+     * no depende de nada. Repetir la misma marca no abre un tramo nuevo, lo que hace que
+     * escribirla al principio de cada guardado sea inofensivo.
+     */
+    const val SESSION_MARK = "#session,"
+
+    /**
+     * Separacion a partir de la cual se supone que hubo un corte, en ficheros escritos antes
+     * de que existieran las marcas. Dos minutos: mas que cualquier hueco entre arreglos
+     * seguidos y menos que cualquier pausa de verdad.
+     */
+    const val INFERRED_GAP_MS = 120_000L
 
     /** Lo que identifica a un punto, sin sus muestras. */
     data class Header(
@@ -40,11 +56,48 @@ object GpsPointFile {
     fun sampleLine(s: GpsSample): String =
         "${s.epochMillis},${fmt(s.latitude, 8)},${fmt(s.longitude, 8)}," +
         "${s.altitudeMetres?.let { fmt(it, 3) } ?: ""}," +
-        "${s.accuracyMetres?.let { fmt(it, 2) } ?: ""}\n"
+        "${s.accuracyMetres?.let { fmt(it, 2) } ?: ""}," +
+        "${s.verticalAccuracyMetres?.let { fmt(it, 2) } ?: ""}\n"
+
+    /**
+     * Un lote listo para anadir al final, con las marcas de tramo donde corresponda.
+     *
+     * La marca se escribe al principio SIEMPRE y dentro del lote cada vez que cambia el
+     * tramo. Escribirla de mas no hace nada --una marca repetida no abre tramo nuevo-- y eso
+     * es lo que permite que esto no necesite saber que habia ya en el fichero.
+     */
+    fun appendBlock(samples: List<GpsSample>): String {
+        if (samples.isEmpty()) return ""
+        val sb = StringBuilder()
+        var tramo = Long.MIN_VALUE
+        samples.forEach { s ->
+            if (s.sessionStartMillis != tramo) {
+                tramo = s.sessionStartMillis
+                sb.append(SESSION_MARK).append(tramo).append('\n')
+            }
+            sb.append(sampleLine(s))
+        }
+        return sb.toString()
+    }
 
     private fun fmt(v: Double, d: Int) = "%.${d}f".format(java.util.Locale.ROOT, v)
 
-    data class Parsed(val header: Header, val samples: List<GpsSample>, val skipped: Int)
+    data class Parsed(val header: Header, val samples: List<GpsSample>, val skipped: Int) {
+        /** Los tramos que hay, en orden. */
+        val sessionStarts: List<Long>
+            get() = samples.map { it.sessionStartMillis }.distinct().sorted()
+    }
+
+    private fun inferirTramos(muestras: List<GpsSample>): List<GpsSample> {
+        if (muestras.isEmpty()) return muestras
+        var inicio = muestras.first().epochMillis
+        var anterior = inicio
+        return muestras.map { s ->
+            if (s.epochMillis - anterior > INFERRED_GAP_MS) inicio = s.epochMillis
+            anterior = s.epochMillis
+            s.copy(sessionStartMillis = inicio)
+        }
+    }
 
     /**
      * Lee un fichero de punto. Las lineas que no se entienden se CUENTAN y se saltan.
@@ -76,9 +129,17 @@ object GpsPointFile {
 
         val muestras = ArrayList<GpsSample>()
         var saltadas = 0
+        var tramo = 0L
+        var huboMarcas = false
         for (l in lineas.drop(corte + 1)) {
             val t = l.trim()
             if (t.isEmpty() || t.startsWith("epochMillis")) continue
+            if (t.startsWith(SESSION_MARK)) {
+                t.removePrefix(SESSION_MARK).toLongOrNull()?.let { tramo = it; huboMarcas = true }
+                continue
+            }
+            // Cualquier otro comentario se ignora sin contarlo como linea rota.
+            if (t.startsWith("#")) continue
             val c = t.split(",")
             if (c.size < 3) { saltadas++; continue }
             val ms = c[0].toLongOrNull()
@@ -89,8 +150,16 @@ object GpsPointFile {
                 epochMillis = ms, latitude = lat, longitude = lon,
                 altitudeMetres = c.getOrNull(3)?.takeIf { it.isNotBlank() }?.toDoubleOrNull(),
                 accuracyMetres = c.getOrNull(4)?.takeIf { it.isNotBlank() }?.toDoubleOrNull(),
+                verticalAccuracyMetres =
+                    c.getOrNull(5)?.takeIf { it.isNotBlank() }?.toDoubleOrNull(),
+                sessionStartMillis = tramo,
             ))
         }
-        return Parsed(Header(id, name, created), muestras, saltadas)
+        // Un fichero escrito antes de que existieran las marcas no dice donde acaba un tramo,
+        // pero lo dicen los huecos: entre dos arreglos seguidos pasan segundos, y entre dos
+        // visitas, horas o dias. Suponerlo es mejor que tratar dos visitas como una sola, que
+        // es lo que haria creer que hay mucha mas informacion independiente de la que hay.
+        val finales = if (huboMarcas) muestras else inferirTramos(muestras)
+        return Parsed(Header(id, name, created), finales, saltadas)
     }
 }

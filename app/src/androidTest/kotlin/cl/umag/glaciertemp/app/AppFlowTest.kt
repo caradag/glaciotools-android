@@ -246,7 +246,7 @@ class AppFlowTest {
         rule.onNodeWithTag("gps-save").assertIsNotEnabled()
 
         // Salir sin nada pendiente no pregunta nada.
-        rule.onNodeWithTag("gps-done").performScrollTo().performClick()
+        rule.onNodeWithTag("gps-discard").performScrollTo().performClick()
         waitForTag("gps-new")
 
         // Y se vuelve al repartidor, que es de donde se vino.

@@ -130,6 +130,10 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
             verticalAlignment = Alignment.CenterVertically) {
             Text("${a.samples.size} fixes", style = MaterialTheme.typography.titleMedium,
                  modifier = Modifier.testTag("gps-count"))
+            st?.takeIf { it.sessions > 1 }?.let {
+                Text("in ${it.sessions} sessions", style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (a.running) {
                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
             }
@@ -163,47 +167,28 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
         }
 
         if (st != null) {
-            Text("Horizontal", style = MaterialTheme.typography.titleSmall)
-            ScatterPlot(a.projected, st.easting.median, st.northing.median,
-                        Modifier.fillMaxWidth().height(240.dp).testTag("gps-scatter"))
-            Cifras(st)
-
-            Spacer(Modifier.height(4.dp))
-            Text("Altitude", style = MaterialTheme.typography.titleSmall)
-            val alturas = a.samples.mapNotNull { it.altitudeMetres }
-            val alt = st.altitude
-            if (alt == null) {
-                Text("No altitude in these fixes (2D solution).",
-                     style = MaterialTheme.typography.bodySmall,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                AltitudePlot(
-                    a.samples.filter { it.altitudeMetres != null }.map { it.epochMillis },
-                    alturas, alt,
-                    Modifier.fillMaxWidth().height(160.dp).testTag("gps-altitude"))
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    BigReading("Altitude", f(alt.median, 1), "m", Modifier.weight(1f))
-                    BigReading("sd", f(alt.sd, 2), "m", Modifier.weight(1f))
-                    BigReading("± est.", f(alt.standardError, 2), "m", Modifier.weight(1f))
-                }
-            }
+            GraficosYCifras(st, a.projected, a.samples.mapNotNull { it.altitudeMetres },
+                            etiquetar = true)
         }
 
         HorizontalDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Guardar es ademas terminar: no hay un "Done" aparte, porque tenerlo obligaba a
+            // pulsar dos botones para lo unico que uno quiere hacer al acabar.
             Button(onClick = { vm.saveAveraging(nombre) },
                    enabled = a.samples.isNotEmpty(),
-                   modifier = Modifier.testTag("gps-save")) { Text("Save") }
+                   modifier = Modifier.testTag("gps-save")) { Text("Save and finish") }
             if (a.running) {
                 OutlinedButton(onClick = { vm.pauseAveraging() },
                                modifier = Modifier.testTag("gps-pause")) { Text("Pause") }
             } else {
-                OutlinedButton(onClick = { vm.startAveraging(a.pointId, nombre) },
+                // Reanudar CONSERVA lo medido: abre un tramo nuevo sobre la misma nube.
+                OutlinedButton(onClick = { vm.resumeAveraging() },
                                modifier = Modifier.testTag("gps-resume")) { Text("Resume") }
             }
             OutlinedButton(
                 onClick = { if (a.unsaved > 0) confirmarSalida = true else vm.closeAveraging() },
-                modifier = Modifier.testTag("gps-done")) { Text("Done") }
+                modifier = Modifier.testTag("gps-discard")) { Text("Discard") }
         }
         if (a.unsaved > 0) {
             Text("${a.unsaved} fixes not saved yet",
@@ -243,6 +228,64 @@ private fun KeepScreenOn(activo: Boolean) {
 }
 
 /**
+ * Los dos graficos con sus cifras. Lo usan la pantalla de medir y la de ver un punto: son
+ * la misma presentacion de los mismos numeros, y tenerla dos veces solo garantiza que un dia
+ * se arregle una y no la otra.
+ */
+@Composable
+private fun GraficosYCifras(
+    st: GpsPointStats,
+    proyectadas: List<Pair<Double, Double>>,
+    alturas: List<Double>,
+    etiquetar: Boolean,
+) {
+    // Una vista por grafico, conservada mientras la pantalla vive: acercarse y que el zoom
+    // se deshaga solo porque llego una muestra nueva seria inutilizable.
+    val vistaNube = rememberChartView()
+    val vistaAltura = rememberChartView()
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Horizontal", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.weight(1f))
+        if (vistaNube.zoom > 1.01f || vistaNube.panX != 0f || vistaNube.panY != 0f) {
+            TextButton(onClick = { vistaNube.reset() },
+                       modifier = Modifier.testTag("gps-scatter-reset")) { Text("Reset view") }
+        }
+    }
+    ScatterPlot(proyectadas, st.easting.estimate, st.northing.estimate, vistaNube,
+                Modifier.fillMaxWidth().height(260.dp)
+                    .then(if (etiquetar) Modifier.testTag("gps-scatter") else Modifier))
+    Text("Pinch to zoom, drag to pan.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Cifras(st)
+
+    Spacer(Modifier.height(4.dp))
+    val alt = st.altitude
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Altitude", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.weight(1f))
+        if (vistaAltura.zoom > 1.01f || vistaAltura.panX != 0f) {
+            TextButton(onClick = { vistaAltura.reset() }) { Text("Reset view") }
+        }
+    }
+    if (alt == null) {
+        Text("No altitude in these fixes (2D solution).",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        AltitudePlot(alturas, alt, vistaAltura,
+                     Modifier.fillMaxWidth().height(180.dp)
+                         .then(if (etiquetar) Modifier.testTag("gps-altitude") else Modifier))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            BigReading("Altitude", f(alt.estimate, 1), "m", Modifier.weight(1f))
+            BigReading("sd", f(alt.sd, 2), "m", Modifier.weight(1f))
+            BigReading("± est.", f(alt.standardError, 2), "m", Modifier.weight(1f))
+        }
+    }
+}
+
+/**
  * Las tres cifras de la estimacion horizontal.
  *
  * Van las tres juntas porque responden a preguntas distintas y solo una de ellas baja al
@@ -251,10 +294,10 @@ private fun KeepScreenOn(activo: Boolean) {
  */
 @Composable
 private fun Cifras(st: GpsPointStats) {
-    Text(st.medianUtm.format(), style = MaterialTheme.typography.titleMedium,
+    Text(st.estimateUtm.format(), style = MaterialTheme.typography.titleMedium,
          fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
          modifier = Modifier.testTag("gps-utm"))
-    Text("${f(st.medianLatitude, 6)}, ${f(st.medianLongitude, 6)}",
+    Text("${f(st.estimateLatitude, 6)}, ${f(st.estimateLongitude, 6)}",
          style = MaterialTheme.typography.bodySmall,
          color = MaterialTheme.colorScheme.onSurfaceVariant,
          modifier = Modifier.testTag("gps-latlon"))
@@ -263,11 +306,15 @@ private fun Cifras(st: GpsPointStats) {
         BigReading("sd North", f(st.northing.sd, 2), "m", Modifier.weight(1f))
         BigReading("± est.", f(st.horizontalStandardError, 2), "m", Modifier.weight(1f))
     }
-    Text("sd is how much the fixes scatter; it describes the receiver and the site and " +
-         "does not shrink. ± est. is the uncertainty of the median and does shrink — " +
-         "though more slowly than shown, because consecutive fixes are correlated.",
+    Text("sd is how much the fixes scatter around the estimate. " +
+         "± est. is the uncertainty of the estimate itself: it counts " +
+         "${f(st.easting.nEffective, 1)} effective independent fixes out of ${st.samples}, " +
+         "because fixes taken seconds apart repeat much of the same error." +
+         (if (st.sessions > 1) "  ${st.sessions} separate sessions." else "") +
+         (if (st.rejected > 0) "  ${st.rejected} outlier(s) discarded." else ""),
          style = MaterialTheme.typography.bodySmall,
-         color = MaterialTheme.colorScheme.onSurfaceVariant)
+         color = MaterialTheme.colorScheme.onSurfaceVariant,
+         modifier = Modifier.testTag("gps-explain"))
 }
 
 @Composable
@@ -310,20 +357,8 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
             Text("This point has no fixes yet.",
                  style = MaterialTheme.typography.bodyMedium)
         } else {
-            ScatterPlot(p.projected, st.easting.median, st.northing.median,
-                        Modifier.fillMaxWidth().height(220.dp))
-            Cifras(st)
-            st.altitude?.let { alt ->
-                AltitudePlot(
-                    p.samples.filter { it.altitudeMetres != null }.map { it.epochMillis },
-                    p.samples.mapNotNull { it.altitudeMetres }, alt,
-                    Modifier.fillMaxWidth().height(140.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    BigReading("Altitude", f(alt.median, 1), "m", Modifier.weight(1f))
-                    BigReading("sd", f(alt.sd, 2), "m", Modifier.weight(1f))
-                    BigReading("± est.", f(alt.standardError, 2), "m", Modifier.weight(1f))
-                }
-            }
+            GraficosYCifras(st, p.projected, p.samples.mapNotNull { it.altitudeMetres },
+                            etiquetar = false)
         }
 
         HorizontalDivider()

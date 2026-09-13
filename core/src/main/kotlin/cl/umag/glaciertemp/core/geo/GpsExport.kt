@@ -25,19 +25,26 @@ object GpsExport {
         buildString {
             append("# GlacioTools GPS point: ").append(name).append('\n')
             append("# samples: ").append(samples.size)
+                .append("  sessions: ").append(stats.sessions)
                 .append("  zone: ").append(stats.zone).append(stats.band).append('\n')
             append("# projection: UTM WGS84, zone fixed by the first sample\n")
-            append("index,time_utc,latitude,longitude,altitude_m,accuracy_m," +
-                   "easting_m,northing_m\n")
+            append("index,session,time_utc,latitude,longitude,altitude_m," +
+                   "accuracy_m,vertical_accuracy_m,easting_m,northing_m\n")
             val a = GpsAverager()
             samples.forEach { a.add(it) }
             val proyectadas = a.projected()
+            val tramos = samples.map { it.sessionStartMillis }.distinct().sorted()
             samples.forEachIndexed { i, s ->
                 val (e, n) = proyectadas[i]
-                append(i + 1).append(',').append(iso(s.epochMillis)).append(',')
+                append(i + 1).append(',')
+                // El tramo sale en el fichero porque sin el no se puede rehacer el calculo:
+                // quien lo lea fuera necesita saber que muestras van juntas.
+                append(tramos.indexOf(s.sessionStartMillis) + 1).append(',')
+                append(iso(s.epochMillis)).append(',')
                 append(f(s.latitude, 8)).append(',').append(f(s.longitude, 8)).append(',')
                 append(s.altitudeMetres?.let { f(it, 3) } ?: "").append(',')
                 append(s.accuracyMetres?.let { f(it, 2) } ?: "").append(',')
+                append(s.verticalAccuracyMetres?.let { f(it, 2) } ?: "").append(',')
                 append(f(e, 3)).append(',').append(f(n, 3)).append('\n')
             }
         }
@@ -51,19 +58,25 @@ object GpsExport {
      * fichero dentro de dos anos.
      */
     fun csvAverage(name: String, stats: GpsPointStats): String = buildString {
-        append("name,samples,duration_s,zone,band,hemisphere," +
+        append("name,samples,sessions,effective_n,rejected,duration_s,zone,band,hemisphere," +
                "easting_m,northing_m,latitude,longitude," +
                "easting_sd_m,northing_sd_m,horizontal_sd_m," +
                "easting_se_m,northing_se_m,horizontal_se_m," +
-               "altitude_m,altitude_sd_m,altitude_se_m,first_utc,last_utc\n")
+               "altitude_m,altitude_sd_m,altitude_se_m," +
+               "easting_median_m,northing_median_m,first_utc,last_utc\n")
         append(csvQuote(name)).append(',')
-        append(stats.samples).append(',').append(stats.durationSeconds).append(',')
+        append(stats.samples).append(',').append(stats.sessions).append(',')
+        // El n efectivo va en el fichero porque es lo que explica la incertidumbre: sin el,
+        // alguien vera "3000 muestras" al lado de "± 0,4 m" y no entendera la relacion.
+        append(f(stats.easting.nEffective, 1)).append(',')
+        append(stats.rejected).append(',')
+        append(stats.durationSeconds).append(',')
         append(stats.zone).append(',').append(stats.band).append(',')
         append(if (stats.north) 'N' else 'S').append(',')
-        append(f(stats.easting.median, 3)).append(',')
-        append(f(stats.northing.median, 3)).append(',')
-        append(f(stats.medianLatitude, 8)).append(',')
-        append(f(stats.medianLongitude, 8)).append(',')
+        append(f(stats.easting.estimate, 3)).append(',')
+        append(f(stats.northing.estimate, 3)).append(',')
+        append(f(stats.estimateLatitude, 8)).append(',')
+        append(f(stats.estimateLongitude, 8)).append(',')
         append(f(stats.easting.sd, 3)).append(',')
         append(f(stats.northing.sd, 3)).append(',')
         append(f(stats.horizontalSd, 3)).append(',')
@@ -73,6 +86,10 @@ object GpsExport {
         append(stats.altitude?.let { f(it.median, 3) } ?: "").append(',')
         append(stats.altitude?.let { f(it.sd, 3) } ?: "").append(',')
         append(stats.altitude?.let { f(it.standardError, 3) } ?: "").append(',')
+        // La mediana sin ponderar, como contraste: si se aparta mucho de la estimacion, la
+        // ponderacion esta haciendo algo fuerte y conviene mirar las muestras.
+        append(f(stats.easting.median, 3)).append(',')
+        append(f(stats.northing.median, 3)).append(',')
         append(iso(stats.firstEpochMillis)).append(',')
         append(iso(stats.lastEpochMillis)).append('\n')
     }
@@ -80,18 +97,20 @@ object GpsExport {
     /** Un solo waypoint: la estimacion. Es lo que se lleva al mapa. */
     fun gpxAverage(name: String, stats: GpsPointStats): String = buildString {
         append(gpxHeader())
-        append("  <wpt lat=\"").append(f(stats.medianLatitude, 8))
-            .append("\" lon=\"").append(f(stats.medianLongitude, 8)).append("\">\n")
-        stats.altitude?.let { append("    <ele>").append(f(it.median, 3)).append("</ele>\n") }
+        append("  <wpt lat=\"").append(f(stats.estimateLatitude, 8))
+            .append("\" lon=\"").append(f(stats.estimateLongitude, 8)).append("\">\n")
+        stats.altitude?.let { append("    <ele>").append(f(it.estimate, 3)).append("</ele>\n") }
         append("    <time>").append(iso(stats.lastEpochMillis)).append("</time>\n")
         append("    <name>").append(xml(name)).append("</name>\n")
         // La calidad va en la descripcion porque GPX no tiene sitio para ella. Un waypoint
         // sin ella no se distingue de uno marcado con el dedo sobre el mapa.
         append("    <desc>").append(xml(
-            "Median of ${stats.samples} fixes over ${stats.durationSeconds} s. " +
+            "Weighted mean of ${stats.samples} fixes in ${stats.sessions} session(s) over " +
+            "${stats.durationSeconds} s; effective independent samples " +
+            "${f(stats.easting.nEffective, 1)}. " +
             "Horizontal scatter (sd) ${f(stats.horizontalSd, 2)} m, " +
             "uncertainty of the estimate ${f(stats.horizontalStandardError, 2)} m. " +
-            "UTM ${stats.medianUtm.format()}."))
+            "UTM ${stats.estimateUtm.format()}."))
             .append("</desc>\n")
         append("    <src>GlacioTools averaged GNSS</src>\n")
         append("  </wpt>\n</gpx>\n")
