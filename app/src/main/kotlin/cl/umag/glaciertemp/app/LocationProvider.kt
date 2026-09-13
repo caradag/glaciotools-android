@@ -9,6 +9,11 @@ import android.location.LocationManager
 import android.os.CancellationSignal
 import androidx.core.content.ContextCompat
 import cl.umag.glaciertemp.core.GeoFix
+import cl.umag.glaciertemp.core.geo.GpsSample
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -41,6 +46,18 @@ interface LocationSource {
      * llegar nunca, y por eso hay plazo.
      */
     suspend fun freshFix(timeoutMs: Long): GeoFix?
+
+    /**
+     * Lecturas crudas, una detras de otra, para promediar un punto.
+     *
+     * Devuelve [GpsSample] y no [GeoFix] porque son cosas distintas: un GeoFix describe la
+     * posicion del telefono AHORA, con su antiguedad relativa al momento de preguntarla, y
+     * una muestra es una lectura fechada que va a vivir en un fichero durante anos.
+     *
+     * El flujo se cierra al cancelarse quien lo recoge, y ahi se apaga el receptor. Un GPS
+     * encendido y olvidado es la forma mas rapida de vaciar la bateria en terreno.
+     */
+    fun samples(minIntervalMs: Long = 1000L): Flow<GpsSample>
 }
 
 /** Motivo por el que no hay posicion, en un texto que va tal cual al CSV. */
@@ -106,6 +123,43 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
             .mapNotNull { runCatching { m.getLastKnownLocation(it) }.getOrNull() }
             .maxByOrNull { it.time }
             ?.toFix()
+    }
+
+    /**
+     * Solo el proveedor GPS, nunca el de red.
+     *
+     * Promediar posiciones de red no mejora nada: vienen de una base de datos de antenas y
+     * de wifis, se repiten identicas durante minutos y su error es un sesgo de decenas o
+     * cientos de metros que no se promedia. Mezclarlas con las de satelite arrastraria la
+     * mediana sin que nada lo delate. Si no hay GPS, no hay nada que promediar y se dice.
+     */
+    @SuppressLint("MissingPermission")
+    override fun samples(minIntervalMs: Long): Flow<GpsSample> {
+        if (!hasPermission()) return emptyFlow()
+        val m = manager ?: return emptyFlow()
+        if (!m.isProviderEnabled(LocationManager.GPS_PROVIDER)) return emptyFlow()
+
+        return callbackFlow {
+            val listener = android.location.LocationListener { loc ->
+                trySend(GpsSample(
+                    // La marca es la del ARREGLO, no la de cuando llego: es la hora en que
+                    // se midio, y es la que tiene sentido guardar.
+                    epochMillis = loc.time,
+                    latitude = loc.latitude,
+                    longitude = loc.longitude,
+                    // hasAltitude() y no `altitude` a secas: sin arreglo tridimensional
+                    // Android devuelve 0.0, que a nivel del mar pasa por una medida buena.
+                    altitudeMetres = if (loc.hasAltitude()) loc.altitude else null,
+                    accuracyMetres = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null,
+                ))
+            }
+            runCatching {
+                m.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER, minIntervalMs, 0f,
+                    listener, android.os.Looper.getMainLooper())
+            }.onFailure { close(it) }
+            awaitClose { runCatching { m.removeUpdates(listener) } }
+        }
     }
 
     @SuppressLint("MissingPermission")

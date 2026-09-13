@@ -27,7 +27,14 @@ class AppFlowTest {
                 .fetchSemanticsNodes().isNotEmpty()
         }
 
+    /** La app abre en el repartidor de herramientas; la de la placa esta detras de el. */
+    private fun entrarAlDispositivo() {
+        rule.onNodeWithTag("tool-device").assertIsDisplayed().performClick()
+        waitForTag("connect-tcp")
+    }
+
     @Test fun conecta_configura_y_descarga() {
+        entrarAlDispositivo()
         // 1. Conectar por el transporte de depuracion.
         rule.onNodeWithTag("connect-tcp").assertIsDisplayed().performClick()
         waitForTag("board-id")
@@ -219,10 +226,40 @@ class AppFlowTest {
     }
 
     /**
+     * La herramienta de GPS, sin tocar la placa.
+     *
+     * En el emulador no hay receptor, asi que lo que se comprueba es el ESQUELETO: que la
+     * herramienta se abre sin conexion --que es la razon de que exista la pantalla de
+     * inicio--, que la lista arranca vacia, que un punto nuevo lleva a la pantalla de medir
+     * y que se puede volver sin dejar nada a medias. La aritmetica del promediado esta
+     * probada entera en :core, donde no hace falta telefono.
+     */
+    @Test fun la_herramienta_de_gps_se_abre_sin_conectar_nada() {
+        rule.onNodeWithTag("tool-gps").assertIsDisplayed().performClick()
+        waitForTag("gps-new")
+        rule.onNodeWithTag("gps-empty").assertExists()
+
+        rule.onNodeWithTag("gps-new").performClick()
+        waitForTag("gps-name")
+        // Sin arreglos no hay nada que guardar, y el boton lo dice en vez de guardar vacio.
+        rule.onNodeWithTag("gps-count").assertTextContains("0 fixes", substring = true)
+        rule.onNodeWithTag("gps-save").assertIsNotEnabled()
+
+        // Salir sin nada pendiente no pregunta nada.
+        rule.onNodeWithTag("gps-done").performScrollTo().performClick()
+        waitForTag("gps-new")
+
+        // Y se vuelve al repartidor, que es de donde se vino.
+        rule.onNodeWithTag("tool-back").performClick()
+        waitForTag("tool-device")
+    }
+
+    /**
      * El aviso al sincronizar antes de descargar, en su propio test porque necesita una
      * conexion recien hecha: la advertencia se apaga en cuanto se descarga de esa placa.
      */
     @Test fun avisa_antes_de_sincronizar_sin_haber_descargado() {
+        entrarAlDispositivo()
         rule.onNodeWithTag("connect-tcp").assertIsDisplayed().performClick()
         waitForTag("board-id")
 

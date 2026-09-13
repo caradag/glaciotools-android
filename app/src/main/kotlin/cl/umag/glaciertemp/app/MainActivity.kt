@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 
 class MainActivity : ComponentActivity() {
     private val vm: DeviceViewModel by viewModels()
+    private val gps: GpsViewModel by viewModels()
 
     private val askPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -58,6 +59,15 @@ class MainActivity : ComponentActivity() {
             requestPermissions = { askPermissions.launch(it) })
         vm.prefs = getSharedPreferences("glaciotools", MODE_PRIVATE)
         vm.location = AndroidLocationSource(applicationContext)
+        // Los puntos viven en la carpeta privada de la app: no hacen falta permisos de
+        // almacenamiento, y el usuario los saca cuando quiere con Exportar. Guardarlos donde
+        // el usuario elija obligaria a pedirle una carpeta antes de poder medir nada.
+        gps.store = cl.umag.glaciertemp.core.geo.GpsPointStore(
+            java.io.File(filesDir, "gps-points"))
+        gps.location = vm.location
+        // Sin posicion la herramienta de GPS no existe, asi que aqui si se insiste -- pero
+        // solo cuando el usuario ya ha pulsado "New point" y el dialogo se entiende.
+        gps.requestLocationPermission = { askLocation() }
         // Se pide al arrancar y no al descargar: un dialogo del sistema en mitad de la
         // descarga interrumpe justo lo que no se puede interrumpir. Si se deniega, la
         // descarga sigue funcionando y el CSV lo dice en sus metadatos.
@@ -67,7 +77,7 @@ class MainActivity : ComponentActivity() {
         atenderCableEnchufado(intent)
         setContent {
             GlacioToolsTheme {
-                Surface { GlacierTempApp(vm) }
+                Surface { GlacioToolsApp(vm, gps) }
             }
         }
     }

@@ -46,7 +46,7 @@ import cl.umag.glaciertemp.core.Variables
 import kotlin.math.roundToInt
 
 @Composable
-fun GlacierTempApp(vm: DeviceViewModel) {
+fun GlacierTempApp(vm: DeviceViewModel, onBack: (() -> Unit)? = null) {
     val s by vm.state.collectAsStateWithLifecycle()
     var tab by remember { mutableIntStateOf(0) }
 
@@ -66,6 +66,10 @@ fun GlacierTempApp(vm: DeviceViewModel) {
             // margen, la parte alta de las mayusculas quedaba bajo el reloj del telefono.
             val estilo = MaterialTheme.typography.headlineSmall
             val oscuro = androidx.compose.foundation.isSystemInDarkTheme()
+            onBack?.let {
+                TextButton(onClick = it, contentPadding = PaddingValues(0.dp),
+                           modifier = Modifier.testTag("device-back")) { Text("‹ Tools") }
+            }
             Text(
                 buildAnnotatedString {
                     withStyle(SpanStyle(color = if (oscuro) WordmarkBlueDark else WordmarkBlue)) {
