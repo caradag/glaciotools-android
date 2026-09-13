@@ -213,6 +213,13 @@ def handle(cmd, board, link, args):
         link.line("  ID    Board id  VER   Firmware version")
         return
 
+    # Q saca a la placa del modo consola y la devuelve a medir. Importa que el simulador
+    # deje de contestar despues: la app lo manda al desconectar, y si aqui siguiera
+    # respondiendo, un test no notaria la diferencia entre mandarlo y no mandarlo.
+    if up == "Q":
+        link.line("Bye")
+        return "quit"
+
     if up == "I":
         link.line(f"GlacierTemp 1-cell rev02")
         link.line(f"Board id: {board.uid:016X}")
@@ -367,7 +374,8 @@ def serve(readline, write, args, board):
         line = readline()
         if line is None:
             return
-        handle(line, board, link, args)
+        if handle(line, board, link, args) == "quit":
+            return
 
 
 def main():

@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -73,6 +74,18 @@ fun GlacierTempApp(vm: DeviceViewModel) {
                     // logo, y "Tools" en marino quedaba invisible.
                     withStyle(SpanStyle(color = MaterialTheme.colorScheme.onBackground)) {
                         append("Tools")
+                    }
+                    // La version, en pequeno y apagada. Sirve para una sola cosa --saber que
+                    // APK hay instalado cuando se reporta un fallo-- y para eso tiene que
+                    // estar SIEMPRE a la vista, no detras de un menu que nadie abre. Sale de
+                    // BuildConfig y no de una constante escrita a mano: la que se escribe a
+                    // mano se olvida, y una version equivocada es peor que ninguna.
+                    withStyle(SpanStyle(
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                        fontSize = estilo.fontSize * 0.5f,
+                        fontWeight = FontWeight.Normal,
+                    )) {
+                        append("  v${BuildConfig.VERSION_NAME}")
                     }
                 },
                 style = estilo,

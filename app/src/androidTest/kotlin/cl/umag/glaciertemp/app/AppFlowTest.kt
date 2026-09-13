@@ -187,6 +187,18 @@ class AppFlowTest {
         rule.onNodeWithTag("reset-warning").assertDoesNotExist()
         // Y el contador sigue intacto: cancelar no puede haber mandado nada.
         rule.onNodeWithTag("record-count").assertTextContains("240", substring = true)
+
+        // 14. Al desconectar se manda Q, y la prueba de que se mando es el "Bye" de la
+        // placa. Importa porque la consola se queda escuchando dos minutos despues del
+        // ultimo comando y durante esos dos minutos la placa NO graba: soltar el enlace sin
+        // avisar deja un agujero en el registro tan largo como la ventana de consola.
+        rule.onNodeWithTag("tab-terminal").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("tab-device").performClick()
+        rule.onNodeWithTag("disconnect").performScrollTo().performClick()
+        waitForText("Not connected")
+        rule.onNodeWithTag("tab-terminal").performClick()
+        waitForText("Bye")
     }
 
     /**

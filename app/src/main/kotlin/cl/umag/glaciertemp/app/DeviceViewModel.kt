@@ -354,8 +354,17 @@ class DeviceViewModel : ViewModel() {
             t.profile?.let { "BLE · ${it.name} · MTU ${t.negotiatedMtu}" }
         is cl.umag.glaciertemp.transport.android.UsbSerialTransport -> {
             val i = _state.value.info
-            val fast = if (i != null && i.supportsFastDump) "  ·  download at ${i.fastBaud}" else ""
-            "Cable · ${i?.baud ?: cl.umag.glaciertemp.transport.android.UsbSerialTransport.BAUD_RATE} baudios$fast"
+            val normal = i?.baud ?: cl.umag.glaciertemp.transport.android.UsbSerialTransport.BAUD_RATE
+            // La de AHORA, no la de siempre. Durante un volcado por cable la linea sube a
+            // 230400 y la barra seguia diciendo 115200, que es justo el momento en que uno
+            // la mira para comprobar que el volcado rapido entro.
+            val rapida = session?.velocidadDeVolcado ?: 0
+            val extra = when {
+                rapida > 0 -> "  ·  fast dump"
+                i != null && i.supportsFastDump -> "  ·  download at ${i.fastBaud}"
+                else -> ""
+            }
+            "Cable · ${if (rapida > 0) rapida else normal} baud$extra"
         }
         else -> null
     }
@@ -860,12 +869,38 @@ class DeviceViewModel : ViewModel() {
     }
 
     fun disconnect() {
+        val s = session
+        val t = transport
+        val espia = tap
         publicador?.cancel(); publicador = null
-        // La sesion suelta su hilo lector ANTES de cerrar el transporte: al reves, la
-        // siguiente lectura fallaria sobre un enlace ya cerrado.
-        runCatching { session?.cerrar() }
-        runCatching { transport?.close() }
         transport = null; session = null; tap = null
+        // El cierre se va a un hilo aparte porque ahora ESPERA: mandar Q y aguardar el "Bye"
+        // son unos cientos de milisegundos, y bloquear el hilo de la interfaz por eso deja
+        // la pantalla congelada justo al pulsar el boton.
+        //
+        // Un hilo y no viewModelScope: esto es limpieza que TIENE que terminar. Si el
+        // usuario desconecta y acto seguido se sale de la app, una corrutina del scope se
+        // cancela a media faena y el puerto se queda abierto.
+        Thread({
+            // Q ANTES de soltar nada. La consola de la placa se queda escuchando dos minutos
+            // despues del ultimo comando, y durante esos dos minutos la placa NO esta
+            // grabando: desconectar sin avisar deja un agujero en el registro tan largo como
+            // la ventana de consola. Con Q la placa se despide y vuelve a medir en el acto.
+            //
+            // Con tope corto y sin dar importancia al fallo: si la placa no contesta --ya
+            // dormida, cable retirado de golpe-- lo que toca es cerrar igual, no quedarse
+            // esperando a algo que no va a venir.
+            runCatching {
+                s?.exchange("Q", quietMs = 200, overallTimeoutMs = 1000)
+            }
+            // El eco y la respuesta los publica el espia, pero el publicador ya no corre.
+            runCatching { espia?.flush() }
+            publicarTerminal()
+            // La sesion suelta su hilo lector ANTES de cerrar el transporte: al reves, la
+            // siguiente lectura fallaria sobre un enlace ya cerrado.
+            runCatching { s?.cerrar() }
+            runCatching { t?.close() }
+        }, "glaciotools-cierre").start()
         // El terminal y el historial SOBREVIVEN a la desconexion: si algo fallo, el registro
         // de lo que dijo la placa es justo lo que hace falta despues, y borrarlo al soltar el
         // enlace obliga a reproducir el fallo para volver a verlo.
@@ -916,6 +951,15 @@ class DeviceViewModel : ViewModel() {
                 if (anadidas != publicadas) {
                     publicadas = anadidas
                     flushTerminal()
+                }
+                // La velocidad de la linea cambia sola a mitad de un volcado, sin que nadie
+                // toque la interfaz. Se recalcula aqui porque este es el unico sitio que
+                // vuelve a mirar mientras la descarga esta en marcha.
+                transport?.let { t ->
+                    val nota = describe(t)
+                    if (nota != _state.value.transportNote) {
+                        _state.value = _state.value.copy(transportNote = nota)
+                    }
                 }
             }
         }

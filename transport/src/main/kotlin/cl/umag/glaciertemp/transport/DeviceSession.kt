@@ -304,6 +304,14 @@ class DeviceSession(private val transport: Transport) {
     @Volatile private var volcadoRapido = 0
     @Volatile private var volcadoNormal = 0
 
+    /**
+     * A cuanto va la linea AHORA si un volcado la subio; 0 si esta en la de siempre.
+     *
+     * Lo mira la interfaz para no anunciar 115200 mientras el volcado va a 230400, que es
+     * justo cuando alguien mira ese numero: para comprobar que el volcado rapido entro.
+     */
+    val velocidadDeVolcado: Int get() = volcadoRapido
+
     /** Lo declara quien sube la velocidad para un volcado, para que el aborto la conozca. */
     fun marcarVelocidadDeVolcado(rapida: Int, normal: Int) {
         volcadoRapido = rapida; volcadoNormal = normal

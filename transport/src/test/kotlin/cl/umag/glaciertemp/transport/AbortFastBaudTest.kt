@@ -1,5 +1,6 @@
 package cl.umag.glaciertemp.transport
 
+import cl.umag.glaciertemp.core.Logb
 import kotlin.test.*
 
 /**
@@ -87,6 +88,76 @@ class AbortFastBaudTest {
         assertTrue(t.paro, "la placa siguio volcando")
         assertTrue(paro, "no se leyo el acuse: la linea no volvio a tiempo")
         assertEquals(NORMAL, t.velocidadLinea, "la linea se quedo en la velocidad del volcado")
+    }
+
+    /** Una placa que atiende un LOGB de verdad, con su cambio de velocidad. */
+    private class PlacaConLogb(private val registros: Int) : Transport, BaudSwitchable {
+        private val cola = ArrayDeque<Byte>()
+        var velocidadLinea = NORMAL; private set
+        override var isOpen = true
+        override fun open() {}
+        override fun close() { isOpen = false }
+        override fun setBaudRate(baud: Int) { velocidadLinea = baud }
+
+        @Synchronized
+        override fun write(data: ByteArray) {
+            val cmd = String(data).trim()
+            if (!cmd.startsWith("LOGB=", ignoreCase = true)) return
+            val bytes = registros * REC
+            val bloques = (bytes + 255) / 256
+            ("LOGB begin sig=0x100F rec=$REC from=0 to=${registros - 1} " +
+             "blocks=$bloques blocksize=256 fast=$RAPIDA\n")
+                .forEach { cola.addLast(it.code.toByte()) }
+            for (i in 0 until bloques) {
+                val len = minOf(256, bytes - i * 256)
+                val d = ByteArray(len) { (it % 251).toByte() }
+                cola.addLast(0xAA.toByte()); cola.addLast(0x55.toByte())
+                u16(i); u16(len)
+                d.forEach { cola.addLast(it) }
+                u16(Logb.crc16(d))
+            }
+            "LOGB end\n".forEach { cola.addLast(it.code.toByte()) }
+        }
+
+        private fun u16(v: Int) {
+            cola.addLast((v and 0xFF).toByte()); cola.addLast(((v shr 8) and 0xFF).toByte())
+        }
+
+        @Synchronized
+        override fun read(timeoutMs: Int): ByteArray {
+            if (cola.isEmpty()) {
+                Thread.sleep(minOf(timeoutMs, 10).toLong())
+                return ByteArray(0)
+            }
+            val n = minOf(256, cola.size)
+            return ByteArray(n) { cola.removeFirst() }
+        }
+
+        companion object { const val REC = 12 }
+    }
+
+    @Test
+    fun `la velocidad que se anuncia es la de ahora, no la de siempre`() {
+        // La barra de estado decia 115200 durante todo el volcado rapido, que es justo
+        // cuando alguien mira ese numero: para comprobar que el volcado rapido entro.
+        val t = PlacaConLogb(registros = 4000)
+        t.setBaudRate(NORMAL)
+        val s = DeviceSession(t)
+        val info = DeviceInfo(firmware = "3.3", protocol = 4, boardId = "0",
+                              signature = 0x100F, recordBytes = PlacaConLogb.REC,
+                              recordCount = 4000, flashBytes = 0,
+                              baud = NORMAL, fastBaud = RAPIDA)
+
+        assertEquals(0, s.velocidadDeVolcado, "antes de empezar no hay velocidad de volcado")
+
+        val vistas = java.util.Collections.synchronizedSet(HashSet<Int>())
+        s.download(info, 0, 3999, retries = 0,
+                   onProgress = { vistas.add(s.velocidadDeVolcado) })
+
+        assertTrue(RAPIDA in vistas,
+                   "durante el volcado nunca se anuncio la velocidad rapida: $vistas")
+        assertEquals(0, s.velocidadDeVolcado, "quedo anunciando una velocidad que ya no es")
+        assertEquals(NORMAL, t.velocidadLinea, "la linea se quedo arriba al terminar")
     }
 
     @Test
