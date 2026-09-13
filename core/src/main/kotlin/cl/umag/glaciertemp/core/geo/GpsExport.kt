@@ -57,13 +57,18 @@ object GpsExport {
      * descartar cuando no da la talla, y el que exporta hoy no es siempre el que usa el
      * fichero dentro de dos anos.
      */
-    fun csvAverage(name: String, stats: GpsPointStats): String = buildString {
-        append("name,samples,sessions,effective_n,rejected,duration_s,zone,band,hemisphere," +
-               "easting_m,northing_m,latitude,longitude," +
-               "easting_sd_m,northing_sd_m,horizontal_sd_m," +
-               "easting_se_m,northing_se_m,horizontal_se_m," +
-               "altitude_m,altitude_sd_m,altitude_se_m," +
-               "easting_median_m,northing_median_m,first_utc,last_utc\n")
+    fun csvAverage(name: String, stats: GpsPointStats): String =
+        csvAverageHeader() + csvAverageRow(name, stats)
+
+    private fun csvAverageHeader(): String =
+        "name,samples,sessions,effective_n,rejected,duration_s,zone,band,hemisphere," +
+        "easting_m,northing_m,latitude,longitude," +
+        "easting_sd_m,northing_sd_m,horizontal_sd_m," +
+        "easting_se_m,northing_se_m,horizontal_se_m," +
+        "altitude_m,altitude_sd_m,altitude_se_m," +
+        "easting_median_m,northing_median_m,first_utc,last_utc\n"
+
+    private fun csvAverageRow(name: String, stats: GpsPointStats): String = buildString {
         append(csvQuote(name)).append(',')
         append(stats.samples).append(',').append(stats.sessions).append(',')
         // El n efectivo va en el fichero porque es lo que explica la incertidumbre: sin el,
@@ -94,9 +99,30 @@ object GpsExport {
         append(iso(stats.lastEpochMillis)).append('\n')
     }
 
-    /** Un solo waypoint: la estimacion. Es lo que se lleva al mapa. */
-    fun gpxAverage(name: String, stats: GpsPointStats): String = buildString {
+    /**
+     * Varios puntos en un solo fichero, una fila por punto.
+     *
+     * Solo las soluciones finales: un fichero con las muestras de veinte puntos serian
+     * decenas de miles de filas en las que la informacion que se busca --donde esta cada
+     * estaca-- queda enterrada. Para eso esta la exportacion de un punto suelto.
+     */
+    fun csvAverages(points: List<Pair<String, GpsPointStats>>): String = buildString {
+        append(csvAverageHeader())
+        points.forEach { (name, st) -> append(csvAverageRow(name, st)) }
+    }
+
+    /** Lo mismo en GPX: un waypoint por punto, que es como se lleva un conjunto al mapa. */
+    fun gpxAverages(points: List<Pair<String, GpsPointStats>>): String = buildString {
         append(gpxHeader())
+        points.forEach { (name, st) -> append(gpxWaypoint(name, st)) }
+        append("</gpx>\n")
+    }
+
+    /** Un solo waypoint: la estimacion. Es lo que se lleva al mapa. */
+    fun gpxAverage(name: String, stats: GpsPointStats): String =
+        gpxHeader() + gpxWaypoint(name, stats) + "</gpx>\n"
+
+    private fun gpxWaypoint(name: String, stats: GpsPointStats): String = buildString {
         append("  <wpt lat=\"").append(f(stats.estimateLatitude, 8))
             .append("\" lon=\"").append(f(stats.estimateLongitude, 8)).append("\">\n")
         stats.altitude?.let { append("    <ele>").append(f(it.estimate, 3)).append("</ele>\n") }
@@ -113,7 +139,7 @@ object GpsExport {
             "UTM ${stats.estimateUtm.format()}."))
             .append("</desc>\n")
         append("    <src>GlacioTools averaged GNSS</src>\n")
-        append("  </wpt>\n</gpx>\n")
+        append("  </wpt>\n")
     }
 
     /**

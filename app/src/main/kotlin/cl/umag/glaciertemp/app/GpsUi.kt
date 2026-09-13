@@ -6,6 +6,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,10 +48,37 @@ fun GpsToolScreen(vm: GpsViewModel) {
 
 @Composable
 private fun PointListScreen(vm: GpsViewModel, s: GpsUiState) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var explicar by remember { mutableStateOf(false) }
+    var exportar by remember { mutableStateOf(false) }
+    var borrar by remember { mutableStateOf(false) }
+    var formato by remember { mutableStateOf(GpsViewModel.Format.CSV) }
+
+    // El cuadro del sistema es el que deja elegir carpeta; el nombre se le pasa propuesto y
+    // el usuario lo cambia ahi mismo si quiere.
+    val guardador = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val datos = vm.exportSelectedBytes(formato)
+        if (datos.isEmpty()) { vm.onExported(false, "selection"); return@rememberLauncherForActivityResult }
+        runCatching { ctx.contentResolver.openOutputStream(uri)?.use { it.write(datos) } }
+            .onSuccess { vm.onExported(true, "${s.selected.size} point(s)") }
+            .onFailure { vm.onExported(false, "${s.selected.size} point(s)") }
+        vm.clearSelection()
+    }
+
     Column(Modifier.fillMaxSize().padding(16.dp),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Averaged positions", style = MaterialTheme.typography.titleMedium)
-        Text("Records GNSS fixes for as long as you like and keeps the median. " +
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Averaged positions", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { explicar = true },
+                       modifier = Modifier.testTag("gps-info")) {
+                Icon(Icons.Outlined.Info, contentDescription = "How the averaging works")
+            }
+        }
+        Text("Records GNSS fixes for as long as you like and combines them. " +
              "Nothing is uploaded anywhere.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -64,21 +93,132 @@ private fun PointListScreen(vm: GpsViewModel, s: GpsUiState) {
                  color = MaterialTheme.colorScheme.onSurfaceVariant,
                  modifier = Modifier.testTag("gps-empty"))
         } else {
+            // La barra de acciones solo aparece cuando hay algo marcado: ocupar sitio
+            // permanentemente para dos botones que casi nunca se usan estrecha la lista.
+            if (s.selected.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.testTag("gps-actions")) {
+                    Text("${s.selected.size} selected",
+                         style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { exportar = true },
+                               modifier = Modifier.testTag("gps-export-selected")) {
+                        Text("Export")
+                    }
+                    TextButton(onClick = { borrar = true },
+                               modifier = Modifier.testTag("gps-delete-selected")) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(onClick = { vm.clearSelection() },
+                               modifier = Modifier.testTag("gps-clear-selection")) {
+                        Text("Clear")
+                    }
+                }
+            }
+
             LazyColumn(Modifier.weight(1f).testTag("gps-list"),
                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(s.points, key = { it.id }) { p ->
-                    Card(onClick = { vm.open(p.id) }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(p.name.ifBlank { "(unnamed)" },
-                                 style = MaterialTheme.typography.titleSmall)
-                            Text("${p.samples} fixes  ·  last ${cuando(p.lastEpochMillis)}",
-                                 style = MaterialTheme.typography.bodySmall,
-                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val marcado = p.id in s.selected
+                    Card(Modifier.fillMaxWidth()) {
+                        Row(Modifier.padding(end = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = marcado,
+                                     onCheckedChange = { vm.toggleSelected(p.id) },
+                                     modifier = Modifier.testTag("gps-check-${p.id}"))
+                            // El resto de la tarjeta sigue abriendo el punto: marcar y abrir
+                            // son dos gestos distintos sobre zonas distintas, sin modos.
+                            Column(Modifier.weight(1f)
+                                .then(Modifier.padding(vertical = 12.dp))) {
+                                Text(p.name.ifBlank { "(unnamed)" },
+                                     style = MaterialTheme.typography.titleSmall)
+                                Text("${p.samples} fixes  ·  last ${cuando(p.lastEpochMillis)}",
+                                     style = MaterialTheme.typography.bodySmall,
+                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            TextButton(onClick = { vm.open(p.id) },
+                                       modifier = Modifier.testTag("gps-open-${p.id}")) {
+                                Text("Open")
+                            }
                         }
                     }
                 }
             }
+            if (s.points.size > 1) {
+                TextButton(onClick = {
+                    if (s.selected.size == s.points.size) vm.clearSelection() else vm.selectAll()
+                }, modifier = Modifier.testTag("gps-select-all")) {
+                    Text(if (s.selected.size == s.points.size) "Select none" else "Select all")
+                }
+            }
         }
+    }
+
+    if (explicar) AveragingExplained { explicar = false }
+
+    if (exportar) {
+        var nombre by remember { mutableStateOf(vm.defaultSelectionName(formato)) }
+        AlertDialog(
+            onDismissRequest = { exportar = false },
+            modifier = Modifier.testTag("gps-export-dialog"),
+            title = { Text("Export ${s.selected.size} point(s)") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Only the final solution of each point: one row per point, not the " +
+                         "individual fixes.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilterChip(selected = formato == GpsViewModel.Format.CSV,
+                                   onClick = {
+                                       formato = GpsViewModel.Format.CSV
+                                       nombre = vm.defaultSelectionName(formato)
+                                   },
+                                   label = { Text("CSV") },
+                                   modifier = Modifier.testTag("gps-sel-csv"))
+                        Spacer(Modifier.width(8.dp))
+                        FilterChip(selected = formato == GpsViewModel.Format.GPX,
+                                   onClick = {
+                                       formato = GpsViewModel.Format.GPX
+                                       nombre = vm.defaultSelectionName(formato)
+                                   },
+                                   label = { Text("GPX") },
+                                   modifier = Modifier.testTag("gps-sel-gpx"))
+                    }
+                    OutlinedTextField(nombre, { nombre = it }, singleLine = true,
+                                      label = { Text("File name") },
+                                      modifier = Modifier.testTag("gps-sel-name"))
+                    Text("You pick the folder in the next screen.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { exportar = false; guardador.launch(nombre) },
+                           modifier = Modifier.testTag("gps-sel-go")) { Text("Choose folder") }
+            },
+            dismissButton = {
+                TextButton(onClick = { exportar = false }) { Text("Cancel") }
+            })
+    }
+
+    if (borrar) {
+        val cuantos = s.selected.size
+        val muestras = s.points.filter { it.id in s.selected }.sumOf { it.samples }
+        AlertDialog(
+            onDismissRequest = { borrar = false },
+            modifier = Modifier.testTag("gps-delete-many-warning"),
+            title = { Text("Delete $cuantos point(s)?") },
+            text = { Text("Their $muestras fixes go with them, and this cannot be undone. " +
+                          "Export them first if you may want them.") },
+            confirmButton = {
+                TextButton(onClick = { borrar = false; vm.deleteSelected() },
+                           modifier = Modifier.testTag("gps-delete-many-confirm")) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { borrar = false }) { Text("Cancel") } })
     }
 }
 
@@ -97,6 +237,101 @@ private fun Aviso(vm: GpsViewModel, s: GpsUiState) {
 }
 
 /**
+ * Que hace la app con los arreglos, en castellano llano.
+ *
+ * Existe porque cada una de estas decisiones cambia el numero que sale en pantalla, y quien
+ * lo anota en una libreta tiene derecho a saber de donde viene. Sin esto, "± 0,4 m" es un
+ * numero que hay que creerse.
+ */
+@Composable
+private fun AveragingExplained(onClose: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        modifier = Modifier.testTag("gps-info-dialog"),
+        title = { Text("How the averaging works") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()),
+                   verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
+                Parrafo("Why average at all",
+                    "A single GNSS fix is off by a few metres. The error is not constant: " +
+                    "it wanders as satellites move and as the signal bounces off rock, ice " +
+                    "and buildings. Collect many fixes and the wandering partly cancels, so " +
+                    "the combined position is better than any single reading.")
+
+                Parrafo("Fixes are not all equal",
+                    "Your receiver reports, with every fix, how good it thinks that fix is — " +
+                    "a radius in metres. We use it as a weight: a fix it calls good counts " +
+                    "more than one it calls poor. A fix reported as twice as accurate counts " +
+                    "four times as much, which is the weighting that makes the result as " +
+                    "precise as it can be.")
+
+                Parrafo("Throwing out the wild ones",
+                    "Every so often a receiver produces a fix hundreds of metres away — and " +
+                    "sometimes it reports that one as accurate, so weighting alone would give " +
+                    "it MORE influence. So before combining anything we discard the fixes " +
+                    "that sit far from the rest, and the screen tells you how many went.")
+
+                Parrafo("What MAD means",
+                    "MAD is short for median absolute deviation, and it is simply a robust " +
+                    "way to say \u201chow spread out are these numbers\u201d.\n\n" +
+                    "Take the middle value of all your fixes — the median. For each fix, " +
+                    "measure how far it is from that middle, ignoring the sign. Now take the " +
+                    "middle value of THOSE distances. That is the MAD.\n\n" +
+                    "It is used instead of the usual standard deviation because the standard " +
+                    "deviation is itself dragged around by the wild fixes we are trying to " +
+                    "find: one fix 500 m away inflates it enormously, and then nothing looks " +
+                    "unusual any more. The MAD barely notices that fix, so it keeps a clean " +
+                    "sense of the normal spread. A fix further than five MADs from the middle " +
+                    "is treated as a failure, not as data.")
+
+                Parrafo("Why time matters more than count",
+                    "Fixes taken one second apart are almost the same measurement repeated. " +
+                    "The things that cause the error — where the satellites are, the state of " +
+                    "the ionosphere, what the signal is bouncing off — change over minutes, " +
+                    "not seconds. So a thousand fixes in twenty minutes do NOT contain a " +
+                    "thousand independent pieces of information: they contain a handful, " +
+                    "repeated.\n\n" +
+                    "The app measures how much each fix resembles the one before it and works " +
+                    "out how many independent fixes you effectively have. That is the " +
+                    "\u201ceffective\u201d number shown under the chart. It is usually far " +
+                    "smaller than the raw count, and that is honest rather than pessimistic.")
+
+                Parrafo("Coming back another day is worth a lot",
+                    "A second visit sees a different satellite geometry and a different " +
+                    "atmosphere, so it really does bring new information. Each visit is " +
+                    "combined according to how much it independently contributes — not " +
+                    "according to how many fixes it happens to contain.\n\n" +
+                    "In practice: twenty minutes on each of three days beats an hour on one " +
+                    "day, by a wide margin.")
+
+                Parrafo("The two numbers on screen",
+                    "sd is how scattered the fixes are around the estimate. It describes the " +
+                    "receiver and the site on that occasion — it tends to settle down as the " +
+                    "receiver warms up, and it climbs if you walk under a cliff.\n\n" +
+                    "± est. is the uncertainty of the estimate itself: how far the answer is " +
+                    "likely to be from the truth. This is the one that improves as you keep " +
+                    "measuring, and the one to watch when deciding whether to stop.")
+
+                Parrafo("What it does not account for",
+                    "± est. assumes the leftover errors average out. Some do not: a systematic " +
+                    "bias from a nearby wall, or from the receiver's own model of the " +
+                    "atmosphere, stays put no matter how long you measure. Treat ± est. as a " +
+                    "lower bound on your real error, not a guarantee.")
+            }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text("Close") } })
+}
+
+@Composable
+private fun Parrafo(titulo: String, cuerpo: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(titulo, style = MaterialTheme.typography.titleSmall)
+        Text(cuerpo, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/**
  * La pantalla de promediar: dos graficos y las cifras debajo de cada uno.
  *
  * Se puede guardar sin dejar de medir. Guardar escribe solo lo que aun no estaba en disco,
@@ -108,6 +343,7 @@ private fun Aviso(vm: GpsViewModel, s: GpsUiState) {
 private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) {
     var nombre by remember(a.pointId) { mutableStateOf(a.name) }
     var confirmarSalida by remember { mutableStateOf(false) }
+    var explicar by remember { mutableStateOf(false) }
     val st = a.stats
 
     // La pantalla se queda encendida mientras se mide, y solo mientras se mide.
@@ -121,10 +357,18 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
-        OutlinedTextField(
-            value = nombre, onValueChange = { nombre = it },
-            label = { Text("Point name") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth().testTag("gps-name"))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = nombre, onValueChange = { nombre = it },
+                label = { Text("Point name") }, singleLine = true,
+                modifier = Modifier.weight(1f).testTag("gps-name"))
+            // El icono tambien aqui: es donde se miran las cifras, y es donde surge la
+            // pregunta de que significan.
+            IconButton(onClick = { explicar = true },
+                       modifier = Modifier.testTag("gps-info-measuring")) {
+                Icon(Icons.Outlined.Info, contentDescription = "How the averaging works")
+            }
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -198,6 +442,8 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
         }
     }
 
+    if (explicar) AveragingExplained { explicar = false }
+
     if (confirmarSalida) {
         AlertDialog(
             onDismissRequest = { confirmarSalida = false },
@@ -247,7 +493,7 @@ private fun GraficosYCifras(
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Horizontal", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.weight(1f))
-        if (vistaNube.zoom > 1.01f || vistaNube.panX != 0f || vistaNube.panY != 0f) {
+        if (vistaNube.moved) {
             TextButton(onClick = { vistaNube.reset() },
                        modifier = Modifier.testTag("gps-scatter-reset")) { Text("Reset view") }
         }
@@ -265,7 +511,7 @@ private fun GraficosYCifras(
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Altitude", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.weight(1f))
-        if (vistaAltura.zoom > 1.01f || vistaAltura.panX != 0f) {
+        if (vistaAltura.moved) {
             TextButton(onClick = { vistaAltura.reset() }) { Text("Reset view") }
         }
     }

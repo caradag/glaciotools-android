@@ -27,6 +27,8 @@ data class AveragingState(
 
 data class GpsUiState(
     val points: List<GpsPointSummary> = emptyList(),
+    /** Los que llevan marca en la lista. Vacio significa que no hay seleccion en curso. */
+    val selected: Set<String> = emptySet(),
     val averaging: AveragingState? = null,
     val openPoint: OpenPoint? = null,
     val error: String? = null,
@@ -73,7 +75,68 @@ class GpsViewModel : ViewModel() {
 
     fun refresh() {
         val s = store ?: return
-        _state.value = _state.value.copy(points = s.list())
+        val lista = s.list()
+        // La seleccion se poda con la lista: un id que ya no existe seguiria contando para
+        // "3 seleccionados" y para un borrado que no borraria nada.
+        val vivos = lista.map { it.id }.toSet()
+        _state.value = _state.value.copy(
+            points = lista, selected = _state.value.selected intersect vivos)
+    }
+
+    // ------------------------------- seleccion multiple -------------------------------
+
+    fun toggleSelected(id: String) {
+        val s = _state.value.selected
+        _state.value = _state.value.copy(
+            selected = if (id in s) s - id else s + id)
+    }
+
+    fun selectAll() {
+        _state.value = _state.value.copy(
+            selected = _state.value.points.map { it.id }.toSet())
+    }
+
+    fun clearSelection() { _state.value = _state.value.copy(selected = emptySet()) }
+
+    fun deleteSelected() {
+        val s = store ?: return
+        val cuantos = _state.value.selected.size
+        _state.value.selected.forEach { s.delete(it) }
+        _state.value = _state.value.copy(
+            selected = emptySet(), points = s.list(),
+            note = "Deleted $cuantos point(s)")
+    }
+
+    /**
+     * Las soluciones finales de los puntos marcados, en el formato pedido.
+     *
+     * Solo las soluciones: un fichero con las muestras de veinte puntos serian decenas de
+     * miles de filas donde lo que se busca --donde esta cada estaca-- queda enterrado.
+     *
+     * Un punto sin muestras no tiene solucion y se salta en silencio; si no quedara ninguno
+     * se devuelve vacio y quien llama lo trata como un fallo.
+     */
+    fun exportSelectedBytes(format: Format): ByteArray {
+        val s = store ?: return ByteArray(0)
+        val listos = _state.value.points
+            .filter { it.id in _state.value.selected }
+            .mapNotNull { resumen ->
+                val p = s.load(resumen.id) ?: return@mapNotNull null
+                val st = GpsAverager().apply { addAll(p.samples) }.stats()
+                    ?: return@mapNotNull null
+                p.header.name.ifBlank { "Point" } to st
+            }
+        if (listos.isEmpty()) return ByteArray(0)
+        return when (format) {
+            Format.CSV -> GpsExport.csvAverages(listos)
+            Format.GPX -> GpsExport.gpxAverages(listos)
+        }.toByteArray()
+    }
+
+    fun defaultSelectionName(format: Format): String {
+        val t = java.time.LocalDateTime.now()
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmm"))
+        return "glaciotools_points_$t." + if (format == Format.CSV) "csv" else "gpx"
     }
 
     fun dismissNote() { _state.value = _state.value.copy(note = null, error = null) }

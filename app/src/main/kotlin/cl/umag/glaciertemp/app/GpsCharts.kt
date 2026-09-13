@@ -26,13 +26,22 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Cuanto se ha acercado y desplazado el usuario un grafico. */
+/**
+ * Cuanto se ha acercado y desplazado el usuario un grafico.
+ *
+ * [panX] y [panY] estan en FRACCIONES DEL RANGO COMPLETO de datos, no en pixeles ni en
+ * unidades de dato. Esa eleccion es la que hace que el arrastre siga al dedo exactamente,
+ * este el grafico como este de acercado: con el zoom la ventana visible se estrecha, y un
+ * desplazamiento medido en pixeles de pantalla tiene que traducirse a una fraccion MENOR
+ * del rango cuanto mas cerca se este. De ahi el `/ zoom` en el gesto.
+ */
 @Stable
 class ChartView {
     var zoom by mutableFloatStateOf(1f)
     var panX by mutableFloatStateOf(0f)
     var panY by mutableFloatStateOf(0f)
     fun reset() { zoom = 1f; panX = 0f; panY = 0f }
+    val moved: Boolean get() = zoom > 1.01f || panX != 0f || panY != 0f
 }
 
 @Composable
@@ -41,19 +50,18 @@ fun rememberChartView(): ChartView = remember { ChartView() }
 /**
  * Gestos sobre un grafico: dos dedos acercan, uno arrastra.
  *
- * [bloquearY] existe para el grafico de altitud, donde arrastrar en vertical no significa
- * nada util: el eje vertical son metros sobre el elipsoide y moverse por el solo saca la
- * linea de la mediana de la pantalla, que es la referencia contra la que se lee todo.
+ * El signo es negativo porque lo que se mueve es la VENTANA sobre los datos, no los datos:
+ * arrastrar el dedo a la derecha tiene que traer hacia la derecha lo que se ve, es decir,
+ * correr la ventana hacia la izquierda.
  */
-private fun Modifier.gestosDeGrafico(v: ChartView, bloquearY: Boolean = false): Modifier =
+private fun Modifier.gestosDeGrafico(v: ChartView): Modifier =
     this.pointerInput(Unit) {
         detectTransformGestures { _, pan, gestureZoom, _ ->
-            val nuevo = (v.zoom * gestureZoom).coerceIn(1f, 200f)
-            // El desplazamiento se guarda en unidades de DATO y no de pantalla, para que
-            // acercarse no lo multiplique: si no, cada pellizco daria un salto lateral.
-            v.panX += pan.x / (size.width * v.zoom)
-            if (!bloquearY) v.panY += pan.y / (size.height * v.zoom)
-            v.zoom = nuevo
+            // El zoom se aplica ANTES de traducir el arrastre, para que un gesto que hace
+            // las dos cosas a la vez use la escala con la que el dedo acaba, no la de antes.
+            v.zoom = (v.zoom * gestureZoom).coerceIn(1f, 200f)
+            v.panX -= pan.x / (size.width * v.zoom)
+            v.panY -= pan.y / (size.height * v.zoom)
         }
     }
 
@@ -131,39 +139,50 @@ fun ScatterPlot(
         val lado = min(ancho, alto)
         val escala = (lado / 2f) / radio.toFloat()          // pixeles por metro, igual en X e Y
 
-        // El centro se desplaza con el arrastre, en unidades de dato.
-        val cx = margenIzq + ancho / 2f + vista.panX * ancho
-        val cy = alto / 2f + vista.panY * alto
+        // El arrastre se convierte a PIXELES aqui, y no a unidades de dato.
+        //
+        // Es lo unico que da un seguimiento exacto del dedo: el gesto guarda
+        // `pan / (ancho * zoom)`, asi que multiplicar por `ancho * zoom` devuelve los mismos
+        // pixeles que se arrastraron, sea cual sea el zoom y sea cual sea la escala del
+        // grafico. Pasando por unidades de dato hay que dividir por la escala, y la escala
+        // depende del lado CORTO del recuadro -- con lo que el contenido se movia mas
+        // despacio que el dedo en cuanto el grafico no era cuadrado.
+        val dxPx = -vista.panX * size.width * vista.zoom
+        val dyPx = -vista.panY * size.height * vista.zoom
+
+        // Donde cae la ESTIMACION en pantalla. Los anillos y la cruz van con ella.
+        val ex = margenIzq + ancho / 2f + dxPx
+        val ey = alto / 2f + dyPx
 
         clipRect(left = margenIzq, top = 0f, right = size.width, bottom = alto) {
             // Anillos concentricos CON su distancia escrita. Un anillo sin etiqueta obliga a
             // adivinar la escala, que es justo lo que uno necesita saber aqui.
             val paso = pasoBonito(radio / 3.0)
             var d = paso
-            while (d <= radio * 1.5) {
+            while (d <= radio * 3.0) {
                 val rad = (d * escala).toFloat()
-                drawCircle(ejes.copy(alpha = 0.30f), rad, Offset(cx, cy), style = Stroke(1f))
+                drawCircle(ejes.copy(alpha = 0.30f), rad, Offset(ex, ey), style = Stroke(1f))
                 // La etiqueta va en diagonal, donde estorba menos a la nube.
                 val k = 0.7071f
-                texto(medidor, metros(d), cx + rad * k + 2f, cy - rad * k - 12f,
+                texto(medidor, metros(d), ex + rad * k + 2f, ey - rad * k - 12f,
                       ejes.copy(alpha = 0.9f), 9f)
                 d += paso
             }
-            drawLine(ejes.copy(alpha = 0.45f), Offset(margenIzq, cy), Offset(size.width, cy), 1f)
-            drawLine(ejes.copy(alpha = 0.45f), Offset(cx, 0f), Offset(cx, alto), 1f)
+            drawLine(ejes.copy(alpha = 0.45f), Offset(margenIzq, ey), Offset(size.width, ey), 1f)
+            drawLine(ejes.copy(alpha = 0.45f), Offset(ex, 0f), Offset(ex, alto), 1f)
 
             puntos.forEach { (x, y) ->
-                val px = cx + ((x - centroX) * escala).toFloat()
+                val px = ex + ((x - centroX) * escala).toFloat()
                 // El norte hacia ARRIBA: la pantalla crece hacia abajo y el northing hacia el
                 // norte, asi que sin el signo el grafico sale reflejado.
-                val py = cy - ((y - centroY) * escala).toFloat()
+                val py = ey - ((y - centroY) * escala).toFloat()
                 drawCircle(nube.copy(alpha = 0.55f), 3f, Offset(px, py))
             }
 
             val b = 9f
-            drawLine(marca, Offset(cx - b, cy), Offset(cx + b, cy), 2.5f)
-            drawLine(marca, Offset(cx, cy - b), Offset(cx, cy + b), 2.5f)
-            drawCircle(marca, b * 0.55f, Offset(cx, cy), style = Stroke(2f))
+            drawLine(marca, Offset(ex - b, ey), Offset(ex + b, ey), 2.5f)
+            drawLine(marca, Offset(ex, ey - b), Offset(ex, ey + b), 2.5f)
+            drawCircle(marca, b * 0.55f, Offset(ex, ey), style = Stroke(2f))
         }
 
         // Los nombres de los ejes, fuera del area recortada.
@@ -176,12 +195,12 @@ fun ScatterPlot(
         // Y las cifras de los ejes, referidas a la estimacion.
         val pasoEje = pasoBonito(radio / 2.0)
         listOf(-pasoEje, pasoEje).forEach { v ->
-            val px = cx + (v * escala).toFloat()
+            val px = ex + (v * escala).toFloat()
             if (px > margenIzq + 14 && px < size.width - 14) {
                 texto(medidor, metros(v), px, alto + 6f, ejes.copy(alpha = 0.8f), 9f,
                       centrarX = true)
             }
-            val py = cy - (v * escala).toFloat()
+            val py = ey - (v * escala).toFloat()
             if (py > 10 && py < alto - 10) {
                 texto(medidor, metros(v), margenIzq - 4f - 30f, py, ejes.copy(alpha = 0.8f),
                       9f, centrarY = true)
@@ -218,7 +237,7 @@ fun AltitudePlot(
     val margenIzq = 46f
     val margenAbajo = 22f
 
-    Canvas(modifier.gestosDeGrafico(vista, bloquearY = true)) {
+    Canvas(modifier.gestosDeGrafico(vista)) {
         drawRect(fondo, size = size)
         if (alturas.isEmpty() || resumen == null) return@Canvas
         val ancho = size.width - margenIzq
@@ -231,18 +250,24 @@ fun AltitudePlot(
         // Al menos un metro de ventana: si todas las lecturas fueran iguales, un rango cero
         // daria una division por cero y un grafico donde el ruido de un centimetro parece
         // una montana.
-        val medio = max(max(maxA - centro, centro - minA) * 1.15, 1.0)
+        val medioBase = max(max(maxA - centro, centro - minA) * 1.15, 1.0)
+        // El pellizco acerca en los DOS ejes. En altitud el eje vertical es lo que de verdad
+        // se quiere mirar de cerca --la dispersion son decimetros sobre un rango de metros--
+        // y dejarlo fijo obligaba a mirar el ruido desde demasiado lejos.
+        val medio = medioBase / vista.zoom
         val y0 = centro - medio
         val y1 = centro + medio
-        fun py(v: Double) = (alto * (1 - (v - y0) / (y1 - y0))).toFloat()
+        // Igual que en la nube: el arrastre son pixeles, para que siga al dedo exactamente.
+        val dxPx = -vista.panX * size.width * vista.zoom
+        val dyPx = -vista.panY * size.height * vista.zoom
+        fun py(v: Double) = (alto * (1 - (v - y0) / (y1 - y0))).toFloat() + dyPx
 
-        // El eje horizontal es el indice, y el zoom y el arrastre se aplican sobre el.
+        // El eje horizontal es el indice de muestra.
         val n = alturas.size
         val ventana = max(n / vista.zoom, 2f)
-        val centroIdx = (n / 2f) - vista.panX * n
-        val i0 = (centroIdx - ventana / 2f)
-        val i1 = (centroIdx + ventana / 2f)
-        fun px(i: Int) = margenIzq + ancho * ((i - i0) / (i1 - i0))
+        val i0 = (n / 2f) - ventana / 2f
+        val i1 = (n / 2f) + ventana / 2f
+        fun px(i: Int) = margenIzq + ancho * ((i - i0) / (i1 - i0)) + dxPx
 
         clipRect(left = margenIzq, top = 0f, right = size.width, bottom = alto) {
             if (resumen.sd > 0) {
@@ -257,12 +282,20 @@ fun AltitudePlot(
                     drawCircle(linea.copy(alpha = 0.55f), 2.5f, Offset(x, py(a)))
                 }
             }
-            drawLine(marca, Offset(margenIzq, py(centro)), Offset(size.width, py(centro)), 2.5f)
+            val yLinea = py(centro)
+            if (yLinea >= -2 && yLinea <= alto + 2) {
+                drawLine(marca, Offset(margenIzq, yLinea), Offset(size.width, yLinea), 2.5f)
+            }
         }
 
-        // Etiquetas del eje vertical: la estimacion y una sigma a cada lado.
-        texto(medidor, "%.1f".format(java.util.Locale.ROOT, centro),
-              margenIzq - 4f - 40f, py(centro), marca, 9f, centrarY = true)
+        // Etiquetas del eje vertical: la estimacion y una sigma a cada lado, solo si caen
+        // dentro. Con el zoom pueden quedarse fuera, y escribirlas pegadas al borde diria
+        // que la linea esta ahi cuando no esta.
+        val yEst = py(centro)
+        if (yEst > 8 && yEst < alto - 8) {
+            texto(medidor, "%.1f".format(java.util.Locale.ROOT, centro),
+                  margenIzq - 4f - 40f, yEst, marca, 9f, centrarY = true)
+        }
         if (resumen.sd > 0) {
             listOf(centro + resumen.sd, centro - resumen.sd).forEach { v ->
                 val y = py(v)
@@ -277,10 +310,15 @@ fun AltitudePlot(
                   centrarX = true, centrarY = true)
         }
 
-        // Y del horizontal: primer y ultimo indice visibles, mas el nombre del eje.
-        texto(medidor, "${max(i0.roundToInt() + 1, 1)}", margenIzq + 2f, alto + 6f, 
+        // Y del horizontal: primer y ultimo indice visibles, mas el nombre del eje. Se
+        // deducen de la transformacion en vez de leerse de i0/i1, que ya no incluyen el
+        // arrastre -- escribirlos directamente diria un indice que no es el que se ve.
+        val porPixel = (i1 - i0) / ancho
+        val visibleIni = (i0 - dxPx * porPixel).roundToInt() + 1
+        val visibleFin = (i0 + (i1 - i0) - dxPx * porPixel).roundToInt()
+        texto(medidor, "${max(visibleIni, 1)}", margenIzq + 2f, alto + 6f,
               ejes.copy(alpha = 0.8f), 9f)
-        texto(medidor, "${min(i1.roundToInt(), n)}", size.width - 24f, alto + 6f,
+        texto(medidor, "${min(visibleFin, n)}", size.width - 28f, alto + 6f,
               ejes.copy(alpha = 0.8f), 9f)
         texto(medidor, "Sample number", margenIzq + ancho / 2f, alto + 6f, ejes, 10f,
               centrarX = true)

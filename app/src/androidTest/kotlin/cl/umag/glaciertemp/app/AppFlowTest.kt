@@ -239,6 +239,15 @@ class AppFlowTest {
         waitForTag("gps-new")
         rule.onNodeWithTag("gps-empty").assertExists()
 
+        // La explicacion de como se promedia: cada decision de ahi cambia el numero que
+        // sale en pantalla, y quien lo anota en una libreta tiene derecho a saber de donde
+        // viene. Se comprueba que explica lo que menos se conoce.
+        rule.onNodeWithTag("gps-info").performClick()
+        waitForTag("gps-info-dialog")
+        rule.onNodeWithText("median absolute deviation", substring = true).assertExists()
+        rule.onNodeWithText("Close").performClick()
+        rule.waitForIdle()
+
         rule.onNodeWithTag("gps-new").performClick()
         waitForTag("gps-name")
         // Sin arreglos no hay nada que guardar, y el boton lo dice en vez de guardar vacio.

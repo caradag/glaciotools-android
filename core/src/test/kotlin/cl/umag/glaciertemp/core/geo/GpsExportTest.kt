@@ -107,6 +107,50 @@ class GpsExportTest {
         assertFalse("<ele>" in GpsExport.gpxSamples("x", sinAlt))
     }
 
+    @Test
+    fun `varios puntos caben en un fichero, una fila por punto`() {
+        val otras = GpsAverager().apply {
+            addAll(muestras.map { it.copy(latitude = it.latitude + 0.01) })
+        }.stats()!!
+        val csv = GpsExport.csvAverages(listOf("Estaca 3" to stats, "Estaca 4" to otras))
+        val lineas = csv.trim().lines()
+
+        assertEquals(3, lineas.size, "una cabecera y dos filas")
+        assertEquals(GpsExport.csvAverage("Estaca 3", stats).lines()[0], lineas[0],
+                     "la cabecera de varios no coincide con la de uno")
+        assertTrue(lineas[1].startsWith("Estaca 3,"))
+        assertTrue(lineas[2].startsWith("Estaca 4,"))
+        // Y las columnas cuadran en las dos filas.
+        val n = lineas[0].split(",").size
+        assertEquals(n, splitCsv(lineas[1]).size)
+        assertEquals(n, splitCsv(lineas[2]).size)
+    }
+
+    @Test
+    fun `varios puntos en gpx son un waypoint cada uno, y sigue siendo xml valido`() {
+        val otras = GpsAverager().apply {
+            addAll(muestras.map { it.copy(latitude = it.latitude + 0.01) })
+        }.stats()!!
+        val gpx = GpsExport.gpxAverages(listOf("Estaca 3" to stats, "Estaca 4" to otras))
+
+        assertEquals(2, Regex("<wpt ").findAll(gpx).count())
+        assertEquals(1, Regex("</gpx>").findAll(gpx).count(), "se cerro el fichero dos veces")
+        val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance()
+            .newDocumentBuilder().parse(gpx.byteInputStream())
+        assertEquals(2, doc.getElementsByTagName("wpt").length)
+    }
+
+    @Test
+    fun `exportar un punto suelto sigue dando lo mismo que antes`() {
+        // La refactorizacion para compartir cabecera y waypoint no puede haber cambiado la
+        // forma del fichero de un punto: hay exportaciones anteriores ahi fuera.
+        val uno = GpsExport.gpxAverage("Estaca 3", stats)
+        assertTrue(uno.startsWith("<?xml"))
+        assertTrue(uno.trimEnd().endsWith("</gpx>"))
+        assertEquals(1, Regex("<wpt ").findAll(uno).count())
+        assertEquals(2, GpsExport.csvAverage("Estaca 3", stats).trim().lines().size)
+    }
+
     /** Un partidor de CSV que respeta las comillas, para comprobar el entrecomillado. */
     private fun splitCsv(line: String): List<String> {
         val out = ArrayList<String>()
