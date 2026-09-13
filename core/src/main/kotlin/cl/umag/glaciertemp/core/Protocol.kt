@@ -47,6 +47,26 @@ object Protocol {
     const val VERSION = "VER"
     const val MEMORY_LIFETIME = "CALC"
 
+    /**
+     * Sensores en directo, sin grabar nada. [periodMs] 0 deja la cadencia por defecto de la
+     * placa; el firmware recorta lo que no pueda sostener y anuncia con cual se quedo.
+     */
+    const val LIVE = "LIVE"
+    fun live(periodMs: Int = 0): String =
+        if (periodMs > 0) line("$LIVE=$periodMs") else line(LIVE)
+
+    /**
+     * Lo que se manda para parar el modo LIVE.
+     *
+     * La placa para con CUALQUIER byte --un humano en el terminal pulsa Enter-- pero se
+     * manda una palabra y no un byte suelto porque el terminal ensena lo que sale por la
+     * linea, y ahi "stop" se lee y un 0x18 no.
+     */
+    const val LIVE_STOP = "stop"
+
+    /** Protocolo a partir del cual la placa entiende [LIVE]. */
+    const val LIVE_PROTOCOL = 5
+
     fun line(command: String): String = command + TERMINATOR
 
     /**

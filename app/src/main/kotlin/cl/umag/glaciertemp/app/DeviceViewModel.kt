@@ -37,6 +37,23 @@ data class BatterySettings(
 /** Una linea del terminal, con su origen para poder distinguirlas en pantalla. */
 data class TerminalLine(val text: String, val fromBoard: Boolean)
 
+/**
+ * Lo que se esta midiendo AHORA, o lo ultimo que se midio.
+ *
+ * [stale] es el campo que hace que esto sea honesto. Cuando la placa corta el directo por su
+ * cuenta --se le acaba el plazo-- los numeros de la pantalla siguen ahi, y sin decir nada
+ * pasarian por lecturas de este momento. Marcarlos cuesta un booleano; no marcarlos es
+ * ensenar un dato viejo como si fuera nuevo, que es el peor fallo que puede tener una
+ * pantalla de tiempo real.
+ */
+data class LiveState(
+    val running: Boolean = false,
+    val time: String? = null,
+    val values: List<String> = emptyList(),
+    val samples: Long = 0,
+    val stale: Boolean = false,
+)
+
 data class UiState(
     val connected: Boolean = false,
     val busy: Boolean = false,
@@ -59,6 +76,7 @@ data class UiState(
     val fromFile: Boolean = false,
     val variables: Map<String, String> = emptyMap(),
     val progress: DownloadProgress? = null,
+    val live: LiveState = LiveState(),
     val records: List<Record> = emptyList(),
     val csvPreview: String = "",
     val battery: BatterySettings = BatterySettings(),
@@ -377,6 +395,15 @@ class DeviceViewModel : ViewModel() {
      * y cubre un LOGC completo de la memoria en uso.
      */
     private val terminalLimit = 20_000
+
+    /**
+     * Cadencia que se le pide a la placa en el modo directo.
+     *
+     * Medio segundo y no lo mas rapido posible: por debajo de eso los numeros cambian mas
+     * deprisa de lo que se leen, y por radio cada muestra es una linea que hay que entregar.
+     * La placa recorta lo que no pueda sostener y dice con que cadencia se quedo.
+     */
+    private val LIVE_PERIOD_MS = 500
 
     /**
      * Buffer real del terminal.
@@ -850,6 +877,70 @@ class DeviceViewModel : ViewModel() {
         // La placa vuelve a estar sin descargar: el aviso de sincronizar el reloj tiene que
         // volver a salir, porque el desfase de lo que grabe desde ahora aun no se ha medido.
         downloadedFrom = null
+    }
+
+    // ------------------------------ datos en directo ------------------------------
+
+    /** Lo pone el boton de parar y lo lee el bucle del directo, de ahi el @Volatile. */
+    @Volatile private var pararDirecto = false
+
+    /**
+     * Empieza a mostrar lo que la placa mide, sin grabarlo.
+     *
+     * No usa launchGuarded porque este no termina solo: se queda hasta que alguien lo pare,
+     * y el estado de "ocupado" tiene que convivir con un boton que sigue vivo. De ahi que
+     * el manejo del busy sea a mano.
+     */
+    fun startLive() {
+        val s = session ?: return
+        val info = _state.value.info ?: return
+        val campos = LogFormat.fields(info.signature)
+        pararDirecto = false
+        _state.value = _state.value.copy(
+            busy = true, error = null, status = "Live data",
+            live = LiveState(running = true, values = List(campos.size) { "—" }))
+
+        viewModelScope.launch {
+            val aPeticion = runCatching {
+                withContext(Dispatchers.IO) {
+                    s.live(
+                        expectedValues = campos.size,
+                        periodMs = LIVE_PERIOD_MS,
+                        onSample = { m ->
+                            // Se publica cada muestra segun llega y no al final: el sentido
+                            // entero de esto es ver como cambia mientras cambia.
+                            _state.value = _state.value.copy(
+                                live = _state.value.live.copy(
+                                    time = m.time, values = m.values,
+                                    samples = _state.value.live.samples + 1))
+                        },
+                        onDiagnostic = { appendTerminal(it, fromBoard = true) },
+                        isCancelled = { pararDirecto },
+                    )
+                }
+            }
+            publicarTerminal()
+            _state.value = _state.value.copy(
+                busy = false,
+                status = when (aPeticion.getOrNull()) {
+                    LiveOutcome.PARADO -> "Live data stopped"
+                    LiveOutcome.PLAZO_DE_LA_PLACA ->
+                        "Live data ended: the board reached its ten-minute limit"
+                    LiveOutcome.NO_CONFIRMADO ->
+                        "Live data stopped, but the board did not confirm it"
+                    null -> "Live data stopped"
+                },
+                error = aPeticion.exceptionOrNull()?.let { it.message ?: it.toString() },
+                // Los numeros se quedan en pantalla, pero marcados: son la ULTIMA lectura,
+                // no la de ahora. Borrarlos seria perder lo que uno acaba de ver.
+                live = _state.value.live.copy(running = false, stale = true),
+            )
+        }
+    }
+
+    fun stopLive() {
+        pararDirecto = true
+        _state.value = _state.value.copy(status = "Stopping live data...")
     }
 
     fun setBatterySettings(b: BatterySettings) {

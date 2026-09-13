@@ -16,7 +16,7 @@ Formato de LOGB (definido aqui, a implementar igual en el firmware):
     linea de texto  "LOGB end"
 El CRC es CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), barato en AVR.
 """
-import argparse, os, pty, random, selectors, socket, struct, sys, time, zlib
+import argparse, math, os, pty, random, select, selectors, socket, struct, sys, time, zlib
 from datetime import datetime, timedelta
 
 EPOCH = datetime(2000, 1, 1)
@@ -28,8 +28,8 @@ NORMAL_BAUD = 115200
 FAST_BAUD = 230400
 # Version de firmware y de protocolo, en UN solo sitio. Estaban escritas dos veces y ya
 # habian divergido: INFO decia fw=2.7 proto=2 y VER seguia contestando fw=2.0 proto=1.
-FW_VERSION = "3.3"
-PROTOCOL = 4
+FW_VERSION = "3.4"
+PROTOCOL = 5
 # Identidad del hardware, como en el firmware: tipo + revision de placa, NO la del firmware.
 BOARD_TYPE = "GT"
 BOARD_HW_VERSION = "001"
@@ -132,6 +132,20 @@ class Board:
     def record(self, i):
         return self.data[i * self.rec:(i + 1) * self.rec]
 
+    def live_row(self, t):
+        """Una muestra en directo: los mismos campos del log, con la hora de ahora.
+
+        Los valores se mueven poco entre muestras, no al azar como los del log: lo que se
+        mira en directo es si un numero REACCIONA --tocar la sonda y ver subir la
+        temperatura-- y con ruido puro no se distingue eso de nada.
+        """
+        cols = []
+        for name, scale, dec in self.fields:
+            base = {"Volt": 4100.0, "Temp": 1850.0, "RH": 520.0}.get(name, 1000.0)
+            v = base + 20 * math.sin(t / 3.0) + random.uniform(-3, 3)
+            cols.append(f"{v/scale:.{dec}f}")
+        return ",".join(cols)
+
     def csv_rows(self, a, b):
         yield "Time," + ",".join(n for n, _, _ in self.fields)
         for i in range(a, min(b + 1, self.count)):
@@ -197,7 +211,7 @@ class Link:
         self.send((s + "\r\n").encode())
 
 
-def handle(cmd, board, link, args):
+def handle(cmd, board, link, args, has_input=None, drain_input=None):
     c = cmd.strip()
     if not c:
         return
@@ -219,6 +233,36 @@ def handle(cmd, board, link, args):
     if up == "Q":
         link.line("Bye")
         return "quit"
+
+    # LIVE: los sensores en directo, sin grabar. Para con cualquier byte que llegue.
+    if up == "LIVE" or up.startswith("LIVE="):
+        periodo = 1000
+        if "=" in c:
+            try:
+                periodo = int(c.split("=", 1)[1])
+            except ValueError:
+                pass
+        periodo = max(200, min(60000, periodo))
+        link.line(f"LIVE begin every {periodo} ms")
+        link.line("Time," + ",".join(n for n, _, _ in board.fields))
+        t0 = time.monotonic()
+        parado = False
+        while time.monotonic() - t0 < 600:
+            ahora = datetime.now()
+            link.line(f"LIVE {ahora:%Y-%m-%d %H:%M:%S},"
+                      + board.live_row(time.monotonic() - t0))
+            fin = time.monotonic() + periodo / 1000.0
+            while time.monotonic() < fin:
+                if has_input and has_input():
+                    parado = True
+                    break
+                time.sleep(0.01)
+            if parado:
+                break
+        if parado and drain_input:
+            drain_input()
+        link.line("LIVE end" if parado else "LIVE timeout")
+        return
 
     if up == "I":
         link.line(f"GlacierTemp 1-cell rev02")
@@ -360,7 +404,7 @@ def handle(cmd, board, link, args):
     link.line("Unknown command. H for help.")
 
 
-def serve(readline, write, args, board):
+def serve(readline, write, args, board, has_input=None, drain_input=None):
     link = Link(write, args.mtu, args.conn_interval,
                 getattr(args, "module_buffer", 0), getattr(args, "drain_bps", 0.0))
     if args.boot_delay:
@@ -374,7 +418,7 @@ def serve(readline, write, args, board):
         line = readline()
         if line is None:
             return
-        if handle(line, board, link, args) == "quit":
+        if handle(line, board, link, args, has_input, drain_input) == "quit":
             return
 
 
@@ -435,7 +479,17 @@ def main():
             return line.decode(errors="replace")
         def write(d):
             out.write(d); out.flush()
-        serve(readline, write, a, board)
+        # Para LIVE hace falta preguntar si hay entrada SIN bloquear: el bucle de muestras
+        # no puede quedarse esperando una linea entera que quiza no llegue nunca.
+        def has_input():
+            return bool(buf) or bool(select.select([inp], [], [], 0)[0])
+        def drain_input():
+            nonlocal buf
+            buf = bytearray()
+            while select.select([inp], [], [], 0.05)[0]:
+                if not (inp.read1(4096) if hasattr(inp, "read1") else inp.read(4096)):
+                    break
+        serve(readline, write, a, board, has_input, drain_input)
         return
 
     if a.pty:
@@ -452,7 +506,15 @@ def main():
             i = buf.index(b"\n")
             out, buf = buf[:i], buf[i + 1:]
             return out.decode(errors="replace")
-        serve(readline, lambda d: os.write(master, d), a, board)
+        def has_input():
+            return bool(buf) or bool(select.select([master], [], [], 0)[0])
+        def drain_input():
+            nonlocal buf
+            buf = bytearray()
+            while select.select([master], [], [], 0.05)[0]:
+                if not os.read(master, 4096):
+                    break
+        serve(readline, lambda d: os.write(master, d), a, board, has_input, drain_input)
     else:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -471,9 +533,18 @@ def main():
                 i = buf.index(b"\n")
                 out, buf = buf[:i], buf[i + 1:]
                 return out.decode(errors="replace")
+            def has_input():
+                return bool(buf) or bool(select.select([conn], [], [], 0)[0])
+            def drain_input():
+                nonlocal buf
+                buf = bytearray()
+                while select.select([conn], [], [], 0.05)[0]:
+                    if not conn.recv(4096):
+                        break
             try:
                 serve(readline, conn.sendall, a, Board(int(a.signature, 16),
-                      a.log_size, a.seed, int(a.uid, 16), drain))
+                      a.log_size, a.seed, int(a.uid, 16), drain),
+                      has_input, drain_input)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             finally:

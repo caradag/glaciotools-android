@@ -39,6 +39,7 @@ import cl.umag.glaciertemp.core.BatteryType
 import cl.umag.glaciertemp.core.BatteryUnknown
 import cl.umag.glaciertemp.core.CsvExporter
 import cl.umag.glaciertemp.core.LogFormat
+import cl.umag.glaciertemp.core.Protocol
 import cl.umag.glaciertemp.core.Stats
 import cl.umag.glaciertemp.core.TimeUnit
 import cl.umag.glaciertemp.core.Variables
@@ -799,12 +800,114 @@ private fun DownloadCard(vm: DeviceViewModel, s: UiState) {
                     ) { Text("Abort") }
                 }
             }
+            LiveRow(vm, s)
             // Solo en modo avanzado: es la via de recuperacion cuando el log no se puede
             // interpretar, no una descarga corriente, y son minutos de volcado.
             if (s.advanced) {
                 RawLogRow(vm, s)
             }
             ResetCounterRow(vm, s)
+        }
+    }
+}
+
+/**
+ * Los sensores en directo, debajo de la descarga.
+ *
+ * Nada de esto se graba: es para apuntar la sonda a algo y ver como responde. Por eso los
+ * numeros van grandes --se leen de lejos, con el aparato en la mano y la vista en el
+ * sensor-- y por eso la lectura se queda en pantalla al parar, marcada como vieja en vez de
+ * borrada: lo ultimo que se vio suele ser lo que se estaba buscando.
+ */
+@Composable
+private fun LiveRow(vm: DeviceViewModel, s: UiState) {
+    val proto = s.info?.protocol ?: 0
+    // Se ofrece solo si la placa lo entiende. Un boton que manda un comando que la placa no
+    // conoce devuelve "Unrecognized command" y deja al usuario adivinando de quien es la
+    // culpa; no ofrecerlo dice lo mismo sin necesidad de probarlo.
+    if (proto < Protocol.LIVE_PROTOCOL) return
+    val campos = s.info?.let { LogFormat.fields(it.signature) } ?: return
+
+    HorizontalDivider()
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        if (s.live.running) {
+            Button(onClick = { vm.stopLive() },
+                   colors = ButtonDefaults.buttonColors(
+                       containerColor = MaterialTheme.colorScheme.error),
+                   modifier = Modifier.testTag("live-stop")) { Text("Stop") }
+        } else {
+            Button(onClick = { vm.startLive() }, enabled = !s.busy,
+                   modifier = Modifier.testTag("live-start")) { Text("See live data") }
+        }
+        if (s.live.samples > 0) {
+            Text("${s.live.samples} samples",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    if (s.live.values.isNotEmpty()) {
+        // Dos columnas: en un telefono en vertical, tres dejan los numeros de cuatro cifras
+        // partidos por la mitad, y una sola obliga a desplazarse para ver el ultimo canal.
+        val enPares = campos.indices.chunked(2)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp),
+               modifier = Modifier.testTag("live-panel")) {
+            enPares.forEach { fila ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    fila.forEach { i ->
+                        LiveReading(
+                            nombre = campos[i].name,
+                            valor = s.live.values.getOrNull(i) ?: "—",
+                            unidad = LogFormat.unitOf(campos[i].name),
+                            apagado = s.live.stale,
+                            modifier = Modifier.weight(1f).testTag("live-${campos[i].name}"),
+                        )
+                    }
+                    // Rellena el hueco de una fila impar para que la ultima lectura no se
+                    // estire al doble de ancho que las demas.
+                    if (fila.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+            s.live.time?.let {
+                Text(if (s.live.stale) "Last reading: $it" else "Board time: $it",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                     modifier = Modifier.testTag("live-time"))
+            }
+        }
+    }
+    Text("Reads the sensors without recording anything. The board stops on its own after " +
+         "ten minutes.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** Un numero grande con su nombre encima y su unidad al lado. */
+@Composable
+private fun LiveReading(
+    nombre: String,
+    valor: String,
+    unidad: String,
+    apagado: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // Apagado, no oculto: al parar, la ultima lectura sigue siendo util, pero tiene que
+    // distinguirse de una que se esta refrescando ahora mismo.
+    val color = if (apagado) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.onBackground
+    Column(modifier) {
+        Text(nombre, style = MaterialTheme.typography.labelMedium,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(valor,
+                 style = MaterialTheme.typography.headlineSmall,
+                 fontFamily = FontFamily.Monospace,
+                 color = color)
+            if (unidad.isNotEmpty()) {
+                Text(" $unidad", style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

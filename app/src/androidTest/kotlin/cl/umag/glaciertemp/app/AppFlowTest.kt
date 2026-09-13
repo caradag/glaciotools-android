@@ -188,7 +188,24 @@ class AppFlowTest {
         // Y el contador sigue intacto: cancelar no puede haber mandado nada.
         rule.onNodeWithTag("record-count").assertTextContains("240", substring = true)
 
-        // 14. Al desconectar se manda Q, y la prueba de que se mando es el "Bye" de la
+        // 14. Los datos en directo: los numeros aparecen, cambian, y Parar los deja en
+        // pantalla marcados como la ULTIMA lectura en vez de borrarlos.
+        rule.onNodeWithTag("live-start").performScrollTo().performClick()
+        waitForTag("live-panel")
+        // Una lectura por canal, con su nombre: si las columnas se desalinearan, esta
+        // etiqueta existiria igual, pero el panel no llegaria a pintarse si faltan valores.
+        rule.onNodeWithTag("live-Volt").assertExists()
+        // Y la hora de la placa, que solo aparece cuando ha llegado una muestra entera.
+        waitForTag("live-time", timeoutMs = 15_000)
+
+        rule.onNodeWithTag("live-stop").performScrollTo().performClick()
+        waitForText("Live data stopped")
+        // Al parar, la ultima lectura SIGUE en pantalla -- es lo que uno estaba mirando --
+        // y el boton vuelve a ofrecer empezar.
+        rule.onNodeWithTag("live-panel").assertExists()
+        rule.onNodeWithTag("live-start").assertExists()
+
+        // 15. Al desconectar se manda Q, y la prueba de que se mando es el "Bye" de la
         // placa. Importa porque la consola se queda escuchando dos minutos despues del
         // ultimo comando y durante esos dos minutos la placa NO graba: soltar el enlace sin
         // avisar deja un agujero en el registro tan largo como la ventana de consola.

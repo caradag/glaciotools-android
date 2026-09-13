@@ -54,6 +54,20 @@ data class DeviceInfo(
  * cada tramo, asi que marcaba 0,0 kB/s casi siempre. El registro es ademas la unidad en la
  * que uno piensa; el bloque es un detalle del protocolo.
  */
+/**
+ * Como termino el modo en directo. Son tres y no dos porque significan cosas distintas para
+ * quien mira la pantalla: solo en el primero los numeros dejaron de refrescarse porque asi
+ * se pidio. En los otros dos siguen ahi pero ya no son de ahora, y hay que decirlo.
+ */
+enum class LiveOutcome {
+    /** Se pidio parar y la placa lo confirmo. */
+    PARADO,
+    /** La placa llego a su tope de tiempo y paro sola. */
+    PLAZO_DE_LA_PLACA,
+    /** Se pidio parar y nunca llego la confirmacion. */
+    NO_CONFIRMADO,
+}
+
 /** Aborto pedido por el usuario; lleva cuantos registros alcanzaron a bajarse. */
 class DownloadCancelled(val recordsDone: Long) : Exception("Download cancelled")
 
@@ -278,6 +292,16 @@ class DeviceSession(private val transport: Transport) {
          * tiene que quedar MUY por debajo, no cerca.
          */
         const val CANCEL_SETTLE_MS = 20L
+
+        /**
+         * Tope propio del modo en directo. Va por ENCIMA del de la placa a proposito: quien
+         * decide cuando se acaba es ella, con su "LIVE timeout", y esto solo existe para no
+         * quedarse esperando para siempre el dia que ese texto no llegue.
+         */
+        const val MAX_LIVE_MS = 15 * 60_000L
+
+        /** Lo que se le concede a la placa para confirmar que paro, tras pedirselo. */
+        const val STOP_GRACE_MS = 5_000L
     }
 
     private val bomba = Bomba(transport).also { it.arrancar() }
@@ -404,6 +428,88 @@ class DeviceSession(private val transport: Transport) {
             if (c.isEmpty()) idle += 40 else { out.write(c); idle = 0 }
         }
         return out.toByteArray()
+    }
+
+    /**
+     * Sensores en directo hasta que [isCancelled] diga que ya, o hasta que la placa se canse.
+     *
+     * Devuelve true si paro porque se lo pedimos y false si se le acabo el plazo a la placa,
+     * que no es lo mismo: lo segundo significa que hay que volver a pedirlo, y quien mira la
+     * pantalla tiene que saberlo o creera que los numeros siguen siendo de ahora.
+     *
+     * Va bajo el cerrojo como una descarga, y eso no es un detalle: la placa para el modo
+     * con CUALQUIER byte que le llegue, asi que mientras esto corre nadie mas puede escribir
+     * en la linea. Serializarlo es lo que impide que un comando del terminal corte el
+     * directo sin que nadie entienda por que.
+     */
+    fun live(
+        expectedValues: Int,
+        periodMs: Int = 0,
+        onSample: (LiveSample) -> Unit,
+        onDiagnostic: (String) -> Unit = {},
+        isCancelled: () -> Boolean = { false },
+    ): LiveOutcome = conElEnlace {
+        // Lo que quedara de antes no puede leerse como una muestra.
+        bomba.descartarPendiente()
+        transport.write(Protocol.live(periodMs).toByteArray())
+
+        val pendiente = StringBuilder()
+        var pedido = false
+        var pedidoEn = 0L
+        var cerrado = false
+        var porPlazo = false
+        var descartadas = 0
+        // Mas que el tope de la placa: el que manda es su "LIVE timeout", y esto solo evita
+        // quedarse aqui para siempre si ese texto nunca llega.
+        val limite = System.currentTimeMillis() + MAX_LIVE_MS
+
+        while (!cerrado && System.currentTimeMillis() < limite) {
+            if (!pedido && isCancelled()) {
+                transport.write((Protocol.LIVE_STOP + Protocol.TERMINATOR).toByteArray())
+                pedido = true
+                pedidoEn = System.currentTimeMillis()
+                // No se sale todavia: hay que quedarse a leer el cierre, o esa linea
+                // aparecería luego pegada a la respuesta del comando siguiente.
+            }
+            // Pero no para siempre. Quien pulsa Parar espera que la pantalla responda, y
+            // esperar aqui el plazo entero por un cierre que no llega dejaria la app
+            // ocupada un cuarto de hora sin decir por que.
+            if (pedido && System.currentTimeMillis() - pedidoEn > STOP_GRACE_MS) break
+            val c = bomba.leer(100)
+            if (c.isEmpty()) continue
+            pendiente.append(String(c, Charsets.ISO_8859_1))
+            while (true) {
+                val i = pendiente.indexOf("\n")
+                if (i < 0) break
+                val linea = pendiente.substring(0, i).trim()
+                pendiente.delete(0, i + 1)
+                when {
+                    LiveSample.isEnd(linea) -> {
+                        cerrado = true
+                        porPlazo = LiveSample.isTimeout(linea)
+                    }
+                    LiveSample.isStart(linea) -> onDiagnostic(linea)
+                    linea.startsWith(LiveSample.PREFIX) -> {
+                        val m = LiveSample.parse(linea, expectedValues)
+                        if (m != null) onSample(m) else descartadas++
+                    }
+                }
+            }
+        }
+        if (descartadas > 0) {
+            onDiagnostic("Live: $descartadas sample(s) arrived incomplete and were dropped")
+        }
+        if (!cerrado) {
+            onDiagnostic("Live: the board never confirmed that it stopped")
+        }
+        // El cierre puede traer cola detras; se recoge para que no salga delante de la
+        // respuesta del comando siguiente.
+        drenarCola(quietMs = 150, maxMs = 800)
+        when {
+            !cerrado -> LiveOutcome.NO_CONFIRMADO
+            porPlazo -> LiveOutcome.PLAZO_DE_LA_PLACA
+            else -> LiveOutcome.PARADO
+        }
     }
 
     /**

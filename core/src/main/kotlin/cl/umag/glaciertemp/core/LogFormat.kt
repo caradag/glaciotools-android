@@ -69,6 +69,23 @@ object LogFormat {
     fun describe(signature: Int): List<String> =
         fields(signature).map { channelDescription(it.name) }
 
+    /**
+     * La unidad de un canal, para ensenarla junto al numero.
+     *
+     * No va en [Field] porque el CSV no la lleva: las columnas del fichero son nombres
+     * pelados, y meterla ahi cambiaria el formato de todo lo ya exportado. Aqui es solo
+     * para la pantalla, donde un numero suelto no dice si son grados o voltios.
+     */
+    fun unitOf(name: String): String = when {
+        name == "Volt" -> "V"
+        name == "RH" -> "%"
+        name == "Temp" || name == "HAtemp" -> "°C"
+        name.startsWith("DS") -> "°C"
+        // Los canales analogicos se guardan en mV con escala 1000: son voltios.
+        name.startsWith("A") -> "V"
+        else -> ""
+    }
+
     /** Resumen de una linea, para cuando no hay sitio para la lista entera. */
     fun summary(signature: Int): String {
         val f = fields(signature)
