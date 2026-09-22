@@ -53,13 +53,17 @@ object CsvExporter {
             // estadisticas las muestra tambien, y dos `%.5f` en dos sitios acabarian
             // divergiendo el dia que alguien cambie uno.
             val extra = ArrayList<String>()
-            p.accuracyMetres?.let { extra += "accuracy %.0f m".format(it) }
-            extra += "fix ${BoardClock.format(p.ageSeconds)} old"
+            p.accuracyMetres?.let {
+                extra += "accuracy %.0f m".format(java.util.Locale.ROOT, it)
+            }
+            // El origen sustituye a la antiguedad cuando lo hay, igual que en la pantalla:
+            // la antiguedad de un punto promediado no dice nada malo de el.
+            extra += p.sourceLabel ?: "fix ${BoardClock.format(p.ageSeconds)} old"
             add("position: ${meta.positionDescription()}  (${extra.joinToString(", ")})")
             // En su propia linea y solo si la hay. Escribirla como "0 m" cuando falta seria
             // una altitud perfectamente plausible y un dato ausente disfrazado de medida.
             p.altitudeMetres?.let {
-                add("altitude: %.0f m (WGS84 ellipsoid)".format(it))
+                add("altitude: %.0f m (WGS84 ellipsoid)".format(java.util.Locale.ROOT, it))
             }
         } else {
             meta.positionNote?.let { add("position: not recorded -- $it") }

@@ -14,6 +14,30 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Notas de audio de la libreta. Se pide al pulsar grabar, no al arrancar. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- El cronometro de una medicion GNSS: dura horas con la pantalla apagada, asi que la
+         cuenta atras y su alarma viven en un servicio en primer plano y no en la app.
+
+         SI hacen falta los permisos de alarma exacta, al contrario de lo que decia este
+         comentario antes: `setAlarmClock` lanza SecurityException sin ellos ("Caller needs to
+         hold SCHEDULE_EXACT_ALARM or USE_EXACT_ALARM"), comprobado en el aparato. Esa es la
+         razon de que la alarma no sonara.
+
+         USE_EXACT_ALARM (API 33+) se concede al INSTALAR y no se puede revocar: esta pensado
+         justo para apps cuya funcion es avisar a una hora, que es literalmente lo que hace
+         esto. En 31 y 32 no existe todavia, y ahi vale SCHEDULE_EXACT_ALARM, que en esas dos
+         versiones se concede solo. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
@@ -50,5 +74,30 @@
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/device_filter" />
         </activity>
+        <!-- La camara escribe en un fichero de la app, y desde Android 7 no se le puede
+             pasar una file://, porque el sistema lanza FileUriExposedException. El provider
+             le entrega una content:// con permiso solo para ese fichero. La autoridad la
+             construye MediaVault a partir del packageName; tienen que coincidir. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- specialUse: no encaja en ninguno de los tipos que Android enumera (no es
+             reproduccion, ni sincronizacion, ni localizacion: es un cronometro de una tarea
+             que el usuario inicio y que tiene que avisar aunque el telefono duerma). -->
+        <service
+            android:name=".app.GnssTimerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Timing a field GNSS occupation and alerting when the planned duration elapses" />
+        </service>
     </application>
 </manifest>

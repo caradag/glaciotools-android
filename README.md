@@ -1,8 +1,14 @@
-# GlacioTools -- app Android para GlacierTemp
+# GlacioTools -- herramientas de terreno para glaciologia
 
-App que se conecta a la placa GlacierTemp por Bluetooth LE y por cable (USB OTG),
-descarga el log en binario -- completo o por rango --, lo exporta a CSV, lo visualiza
-y ofrece un front-end para los comandos de configuracion.
+Tres herramientas detras de una pantalla de inicio:
+
+- **Connect to a device** -- se conecta a la placa GlacierTemp por Bluetooth LE y por cable
+  (USB OTG), descarga el log en binario --completo o por rango--, lo exporta a CSV, lo
+  visualiza y ofrece un front-end para los comandos de configuracion.
+- **GPS tools** -- promedia arreglos GNSS para fijar una posicion mejor de lo que permite una
+  lectura suelta. Exporta a CSV o GPX.
+- **Fieldbook** -- libreta de terreno: notas generales con fotos y audio, mediciones de baliza
+  con su tasa de ablacion, puntos GNSS con cronometro y alarma, y muestras dendrocronologicas.
 
 Requiere **firmware 3.0 o posterior** (protocolo 4):
 https://github.com/caradag/glaciertemp-firmware
@@ -12,7 +18,7 @@ Plan completo: `electronics-kb/plans/app-android-glaciertemp.md` en el KB.
 ## Compilar
 
     source ~/.glaciertemp-app-env.sh
-    ./gradlew :core:test :transport:test     # 176 tests, sin hardware ni emulador
+    ./gradlew :core:test :transport:test     # 347 tests, sin hardware ni emulador
     ./gradlew :app:assembleDebug             # APK en app/build/outputs/apk/debug/
 
 Las pruebas de punta a punta arrancan `tools/fake_glaciertemp.py`, que habla el mismo
@@ -119,6 +125,165 @@ Lo unico que esto no cubre es el enlace fisico BLE y USB, que necesita placa y t
   bloque nuevo. Comprobar el balance de llaves antes de compilar (paso en falso dos veces).
 - Tras `performTextInput` el teclado virtual tapa los botones: hay que cerrarlo y usar
   `performScrollTo()` antes de `performClick()`.
+
+## Fieldbook: la libreta de terreno
+
+Cuatro tipos de entrada, todos con quien, cuando y donde:
+
+| Tipo | Lo que guarda |
+|---|---|
+| General note | Una SUCESION de anotaciones fechadas: texto, fotos y notas de audio, cada una con su marca |
+| Stake measurement | La baliza (nombre, longitud total) y sus lecturas de altura expuesta, con la tasa de ablacion entre consecutivas y una medicion GNSS opcional por lectura |
+| GNSS measurement | Un punto de alta precision: receptor, inicio, termino, duracion programada y fotos |
+| Dendro sample | Etiqueta fisica, especie, altura de muestreo, perimetro del tronco, notas y fotos |
+
+Las entradas pertenecen a una **campana de terreno**, que se abre sola con la primera
+anotacion y se nombra al TERMINARLA -- que es cuando uno sabe como se llamo aquello. Archivar
+una campana no mueve ni borra nada: solo la marca con una fecha, y sus entradas dejan de salir
+en la lista, que queda vacia para la siguiente. Mover ficheros al archivar habria convertido
+una operacion reversible en una que puede perder datos a mitad.
+
+**Las coordenadas salen del GPS del telefono O de un punto ya promediado en GPS tools.** Lo
+segundo suele ser mejor dato --minutos de promediado contra una lectura suelta-- y por eso se
+ofrece al mismo nivel y no como respaldo. Lo mismo vale ahora para la posicion de una descarga
+en *Connect to a device*: se puede sustituir por un punto guardado desde la tarjeta Data, y no
+solo cuando el GPS falla.
+
+**Las listas de personas y receptores** se ordenan por uso reciente, y de ahi sale el valor
+propuesto en una entrada nueva -- no hay un campo "ultimo usado" aparte que pueda discrepar de
+la lista. El boton ⋮ al lado de cada desplegable quita el nombre seleccionado o vacia la lista.
+**Quitar un nombre no toca ningun registro**: las entradas guardan el nombre como TEXTO y no
+como referencia, asi que una medicion hecha con un receptor sigue mostrandolo despues de que
+ese receptor desaparezca del desplegable. Es la razon de que no haya tabla de personas con ids.
+
+**La tasa de ablacion** entre dos lecturas consecutivas es `(altura_actual - altura_anterior) /
+dias`, en cm/dia; positiva significa ablacion. Es cambio de superficie en centimetros de hielo
+o nieve, NO equivalente en agua. Una lectura sin altura corta la serie en vez de saltarsela:
+calcular contra la ultima que si la tenia convertiria un hueco en un intervalo largo sin
+decirlo, y una tasa de seis dias mostrada como si fuera de tres es peor que una celda vacia.
+
+### Satelites a la vista
+
+Mientras una medicion GNSS corre, el panel muestra cuantos satelites de cada constelacion ve
+el receptor DEL TELEFONO y cuantos esta usando. Sirve para decidir si alargar la ocupacion o
+levantar antes, y por eso se separan los visibles de los usados: ver doce y usar cinco no es lo
+mismo que ver seis y usar seis.
+
+Dos cosas que la API no dice. La primera: `registerGnssStatusCallback` no enciende el motor
+GNSS -- hace falta ademas una peticion de posicion activa, o el callback se registra sin error
+y no llega nunca nada. La segunda: eso gasta bateria, asi que el cielo se mira solo mientras el
+panel esta EN PANTALLA, no durante las tres horas que dura la ocupacion.
+
+### El cronometro GNSS vive fuera de la app
+
+Una ocupacion de punto dura entre cinco minutos y tres horas, y ese rato el telefono esta en un
+bolsillo con la pantalla apagada: Android congela la app, asi que un temporizador dentro del
+proceso no salta. El cronometro y la alarma viven en `GnssTimerService`, un servicio en primer
+plano con notificacion permanente.
+
+La alarma se programa con `AlarmManager.setAlarmClock` porque es la unica clase de alarma que
+Doze no aplaza nunca. El icono de alarma del sistema, que es el precio, resulta util: dice que
+hay una medicion corriendo. El sonido lo pone el propio servicio con `USAGE_ALARM`, asi que no
+lo silencia el modo silencioso.
+
+**SI hace falta permiso de alarma exacta.** Este README afirmaba lo contrario y era falso:
+`setAlarmClock` lanza `SecurityException` sin `USE_EXACT_ALARM` o `SCHEDULE_EXACT_ALARM`
+("Caller needs to hold..."), comprobado en el aparato. Con la excepcion dentro de un
+`runCatching`, la alarma no existia y nada lo decia -- por eso no sonaba. Ahora se declara
+`USE_EXACT_ALARM` (API 33+, se concede al instalar y esta pensado para apps cuya funcion es
+avisar a una hora) y `SCHEDULE_EXACT_ALARM` con `maxSdkVersion=32`. Si aun asi falla, se
+degrada a `setAndAllowWhileIdle` --inexacta pero exenta de Doze-- y **la notificacion lo
+dice**, en vez de prometer una hora que no se va a cumplir.
+
+La leccion general: una alarma que no se pudo poner y una que se puso bien se ven IGUAL --nada--
+hasta el momento en que una suena y la otra no, tres horas despues y en el hielo. Un
+`runCatching` alrededor de una operacion cuyo unico efecto es futuro es una forma de no
+enterarse.
+
+**La alarma no termina la medicion.** Suena, y la medicion sigue hasta que alguien pulsa
+*Measurement End*, para que la hora de termino sea el momento real en que se levanto el
+receptor y no la hora a la que venia programado levantarlo. El cronometro de la notificacion lo
+pinta el SISTEMA (`setUsesChronometer`), no la app: un texto que la app tuviera que refrescar
+cada segundo se congelaria en cuanto Android la duerma, que es el 99 % del tiempo.
+
+### Exportar
+
+Un ZIP con:
+
+| Fichero | Que lleva |
+|---|---|
+| `gnss_measurements.csv` | Una fila por OCUPACION de punto, vengan de una entrada GNSS o de una lectura de baliza: quien abre este fichero quiere todos los puntos, le da igual de donde cuelguen |
+| `stake_measurements.csv` | Una fila por LECTURA, con los dias transcurridos y la tasa de ablacion contra la anterior |
+| `dendro_samples.csv` | Una fila por muestra |
+| `fieldbook.odt` | Todas las notas en orden CRONOLOGICO cruzando los cuatro tipos, con vistas previas de las fotos y una ficha por cada audio |
+| `Pictures/<punto>/` | Las fotos originales, en una carpeta por punto o baliza |
+| `Audio/<entrada>/` | Los audios originales |
+
+En los CSV la columna `associated_images` lleva el NUMERO de fotos, no sus nombres: una columna
+de longitud variable no la sabe usar ninguna hoja de calculo, y se rompe en cuanto una foto se
+renombra.
+
+El ODT se escribe a mano --un `.odt` es un ZIP con `content.xml`, `styles.xml`, un manifiesto y
+las imagenes en `Pictures/`-- para no meter una dependencia de ODF en `:core`. La unica regla
+rara del formato: la entrada `mimetype` tiene que ser la PRIMERA del zip y estar SIN comprimir,
+o LibreOffice y Word lo rechazan sin decir por que. Hay un test que lo fija, y la salida se
+valido abriendola de verdad con `soffice --convert-to`.
+
+El zip se escribe directamente sobre el flujo de SAF, sin pasar por memoria: una campana con
+doscientas fotos son cientos de megabytes, y armarlo como ByteArray mataria la app justo al
+final de la campana.
+
+### Como se guarda
+
+Un fichero de texto por entrada en `files/fieldbook/`, mas `files/fieldbook/media/` para fotos
+y audios. Cabecera de `clave=valor`, un `---`, y bloques `[nombre]`; una clave repetida dentro
+de un bloque es una lista. Mismo criterio que los puntos de GPS: `:core` sin dependencias, y un
+dato de terreno que se abre con cualquier cosa dentro de diez anos.
+
+A diferencia de un punto de GPS **no se hace append**: una entrada se reescribe entera, via
+temporal y rename. Un punto acumula miles de muestras; una entrada son unos kilobytes y ademas
+se EDITA --corregir una hora, cambiar una altura-- que es algo que un formato de solo anadir no
+sabe hacer.
+
+Lo estructural --anadir una lectura, arrancar un cronometro, poner una coordenada-- se escribe
+en el acto. Lo que se TECLEA se agrupa medio segundo: un `save` por pulsacion es un fichero
+reescrito treinta veces por segundo en el hilo principal, y eso en un telefono frio es como se
+provoca un ANR escribiendo una nota. El volcado se fuerza al cerrar la entrada, en `ON_STOP` y
+al destruirse el ViewModel, que son las tres salidas.
+
+### El banco instrumentado y el permiso de localizacion
+
+`MainActivity.onCreate` pide la localizacion, y `connectedAndroidTest` instala SIN permisos
+concedidos: el dialogo del sistema (`GrantPermissionsActivity`) se abre ENCIMA de la app, el
+`ComposeTestRule` mira entonces una ventana que no es la suya y todos los tests mueren con
+"No compose hierarchies found" antes de ejecutar una sola asercion. Por eso estos tests no
+habian corrido nunca aqui. De ahi el `testOptions { installation { installOptions("-g") } }`.
+
+La regla de NO usar `-g` sigue vigente para lo que la motivo --que la app se instale y arranque
+como en un telefono de verdad, sin permisos previos--, y ese camino hay que recorrerlo a mano
+al menos una vez por entrega, porque este banco ya no lo cubre.
+
+Dos gotchas mas del banco, las dos descubiertas fallando:
+
+- **Cerrar el teclado despues de escribir.** La pantalla lleva `imePadding()`, asi que con el
+  teclado abierto el contenido se encoge y lo que estaba abajo sale de la ventana. Un
+  `performClick` posterior aterriza sobre el teclado y no sobre la fila, **sin dar ningun
+  error**: el clic se ejecuta, pero en otro sitio. `Espresso.closeSoftKeyboard()` despues de
+  cada `performTextReplacement`.
+- **Las celdas de la tabla de balizas solo existen en el arbol SIN fusionar.** La fila lleva
+  `Modifier.clickable`, que fusiona a sus hijos en un unico nodo de semantica: en el arbol
+  normal las tres celdas son un solo texto y las etiquetas por celda no existen. Hay que usar
+  `useUnmergedTree = true`.
+
+### Dos trampas del ciclo de vida que ya estan puestas
+
+- **El fichero de la foto se crea ANTES de lanzar la camara.** Mientras la camara esta delante,
+  Android puede matar este proceso; al volver, el resultado llega a un `remember` recien nacido
+  en null y la foto estaria en disco sin que la libreta sepa de ella. Se guarda la RUTA en un
+  `rememberSaveable`, que sobrevive en el Bundle.
+- **El barrido de medios huerfanos respeta una edad minima de diez minutos.** Sin ella borraria
+  justo el fichero en el que la camara esta escribiendo, porque todavia no lo nombra ninguna
+  entrada.
 
 ## Abrir un CSV ya exportado
 

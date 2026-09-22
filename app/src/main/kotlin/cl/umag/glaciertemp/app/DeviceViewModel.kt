@@ -117,6 +117,8 @@ data class UiState(
     val syncPrompt: SyncPrompt? = null,
     /** Dialogo de posicion al terminar la descarga, o null. */
     val locationPrompt: LocationPrompt? = null,
+    /** Los puntos de GPS tools, resueltos. Se piden solo al ir a elegir uno. */
+    val savedPoints: List<cl.umag.glaciertemp.core.geo.SavedPoint.Solution> = emptyList(),
     val error: String? = null,
 )
 
@@ -195,6 +197,14 @@ class DeviceViewModel : ViewModel() {
      */
     /** De donde sale la posicion. Inyectada por la actividad; en los tests, una falsa. */
     var location: LocationSource? = null
+
+    /**
+     * Los puntos promediados de GPS tools, para poder poner uno como posicion de la descarga.
+     *
+     * El mismo almacen que usa la otra herramienta, no una copia: un punto medido hace cinco
+     * minutos tiene que estar en la lista.
+     */
+    var gpsPoints: cl.umag.glaciertemp.core.geo.GpsPointStore? = null
 
     var prefs: android.content.SharedPreferences? = null
         set(value) {
@@ -700,6 +710,38 @@ class DeviceViewModel : ViewModel() {
     fun continueWithoutLocation() {
         waitJob?.cancel()
         applyPosition(null, LocationNotes.USER_SKIPPED)
+    }
+
+    /**
+     * Las soluciones de los puntos de GPS tools, para elegir una.
+     *
+     * Se resuelven al pedirlas y no al arrancar: cada punto hay que leerlo entero y
+     * promediarlo, y hacerlo por si acaso al abrir la app costaria ese trabajo cada vez.
+     */
+    fun loadSavedPoints() {
+        val g = gpsPoints ?: return
+        viewModelScope.launch {
+            val puntos = withContext(Dispatchers.IO) {
+                cl.umag.glaciertemp.core.geo.SavedPoint.solutions(g)
+            }
+            _state.value = _state.value.copy(savedPoints = puntos)
+        }
+    }
+
+    /**
+     * Toma la posicion de un punto ya promediado en vez de la que se obtuvo al descargar.
+     *
+     * Es MEJOR dato y no un respaldo: minutos u horas de promediado contra la lectura suelta
+     * que el telefono alcanzo a dar durante la descarga. Lo que el operador aporta aqui, y la
+     * app no puede saber, es que la placa esta efectivamente en ese punto.
+     *
+     * Disponible tambien cuando SI hubo arreglo, por eso mismo. Ofrecerlo solo al fallar el
+     * GPS lo convertiria en un premio de consolacion, que es lo contrario de lo que es.
+     */
+    fun useSavedPoint(solution: cl.umag.glaciertemp.core.geo.SavedPoint.Solution) {
+        applyPosition(
+            with(cl.umag.glaciertemp.core.geo.SavedPoint) { solution.toGeoFix() },
+            null)
     }
 
     private fun applyPosition(fix: cl.umag.glaciertemp.core.GeoFix?, note: String?) {

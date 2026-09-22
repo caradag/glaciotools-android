@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.BuildConfig
 
 /** Que herramienta esta abierta. */
-private enum class Herramienta { INICIO, PLACA, GPS }
+private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA }
 
 /**
  * La app entera: una pantalla de inicio que reparte, y las herramientas.
@@ -26,7 +26,8 @@ private enum class Herramienta { INICIO, PLACA, GPS }
  * junto a Device y Terminal habria obligado a conectar algo antes de poder usarla.
  */
 @Composable
-fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel) {
+fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
+                   fieldbook: FieldbookViewModel) {
     // Con un Saver explicito y no el automatico: lo que se guarda en el Bundle al girar la
     // pantalla es el NOMBRE, que es texto y no depende de en que orden queden las constantes
     // el dia que se anada una herramienta en medio.
@@ -44,7 +45,8 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel) {
     when (donde) {
         Herramienta.INICIO -> HomeScreen(
             onDevice = { donde = Herramienta.PLACA },
-            onGps = { donde = Herramienta.GPS })
+            onGps = { donde = Herramienta.GPS },
+            onFieldbook = { donde = Herramienta.LIBRETA })
         Herramienta.PLACA -> Column(Modifier.fillMaxSize()) {
             GlacierTempApp(device, onBack = { donde = Herramienta.INICIO })
         }
@@ -52,6 +54,11 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel) {
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
             ToolBar("GPS tools", onBack = { donde = Herramienta.INICIO })
             GpsToolScreen(gps)
+        }
+        Herramienta.LIBRETA -> Column(Modifier.fillMaxSize()
+            .statusBarsPadding().navigationBarsPadding().imePadding()) {
+            ToolBar("Fieldbook", onBack = { donde = Herramienta.INICIO })
+            FieldbookScreen(fieldbook)
         }
     }
 }
@@ -69,7 +76,8 @@ fun ToolBar(titulo: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit) {
+private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
+                       onFieldbook: () -> Unit) {
     Column(
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
             .padding(24.dp),
@@ -113,6 +121,12 @@ private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit) {
             detalle = "Average GNSS fixes to pin down a position more precisely than a " +
                       "single reading allows. Export as CSV or GPX.",
             tag = "tool-gps", onClick = onGps)
+
+        ToolCard(
+            titulo = "Fieldbook",
+            detalle = "Field notes, stake readings with their ablation rate, GNSS points " +
+                      "with a timer, and dendro samples. Photos, audio and coordinates.",
+            tag = "tool-fieldbook", onClick = onFieldbook)
     }
 }
 

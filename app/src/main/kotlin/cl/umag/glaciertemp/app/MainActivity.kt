@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 class MainActivity : ComponentActivity() {
     private val vm: DeviceViewModel by viewModels()
     private val gps: GpsViewModel by viewModels()
+    private val fieldbook: FieldbookViewModel by viewModels()
 
     private val askPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -59,12 +60,34 @@ class MainActivity : ComponentActivity() {
             requestPermissions = { askPermissions.launch(it) })
         vm.prefs = getSharedPreferences("glaciotools", MODE_PRIVATE)
         vm.location = AndroidLocationSource(applicationContext)
-        // Los puntos viven en la carpeta privada de la app: no hacen falta permisos de
-        // almacenamiento, y el usuario los saca cuando quiere con Exportar. Guardarlos donde
-        // el usuario elija obligaria a pedirle una carpeta antes de poder medir nada.
-        gps.store = cl.umag.glaciertemp.core.geo.GpsPointStore(
-            java.io.File(filesDir, "gps-points"))
         gps.location = vm.location
+        // Los puntos y la libreta viven en la carpeta privada de la app: no hacen falta
+        // permisos de almacenamiento, y el usuario saca lo que quiera con Exportar. Guardarlos
+        // donde el usuario elija obligaria a pedirle una carpeta antes de poder medir nada.
+        //
+        // UN SOLO almacen de puntos para las dos herramientas y no una copia por cada una:
+        // elegir un punto guardado como coordenada de una entrada de libreta tiene que ver los
+        // mismos puntos que GPS tools, incluido el que se acaba de medir.
+        val puntos = cl.umag.glaciertemp.core.geo.GpsPointStore(
+            java.io.File(filesDir, "gps-points"))
+        gps.store = puntos
+        fieldbook.store = cl.umag.glaciertemp.core.fieldbook.FieldbookStore(
+            java.io.File(filesDir, "fieldbook"))
+        fieldbook.people = cl.umag.glaciertemp.core.fieldbook.NameStore(
+            java.io.File(filesDir, "fieldbook/people.txt"))
+        fieldbook.receivers = cl.umag.glaciertemp.core.fieldbook.NameStore(
+            java.io.File(filesDir, "fieldbook/receivers.txt"))
+        fieldbook.species = cl.umag.glaciertemp.core.fieldbook.NameStore(
+            java.io.File(filesDir, "fieldbook/species.txt"))
+        fieldbook.campaigns = cl.umag.glaciertemp.core.fieldbook.CampaignStore(
+            java.io.File(filesDir, "fieldbook/campaigns.txt"))
+        fieldbook.sky = AndroidSkySource(applicationContext)
+        fieldbook.gpsPoints = puntos
+        fieldbook.location = vm.location
+        fieldbook.requestLocationPermission = { askLocation() }
+        // La descarga tambien puede tomar su posicion de un punto ya promediado, asi que el
+        // ViewModel de la placa necesita el mismo almacen.
+        vm.gpsPoints = puntos
         // Sin posicion la herramienta de GPS no existe, asi que aqui si se insiste -- pero
         // solo cuando el usuario ya ha pulsado "New point" y el dialogo se entiende.
         gps.requestLocationPermission = { askLocation() }
@@ -77,7 +100,7 @@ class MainActivity : ComponentActivity() {
         atenderCableEnchufado(intent)
         setContent {
             GlacioToolsTheme {
-                Surface { GlacioToolsApp(vm, gps) }
+                Surface { GlacioToolsApp(vm, gps, fieldbook) }
             }
         }
     }

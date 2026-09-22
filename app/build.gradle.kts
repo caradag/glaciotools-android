@@ -14,8 +14,8 @@ android {
         targetSdk = 36
         // Primera version que se distribuye para instalar. El versionCode tiene que subir
         // en cada APK que se publique, o Android se niega a instalarlo encima del anterior.
-        versionCode = 15
-        versionName = "2.3"
+        versionCode = 17
+        versionName = "2.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -30,6 +30,20 @@ android {
             buildConfigField("boolean", "ENABLE_TCP_TRANSPORT", "false")
         }
     }
+
+    /**
+     * `-g` al instalar para los tests: concede los permisos declarados.
+     *
+     * NO es una comodidad. `MainActivity.onCreate` pide la localizacion, y el dialogo del
+     * sistema (GrantPermissionsActivity) se abre ENCIMA de la app: el ComposeTestRule mira
+     * entonces una ventana que no es la suya y falla con "No compose hierarchies found" antes
+     * de ejecutar una sola asercion. Por eso estos tests no habian corrido nunca aqui.
+     *
+     * La regla de no usar `-g` sigue vigente para lo que la motivo --que la app se instale y
+     * arranque como lo hace en un telefono de verdad-- y ese camino hay que probarlo a mano
+     * al menos una vez por entrega, porque este banco ya no lo cubre.
+     */
+    testOptions { installation { installOptions("-g") } }
 
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {

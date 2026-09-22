@@ -172,7 +172,7 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
             DownloadCard(vm, s)
         }
         s.syncPrompt?.let { SyncDialog(vm, it) }
-        s.locationPrompt?.let { LocationDialog(vm, it) }
+        s.locationPrompt?.let { LocationDialog(vm, s, it) }
         if (s.records.isNotEmpty()) {
             s.signature?.let { ChartCard(s.records, it, s.metadata) }
             BatteryCard(vm, s)
@@ -1042,8 +1042,9 @@ private fun RawLogRow(vm: DeviceViewModel, s: UiState) {
  * hecha -- que es peor que no haber ofrecido esperar.
  */
 @Composable
-private fun LocationDialog(vm: DeviceViewModel, p: LocationPrompt) {
+private fun LocationDialog(vm: DeviceViewModel, s: UiState, p: LocationPrompt) {
     val last = p.lastKnown
+    var elegirPunto by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = { },
         modifier = Modifier.testTag("location-prompt"),
@@ -1078,12 +1079,24 @@ private fun LocationDialog(vm: DeviceViewModel, p: LocationPrompt) {
                 TextButton(onClick = { vm.continueWithoutLocation() },
                            modifier = Modifier.testTag("loc-skip")) { Text("No position") }
                 if (!p.waiting) {
+                    // La tercera salida, y la que suele ser la buena en terreno: la estaca ya
+                    // esta medida en GPS tools, asi que hay una coordenada MEJOR que cualquier
+                    // arreglo que el telefono pueda dar ahora mismo.
+                    TextButton(onClick = { vm.loadSavedPoints(); elegirPunto = true },
+                               modifier = Modifier.testTag("loc-saved")) { Text("Saved point") }
                     TextButton(onClick = { vm.waitForFreshLocation() },
                                modifier = Modifier.testTag("loc-wait")) { Text("Wait for one") }
                 }
             }
         },
     )
+
+    if (elegirPunto) {
+        SavedPointDialog(
+            points = s.savedPoints,
+            onPick = { elegirPunto = false; vm.useSavedPoint(it) },
+            onDismiss = { elegirPunto = false })
+    }
 }
 
 @Composable
@@ -1166,6 +1179,52 @@ private fun BatteryCard(vm: DeviceViewModel, s: UiState) {
     }
 }
 
+/**
+ * La posicion que llevara la cabecera del CSV, y de donde sale.
+ *
+ * Vive junto a las otras opciones de exportacion porque eso es lo que es: un campo de la
+ * cabecera del fichero. Y esta SIEMPRE, no solo cuando el GPS fallo. Un punto promediado en
+ * GPS tools es mejor dato que la lectura suelta que el telefono alcanzo a dar durante la
+ * descarga --minutos de promediado contra un arreglo -- asi que ofrecerlo unicamente como
+ * respaldo lo convertiria en un premio de consolacion. Lo que el operador aporta, y la app no
+ * puede deducir, es que la placa esta efectivamente en ese punto.
+ */
+@Composable
+private fun PositionRow(vm: DeviceViewModel, s: UiState) {
+    var elegir by remember { mutableStateOf(false) }
+    val meta = s.metadata
+
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("Position in the CSV header", style = MaterialTheme.typography.bodyMedium)
+        val texto = meta?.positionDescription()
+        if (texto != null) {
+            Text(texto, style = MaterialTheme.typography.bodySmall,
+                 modifier = Modifier.testTag("export-position"))
+            meta.positionDetail()?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                     modifier = Modifier.testTag("export-position-detail"))
+            }
+        } else {
+            Text("Not recorded" + (meta?.positionNote?.let { " — $it" } ?: ""),
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                 modifier = Modifier.testTag("export-position"))
+        }
+        TextButton(onClick = { vm.loadSavedPoints(); elegir = true },
+                   modifier = Modifier.testTag("export-use-point")) {
+            Text(if (texto == null) "Use a saved GPS point" else "Replace with a saved GPS point")
+        }
+    }
+
+    if (elegir) {
+        SavedPointDialog(
+            points = s.savedPoints,
+            onPick = { elegir = false; vm.useSavedPoint(it) },
+            onDismiss = { elegir = false })
+    }
+}
+
 @Composable
 private fun PreviewCard(vm: DeviceViewModel, s: UiState) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -1238,6 +1297,8 @@ private fun PreviewCard(vm: DeviceViewModel, s: UiState) {
                     minLines = 2,
                 )
             }
+            PositionRow(vm, s)
+
             Button(onClick = { saver.launch(name) }, enabled = !s.busy,
                    modifier = Modifier.testTag("export")) { Text("Save CSV") }
 

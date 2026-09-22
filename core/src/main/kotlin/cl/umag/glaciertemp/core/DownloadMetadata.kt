@@ -57,6 +57,17 @@ data class GeoFix(
      * el arrastraria el error en vez de quitarlo.
      */
     val clockSkewSeconds: Long? = null,
+    /**
+     * De donde salio la posicion, cuando no es la lectura del telefono del momento.
+     *
+     * Lo rellena quien elige un punto promediado de GPS tools. Con el, [ageSeconds] deja de
+     * ser lo que describe la posicion: un punto promediado situa un LUGAR, que no se mueve,
+     * asi que su antiguedad no dice nada malo de el, mientras que la de un arreglo
+     * oportunista es justo lo que decide si sirve. Sin este campo las dos se pintarian igual,
+     * y un "fix 3 days old" sobre una coordenada deliberadamente elegida se lee como un
+     * defecto que no existe.
+     */
+    val sourceLabel: String? = null,
 )
 
 /**
@@ -101,16 +112,25 @@ data class DownloadMetadata(
      */
     fun positionDescription(): String? {
         val p = position ?: return null
-        return "%.5f, %.5f".format(p.latitude, p.longitude)
+        // Locale.ROOT: sin el, un telefono en espanol escribe "-50,12345, -73,87654" en la
+        // cabecera del CSV, donde la coma ya significa otra cosa.
+        return "%.5f, %.5f".format(java.util.Locale.ROOT, p.latitude, p.longitude)
     }
 
-    /** Altitud, exactitud y antiguedad: lo que permite juzgar si la posicion sirve. */
+    /**
+     * Altitud, exactitud y origen: lo que permite juzgar si la posicion sirve.
+     *
+     * La antiguedad se muestra SOLO cuando la posicion es una lectura del telefono, que es
+     * cuando decide si vale: un arreglo de hace tres horas puede ser de otro valle. Una
+     * coordenada tomada de un punto promediado dice de que punto viene en su lugar -- situa
+     * un sitio, que no se mueve, y su fecha no la desacredita.
+     */
     fun positionDetail(): String? {
         val p = position ?: return null
         val partes = ArrayList<String>()
-        p.altitudeMetres?.let { partes += "%.0f m (WGS84)".format(it) }
-        p.accuracyMetres?.let { partes += "accuracy %.0f m".format(it) }
-        partes += "fix ${BoardClock.format(p.ageSeconds)} old"
+        p.altitudeMetres?.let { partes += "%.0f m (WGS84)".format(java.util.Locale.ROOT, it) }
+        p.accuracyMetres?.let { partes += "accuracy %.0f m".format(java.util.Locale.ROOT, it) }
+        partes += p.sourceLabel ?: "fix ${BoardClock.format(p.ageSeconds)} old"
         return partes.joinToString("  ·  ")
     }
 
