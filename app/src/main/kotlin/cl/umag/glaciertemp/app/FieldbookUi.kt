@@ -74,6 +74,10 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState) {
     var explicar by remember { mutableStateOf(false) }
     var terminarCampana by remember { mutableStateOf(false) }
     var verArchivadas by remember { mutableStateOf(false) }
+    // La campana CONCRETA que se renombra, no un booleano: el cuadro sirve para la abierta y
+    // para cualquier archivada, y confundir cual se esta tocando es justo el fallo que se
+    // esta arreglando aqui.
+    var renombrando by remember { mutableStateOf<Campaign?>(null) }
     var exportar by remember { mutableStateOf(false) }
 
     val mirandoArchivada = s.viewingCampaign != null
@@ -96,6 +100,7 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState) {
 
         CampaignBar(
             s = s,
+            onRename = { renombrando = s.viewingCampaign ?: s.activeCampaign },
             onFinish = { terminarCampana = true },
             onArchived = { verArchivadas = true },
             onBackToCurrent = { vm.viewCampaign(null) })
@@ -168,8 +173,16 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState) {
         ArchivedCampaignsDialog(
             s,
             onOpen = { verArchivadas = false; vm.viewCampaign(it) },
+            onRename = { verArchivadas = false; renombrando = it },
             onReopen = { verArchivadas = false; vm.unarchiveCampaign(it.id) },
             onDismiss = { verArchivadas = false })
+    }
+
+    renombrando?.let { c ->
+        RenameCampaignDialog(c, onDismiss = { renombrando = null }) { nombre ->
+            renombrando = null
+            vm.renameCampaign(c.id, nombre)
+        }
     }
 
     if (exportar) ExportDialog(vm, s) { exportar = false }
@@ -186,6 +199,7 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState) {
 @Composable
 private fun CampaignBar(
     s: FieldbookUiState,
+    onRename: () -> Unit,
     onFinish: () -> Unit,
     onArchived: () -> Unit,
     onBackToCurrent: () -> Unit,
@@ -207,6 +221,16 @@ private fun CampaignBar(
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            // Bautizarla SIN cerrarla. El nombre se sabe el primer dia; obligar a terminar
+            // la campana para poder escribirlo convierte un rotulo en una decision, y de
+            // paso empuja a cerrarla antes de tiempo solo para poder nombrarla.
+            val nombrable = mirando ?: s.activeCampaign
+            if (nombrable != null) {
+                TextButton(onClick = onRename,
+                           modifier = Modifier.testTag("fb-campaign-rename")) {
+                    Text(if (nombrable.name.isBlank()) "Name" else "Rename")
+                }
+            }
             if (mirando != null) {
                 TextButton(onClick = onBackToCurrent,
                            modifier = Modifier.testTag("fb-campaign-back")) { Text("Current") }
@@ -222,11 +246,23 @@ private fun CampaignBar(
     }
 }
 
-/** Los filtros rapidos por tipo. El numero al lado es lo que hay, no lo que podria haber. */
+/**
+ * Los filtros rapidos por tipo, TODOS a la vista. El numero al lado es lo que hay, no lo
+ * que podria haber.
+ *
+ * Antes era una fila con desplazamiento horizontal, y eso esconde: en una pantalla de
+ * telefono cabian tres de los cinco chips y los otros dos habia que ir a buscarlos
+ * arrastrando. Un filtro que no se ve no se usa, y peor, invita a pensar que la libreta no
+ * tiene anotaciones de ese tipo. Con FlowRow los que no caben bajan a una segunda linea y
+ * se ven los cinco de golpe.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun FilterRow(s: FieldbookUiState, onFilter: (EntryType?) -> Unit) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    androidx.compose.foundation.layout.FlowRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
         FilterChip(selected = s.filter == null, onClick = { onFilter(null) },
                    label = { Text("All (${s.total})") },
                    modifier = Modifier.testTag("fb-filter-all"))
@@ -250,6 +286,44 @@ private fun shortLabel(t: EntryType): String = when (t) {
 }
 
 /**
+ * Ponerle nombre a una campana sin cerrarla, o cambiarselo a una ya archivada.
+ *
+ * Las dos cosas faltaban, y la segunda tenia una consecuencia peor que la molestia: la unica
+ * forma de renombrar una archivada era reabrirla y volver a cerrarla, y ese viaje dejaba por
+ * el camino una campana nueva vacia con el nombre tecleado. Se arreglaba el rotulo y se
+ * creaba un duplicado.
+ */
+@Composable
+private fun RenameCampaignDialog(
+    c: Campaign, onDismiss: () -> Unit, onRename: (String) -> Unit,
+) {
+    var nombre by remember { mutableStateOf(c.name) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("fb-rename-dialog"),
+        title = { Text(if (c.name.isBlank()) "Name this campaign" else "Rename campaign") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = nombre, onValueChange = { nombre = it },
+                    label = { Text("Campaign name") },
+                    placeholder = { Text("Bernal, February 2026") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("fb-rename-name"))
+                Text("Renaming changes nothing that was measured: the entries point at the " +
+                     "campaign, not at its name.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onRename(nombre.trim()) },
+                       modifier = Modifier.testTag("fb-rename-confirm")) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+/**
  * Terminar la campana: ponerle nombre y archivarla.
  *
  * El nombre se pide AQUI y no al empezar porque es cuando se sabe. Al abrir la libreta el
@@ -267,6 +341,19 @@ private fun FinishCampaignDialog(
         title = { Text("Finish this campaign") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // DECIR CUAL. Archivar una campana y empezar a anotar abre otra en silencio,
+                // asi que despues de mirar una archivada es facil creer que este cuadro
+                // habla de aquella: se escribe su nombre, se archiva la NUEVA, y aparece una
+                // segunda campana con el nombre que uno acababa de teclear. Parecia un
+                // duplicado y era este cuadro, que no decia de que campana hablaba.
+                s.activeCampaign?.let { c ->
+                    Text("Archiving the campaign open now" +
+                         (if (c.name.isBlank()) "" else " — “${c.name}”") +
+                         ", with ${s.total} entr" + (if (s.total == 1) "y" else "ies") + ".",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                         modifier = Modifier.testTag("fb-finish-which"))
+                }
                 OutlinedTextField(
                     value = nombre, onValueChange = { nombre = it },
                     label = { Text("Campaign name") },
@@ -291,6 +378,7 @@ private fun FinishCampaignDialog(
 private fun ArchivedCampaignsDialog(
     s: FieldbookUiState,
     onOpen: (Campaign) -> Unit,
+    onRename: (Campaign) -> Unit,
     onReopen: (Campaign) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -312,6 +400,10 @@ private fun ArchivedCampaignsDialog(
                                      style = MaterialTheme.typography.bodySmall,
                                      color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                        }
+                        TextButton(onClick = { onRename(c) },
+                                   modifier = Modifier.testTag("fb-archived-rename-${c.id}")) {
+                            Text("Rename")
                         }
                         TextButton(onClick = { onReopen(c) }) { Text("Reopen") }
                     }

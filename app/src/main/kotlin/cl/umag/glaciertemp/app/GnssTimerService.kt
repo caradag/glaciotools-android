@@ -324,6 +324,21 @@ object GnssTimer {
         runCatching { ctx.startForegroundService(i) }
     }
 
+    /**
+     * Calla la alarma SIN terminar la medicion.
+     *
+     * Existia ya como accion de la notificacion, pero solo alli: si la notificacion estaba
+     * deslizada, o el telefono en el bolsillo con la pantalla llena de otra cosa, la unica
+     * forma de parar el ruido era terminar la medicion -- y terminarla antes de tiempo es
+     * justo lo que no se quiere, porque End graba el instante en que se levanta el receptor.
+     */
+    fun silence(ctx: Context) {
+        runCatching {
+            ctx.startService(Intent(ctx, GnssTimerService::class.java)
+                .setAction(GnssTimerService.ACTION_SILENCE))
+        }
+    }
+
     fun stop(ctx: Context) {
         runCatching {
             ctx.startService(Intent(ctx, GnssTimerService::class.java)

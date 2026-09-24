@@ -78,6 +78,7 @@ fun ToolBar(titulo: String, onBack: () -> Unit) {
 @Composable
 private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
                        onFieldbook: () -> Unit) {
+    var info by rememberSaveable { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
             .padding(24.dp),
@@ -127,7 +128,44 @@ private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
             detalle = "Field notes, stake readings with their ablation rate, GNSS points " +
                       "with a timer, and dendro samples. Photos, audio and coordinates.",
             tag = "tool-fieldbook", onClick = onFieldbook)
+
+        // Abajo y discreto: se consulta una vez, no se usa. Pero tiene que estar, porque es
+        // lo unico que dice a quien escribir cuando algo falla en terreno.
+        Spacer(Modifier.weight(1f))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = { info = true }, modifier = Modifier.testTag("home-info")) {
+                Text("Info")
+            }
+        }
     }
+
+    if (info) InfoDialog(onDismiss = { info = false })
+}
+
+/**
+ * Quien hizo esto y a quien escribir.
+ *
+ * El correo es el motivo de que exista el cuadro: una app que se usa sobre un glaciar y
+ * falla lejos de todo no sirve de nada si no dice como avisar.
+ */
+@Composable
+private fun InfoDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("info-dialog"),
+        title = { Text("GlacioTools  v${BuildConfig.VERSION_NAME}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Field tools for glaciology, made by GlacioTools.")
+                Text("Led by Camilo Rada, built with the help of Claude Code.")
+                Text("Contact: camilo@rada.cl", style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss,
+                       modifier = Modifier.testTag("info-close")) { Text("Close") }
+        },
+    )
 }
 
 @Composable

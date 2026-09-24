@@ -129,9 +129,38 @@ class FieldbookViewModel : ViewModel() {
      * del usuario aunque el fichero siga en disco.
      */
     private fun enVista(todas: List<FieldEntry>, mirando: Campaign?, activa: Campaign?):
-        List<FieldEntry> =
-        if (mirando != null) todas.filter { it.campaignId == mirando.id }
-        else todas.filter { it.campaignId == null || it.campaignId == activa?.id }
+        List<FieldEntry> = CampaignView.inView(todas, mirando, activa)
+
+    /**
+     * Ya existe otra entrada del MISMO tipo con este nombre?
+     *
+     * Se consulta el almacen entero y no `state.entries`, que viene filtrado por campana y
+     * por tipo: el choque que importa es con cualquier baliza, este o no a la vista. Una
+     * baliza "B1" en la campana del ano pasado y otra "B1" ahora son dos filas distintas en
+     * el CSV exportado y nadie sabra cual es cual.
+     *
+     * Por TIPO y no global: una baliza "B1" y una muestra dendro "B1" no se estorban, y
+     * avisar de eso seria ruido que ensena a ignorar el aviso.
+     *
+     * Se avisa, no se impide. Un nombre repetido casi siempre es un descuido, pero decidir
+     * por el usuario que no puede escribirlo es peor: en terreno puede haber una razon que
+     * el programa no conoce, y bloquear deja sin salida a quien esta con las manos frias.
+     */
+    fun nameClash(type: EntryType, name: String, selfId: String): Boolean {
+        val n = name.trim()
+        if (n.isBlank()) return false
+        val s = store ?: return false
+        return s.list().any { otra ->
+            otra.id != selfId && otra.type == type && nombreDe(otra).trim().equals(n, ignoreCase = true)
+        }
+    }
+
+    private fun nombreDe(e: FieldEntry): String = when (e.type) {
+        EntryType.STAKE -> e.stakeName
+        EntryType.GNSS -> e.pointName
+        EntryType.DENDRO -> e.sampleLabel
+        EntryType.NOTE -> ""
+    }
 
     private fun aplicarFiltro(l: List<FieldEntry>, f: EntryType?) =
         if (f == null) l else l.filter { it.type == f }
@@ -149,6 +178,17 @@ class FieldbookViewModel : ViewModel() {
         refresh()
     }
 
+    /**
+     * Renombra una campana, este abierta o archivada.
+     *
+     * Para la ABIERTA es el punto de poder bautizarla sin cerrarla: el nombre se sabe el
+     * primer dia --"Bernal, febrero"-- y obligar a terminar la campana para poder escribirlo
+     * convierte un rotulo en una decision.
+     *
+     * Para una ARCHIVADA es la salida de la trampa contraria: hasta ahora la unica forma de
+     * cambiarle el nombre era reabrirla y volver a cerrarla, y ese viaje de ida y vuelta es
+     * justo el que dejaba una campana nueva vacia por el camino.
+     */
     fun renameCampaign(id: String, name: String) {
         campaigns?.rename(id, name)
         refresh()
@@ -164,6 +204,21 @@ class FieldbookViewModel : ViewModel() {
         val cs = campaigns ?: return
         val activa = cs.active() ?: return
         if (name.isNotBlank()) cs.rename(activa.id, name)
+
+        // SELLAR LO QUE NO TENIA CAMPANA ANTES DE ARCHIVAR.
+        //
+        // La vista normal muestra las entradas de la campana abierta Y las que no tienen
+        // ninguna --las anotadas antes de que las campanas existieran--. Las primeras se van
+        // solas al archivar, porque dejan de coincidir con la campana activa; las segundas se
+        // quedaban en pantalla PARA SIEMPRE, y a los ojos de quien acaba de cerrar la
+        // campana eso es que archivar no ha hecho nada.
+        //
+        // Se sellan con la campana que se esta cerrando, que es lo que significan: estaban a
+        // la vista durante toda ella y son parte de ese trabajo de terreno.
+        store?.let { st ->
+            CampaignView.unfiled(st.list()).forEach { st.save(it.copy(campaignId = activa.id)) }
+        }
+
         cs.archive(activa.id)
         _state.value = _state.value.copy(
             viewingCampaign = null, filter = null,

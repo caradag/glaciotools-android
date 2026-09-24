@@ -179,6 +179,17 @@ fun GnssPanel(
                                  "you actually lift it.",
                                  style = MaterialTheme.typography.bodySmall,
                                  color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // Callar y terminar son cosas distintas, y hasta ahora solo se
+                            // podia lo segundo desde aqui. Quien llega al receptor con la
+                            // alarma sonando quiere silencio YA, pero End tiene que
+                            // pulsarse cuando de verdad se levanta el equipo: si silenciar
+                            // obliga a terminar, la hora de fin queda mal para no hacer
+                            // ruido, que es cambiar un dato por una molestia.
+                            OutlinedButton(
+                                onClick = { GnssTimer.silence(ctx) },
+                                modifier = Modifier.testTag("$tag-silence")) {
+                                Text("Silence alarm")
+                            }
                         }
                     }
                 }
@@ -290,6 +301,51 @@ private fun Dato(etiqueta: String, valor: String, tag: String) {
 
 // ================================== punto GNSS suelto ==================================
 
+/**
+ * Un campo de nombre que avisa si ya hay otra entrada del mismo tipo que se llama igual.
+ *
+ * AVISA, NO IMPIDE. Un nombre repetido casi siempre es un descuido --dos balizas "B1" salen
+ * como dos filas indistinguibles en el CSV-- pero decidir por el usuario que no puede
+ * escribirlo es peor: en terreno puede haber una razon que el programa no conoce, y dejar
+ * sin salida a quien esta con las manos frias y el viento en contra es una forma seria de
+ * estorbar. El aviso se ve, el camino sigue abierto.
+ */
+@Composable
+private fun UniqueNameField(
+    vm: FieldbookViewModel, e: FieldEntry, type: EntryType,
+    value: String, label: String, tag: String,
+    help: String? = null,
+    onValue: (String) -> Unit,
+) {
+    // Se recalcula al cambiar el texto y no en cada recomposicion: la comprobacion lee el
+    // almacen, y hacerlo al repintar seria ir al disco por cada fotograma.
+    val repetido = remember(value, e.id) { vm.nameClash(type, value, e.id) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValue,
+        label = { Text(label) },
+        isError = repetido,
+        supportingText = {
+            when {
+                repetido -> Text(
+                    "Another ${tipoEnPalabras(type)} is already called “${value.trim()}”. " +
+                    "Use a different name so they can be told apart later.",
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.testTag("$tag-duplicate"))
+                help != null -> Text(help)
+            }
+        },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().testTag(tag))
+}
+
+private fun tipoEnPalabras(t: EntryType): String = when (t) {
+    EntryType.STAKE -> "stake"
+    EntryType.GNSS -> "GNSS point"
+    EntryType.DENDRO -> "sample"
+    EntryType.NOTE -> "entry"
+}
+
 @Composable
 fun GnssEntryEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                     onFinished: () -> Unit = {}) {
@@ -297,12 +353,10 @@ fun GnssEntryEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
     val (tomarFoto, elegirFoto) = rememberPhotoAdders(
         newFile = { vm.newMediaFile(it) }, onAdded = { vm.addPhotos(it) })
 
-    OutlinedTextField(
-        value = e.pointName,
-        onValueChange = { v -> vm.update(immediate = false) { it.copy(pointName = v) } },
-        label = { Text("Point name") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth().testTag("fb-point-name"))
+    UniqueNameField(
+        vm = vm, e = e, type = EntryType.GNSS,
+        value = e.pointName, label = "Point name", tag = "fb-point-name",
+        onValue = { v -> vm.update(immediate = false) { it.copy(pointName = v) } })
 
     GnssPanel(
         session = sesion,
@@ -336,12 +390,10 @@ fun StakeEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
     val tasas = Ablation.rates(e.measurements)
     var abierta by remember { mutableStateOf<Long?>(null) }
 
-    OutlinedTextField(
-        value = e.stakeName,
-        onValueChange = { v -> vm.update(immediate = false) { it.copy(stakeName = v) } },
-        label = { Text("Stake name or ID") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth().testTag("fb-stake-name"))
+    UniqueNameField(
+        vm = vm, e = e, type = EntryType.STAKE,
+        value = e.stakeName, label = "Stake name or ID", tag = "fb-stake-name",
+        onValue = { v -> vm.update(immediate = false) { it.copy(stakeName = v) } })
 
     NumberField("Total stake length", e.stakeLengthCm,
                 onValue = { v -> vm.update(immediate = false) { it.copy(stakeLengthCm = v) } },
@@ -537,15 +589,11 @@ fun DendroEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry) {
     val (tomarFoto, elegirFoto) = rememberPhotoAdders(
         newFile = { vm.newMediaFile(it) }, onAdded = { vm.addPhotos(it) })
 
-    OutlinedTextField(
-        value = e.sampleLabel,
-        onValueChange = { v -> vm.update(immediate = false) { it.copy(sampleLabel = v) } },
-        label = { Text("Sample label") },
-        supportingText = {
-            Text("The same code that is physically written on the sample.")
-        },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth().testTag("fb-dendro-label"))
+    UniqueNameField(
+        vm = vm, e = e, type = EntryType.DENDRO,
+        value = e.sampleLabel, label = "Sample label", tag = "fb-dendro-label",
+        help = "The same code that is physically written on the sample.",
+        onValue = { v -> vm.update(immediate = false) { it.copy(sampleLabel = v) } })
 
     // La especie funciona igual que las personas y los receptores: se escribe una vez y queda
     // en el desplegable. En una campana se muestrean tres o cuatro especies y se teclean

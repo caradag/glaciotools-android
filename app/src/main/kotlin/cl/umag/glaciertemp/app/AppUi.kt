@@ -170,6 +170,7 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
             ClockCard(vm, s)
             ConfigCard(vm, s)
             DownloadCard(vm, s)
+            PositionCard(vm, s)
         }
         s.syncPrompt?.let { SyncDialog(vm, it) }
         s.locationPrompt?.let { LocationDialog(vm, s, it) }
@@ -1189,6 +1190,29 @@ private fun BatteryCard(vm: DeviceViewModel, s: UiState) {
  * respaldo lo convertiria en un premio de consolacion. Lo que el operador aporta, y la app no
  * puede deducir, es que la placa esta efectivamente en ese punto.
  */
+/**
+ * La posicion que ira en la cabecera del CSV, con su tarjeta propia.
+ *
+ * POR QUE NO ESTA DONDE ESTABA. Esto vivia al final de PreviewCard, o sea detras de la
+ * grafica y de la bateria y al fondo de la tercera tarjeta de una columna que se desplaza.
+ * El boton para sustituir la coordenada por un punto de GPS tools llevaba ahi desde el
+ * principio y NADIE lo encontro -- que es lo mismo que no tenerlo. Ahora sale justo despues
+ * de la descarga, que es el momento en el que la coordenada acaba de decidirse y el unico
+ * en el que uno se pregunta si es buena.
+ *
+ * En terreno la respuesta suele ser que no: la estaca ya esta medida y promediada en GPS
+ * tools, y ese punto es mejor que cualquier arreglo que el telefono consiga en el momento.
+ */
+@Composable
+private fun PositionCard(vm: DeviceViewModel, s: UiState) {
+    if (s.metadata == null) return
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            PositionRow(vm, s)
+        }
+    }
+}
+
 @Composable
 private fun PositionRow(vm: DeviceViewModel, s: UiState) {
     var elegir by remember { mutableStateOf(false) }
@@ -1297,8 +1321,6 @@ private fun PreviewCard(vm: DeviceViewModel, s: UiState) {
                     minLines = 2,
                 )
             }
-            PositionRow(vm, s)
-
             Button(onClick = { saver.launch(name) }, enabled = !s.busy,
                    modifier = Modifier.testTag("export")) { Text("Save CSV") }
 
