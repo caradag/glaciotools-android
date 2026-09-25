@@ -83,6 +83,9 @@ class FieldbookViewModel : ViewModel() {
     var receivers: NameStore? = null
     var species: NameStore? = null
     var campaigns: CampaignStore? = null
+
+    /** Almacen del diario. Solo se usa para borrarlo junto con su campana. */
+    var journal: JournalStore? = null
     var gpsPoints: GpsPointStore? = null
     var location: LocationSource? = null
     var sky: SkySource? = null
@@ -282,11 +285,19 @@ class FieldbookViewModel : ViewModel() {
         val nombre = cs.byId(id)?.displayName() ?: "campaign"
         val suyas = st.list().filter { it.campaignId == id }
         suyas.forEach { st.delete(it.id) }
+        // EL DIARIO SE VA CON LA CAMPANA. Vive en su propio almacen, asi que
+        // borrar las notas no lo toca: sin esta linea quedarian en el telefono
+        // entradas y fotos de una campana que ya no existe, invisibles y para
+        // siempre, porque solo se llega a ellas a traves de la campana.
+        val dias = journal?.list(id)?.size ?: 0
+        journal?.deleteCampaign(id)
         cs.delete(id)
         _state.value = _state.value.copy(
             viewingCampaign = _state.value.viewingCampaign?.takeIf { it.id != id },
             note = "Campaign “$nombre” deleted, with ${suyas.size} " +
-                   (if (suyas.size == 1) "entry" else "entries") + ".")
+                   (if (suyas.size == 1) "entry" else "entries") +
+                   (if (dias > 0) " and $dias journal " +
+                       (if (dias == 1) "entry" else "entries") else "") + ".")
         refresh()
     }
 

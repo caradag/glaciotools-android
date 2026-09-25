@@ -52,7 +52,7 @@ private fun typeBlurb(t: EntryType): String = when (t) {
  * algo a lo que ya se estaba haciendo mucho mas a menudo que para empezar de cero.
  */
 @Composable
-fun FieldbookScreen(vm: FieldbookViewModel, onBack: () -> Unit) {
+fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refresh() }
 
@@ -102,7 +102,8 @@ fun FieldbookScreen(vm: FieldbookViewModel, onBack: () -> Unit) {
         }
     }
 
-    if (abierta == null) EntryListScreen(vm, s, onExport = { exportar = true })
+    if (abierta == null) EntryListScreen(vm, s, onExport = { exportar = true },
+                                        onJournal = onJournal)
     else EntryScreen(vm, s, abierta)
 
     if (exportar) ExportDialog(vm, s) { exportar = false }
@@ -111,7 +112,7 @@ fun FieldbookScreen(vm: FieldbookViewModel, onBack: () -> Unit) {
 
 @Composable
 private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
-                            onExport: () -> Unit) {
+                            onExport: () -> Unit, onJournal: () -> Unit) {
     var eligiendoTipo by remember { mutableStateOf(false) }
     var verArchivadas by remember { mutableStateOf(false) }
     // La campana CONCRETA que se renombra, no un booleano: el cuadro sirve para la abierta y
@@ -133,8 +134,16 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
             onBackToCurrent = { vm.viewCampaign(null) })
 
         if (!mirandoArchivada) {
-            Button(onClick = { eligiendoTipo = true }, modifier = Modifier.testTag("fb-new")) {
-                Text("New entry")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { eligiendoTipo = true }, modifier = Modifier.testTag("fb-new")) {
+                    Text("New entry")
+                }
+                // El diario NO sale del dialogo de New Entry: hay UNO por campana, asi que
+                // ofrecerlo entre los tipos de anotacion invitaria a crear varios. Boton
+                // propio, al lado, porque es lo otro que se abre a diario.
+                OutlinedButton(onClick = onJournal,
+                               enabled = s.activeCampaign != null,
+                               modifier = Modifier.testTag("fb-journal")) { Text("Journal") }
             }
         }
 

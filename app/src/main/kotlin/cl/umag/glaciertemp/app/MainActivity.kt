@@ -15,6 +15,7 @@ class MainActivity : ComponentActivity() {
     // Se crea con la actividad, no al abrir la herramienta: la regla es "al iniciar
     // la app", y quien sale a terreno abre GPS tools cuando ya no hay red.
     private val almanac: AlmanacViewModel by viewModels()
+    private val journal: JournalViewModel by viewModels()
 
     private val askPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -82,8 +83,17 @@ class MainActivity : ComponentActivity() {
             java.io.File(filesDir, "fieldbook/receivers.txt"))
         fieldbook.species = cl.umag.glaciertemp.core.fieldbook.NameStore(
             java.io.File(filesDir, "fieldbook/species.txt"))
-        fieldbook.campaigns = cl.umag.glaciertemp.core.fieldbook.CampaignStore(
+        val campanas = cl.umag.glaciertemp.core.fieldbook.CampaignStore(
             java.io.File(filesDir, "fieldbook/campaigns.txt"))
+        fieldbook.campaigns = campanas
+        // El diario lee el MISMO almacen de campanas: es lo que le permite saber cual esta
+        // abierta al arrancar la app, sin que nadie haya entrado en la libreta, y de eso
+        // depende que el recordatorio pueda salir.
+        journal.campaigns = campanas
+        journal.store = cl.umag.glaciertemp.core.fieldbook.JournalStore(
+            java.io.File(filesDir, "journal"))
+        // Y la libreta conoce el del diario para poder borrarlo con la campana.
+        fieldbook.journal = journal.store
         fieldbook.sky = AndroidSkySource(applicationContext)
         fieldbook.gpsPoints = puntos
         fieldbook.location = vm.location
@@ -103,7 +113,7 @@ class MainActivity : ComponentActivity() {
         atenderCableEnchufado(intent)
         setContent {
             GlacioToolsTheme {
-                Surface { GlacioToolsApp(vm, gps, fieldbook, almanac) }
+                Surface { GlacioToolsApp(vm, gps, fieldbook, almanac, journal) }
             }
         }
     }
