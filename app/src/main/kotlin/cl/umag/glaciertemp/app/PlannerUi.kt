@@ -1,6 +1,10 @@
 package cl.umag.glaciertemp.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -391,6 +395,12 @@ private fun ConstellationDialog(s: AlmanacUiState, onToggle: (Constellation, Boo
  * Dibujada a mano en un Canvas y no con una biblioteca: son cuatro polilineas y dos ejes, y
  * una dependencia de graficos pesa mas que el codigo que ahorra en una app que tiene que
  * caber en un telefono que se lleva a un glaciar.
+ *
+ * EL CURSOR es lo que la convierte en una herramienta de medida. Ver que hay un pico por la
+ * tarde no basta: hay que saber ENTRE QUE HORAS, porque de ahi sale a que hora se sale del
+ * campamento. Arrastrando el dedo aparece una linea vertical con la hora y el recuento de
+ * cada constelacion en ese instante, y se queda puesta al levantar el dedo -- leer un numero
+ * con el dedo encima tapandolo no sirve de nada.
  */
 @Composable
 private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
@@ -402,15 +412,43 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
     val dibujadas = f.series.filter { conTotal || it.constellation != null }
     val maxY = (dibujadas.maxOfOrNull { it.counts.maxOrNull() ?: 0 } ?: 0).coerceAtLeast(4)
     val ejes = MaterialTheme.colorScheme.onSurfaceVariant
+    val acento = MaterialTheme.colorScheme.primary
     val ahora = System.currentTimeMillis()
+    var cursor by remember(f) { mutableStateOf<Int?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Satellites above ${maskDeg.toInt()}° today",
              style = MaterialTheme.typography.titleSmall)
 
-        Canvas(Modifier.fillMaxWidth().height(220.dp).testTag("planner-chart")) {
-            val izq = 34f; val abajo = size.height - 22f
-            val ancho = size.width - izq - 6f; val alto = abajo - 6f
+        Canvas(
+            Modifier.fillMaxWidth().height(240.dp).testTag("planner-chart")
+                .pointerInput(f) {
+                    // awaitEachGesture y no detectDragGestures: el gesto se CONSUME desde el
+                    // primer contacto, para que el desplazamiento vertical de la pantalla no
+                    // se lo lleve. Sin eso, arrastrar sobre el grafico hacia poca cosa mas
+                    // que mover la pagina.
+                    awaitEachGesture {
+                        fun indice(x: Float): Int {
+                            val util = size.width - MARGEN_IZQ - MARGEN_DER
+                            if (util <= 0f) return 0
+                            val t = (x - MARGEN_IZQ) / util
+                            return (t * (f.steps - 1)).roundToInt().coerceIn(0, f.steps - 1)
+                        }
+                        val abajo = awaitFirstDown(requireUnconsumed = false)
+                        cursor = indice(abajo.position.x)
+                        abajo.consume()
+                        while (true) {
+                            val ev = awaitPointerEvent()
+                            val c = ev.changes.firstOrNull() ?: break
+                            if (!c.pressed) break
+                            cursor = indice(c.position.x)
+                            c.consume()
+                        }
+                    }
+                }
+        ) {
+            val izq = MARGEN_IZQ; val abajo = size.height - MARGEN_ABAJO
+            val ancho = size.width - izq - MARGEN_DER; val alto = abajo - MARGEN_ARRIBA
             if (ancho <= 0 || alto <= 0) return@Canvas
 
             fun x(i: Int) = izq + ancho * i / (f.steps - 1).coerceAtLeast(1)
@@ -421,23 +459,25 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
             var v = 0
             while (v <= maxY) {
                 val yy = y(v)
-                drawLine(ejes.copy(alpha = 0.2f), Offset(izq, yy), Offset(size.width - 6f, yy), 1f)
-                etiqueta("$v", 4f, yy + 4f, ejes, 9f)
+                drawLine(ejes.copy(alpha = 0.2f), Offset(izq, yy), Offset(size.width - MARGEN_DER, yy), 1f)
+                etiqueta("$v", izq - 8f, yy + SP_EJE_Y * this.density * 0.36f, ejes, SP_EJE_Y,
+                         alinear = Alineacion.DERECHA)
                 v += pasoY
             }
             // Horas cada 6.
             for (h in 0..24 step 6) {
                 val i = (h * 60 * 60_000L / f.stepMillis).toInt().coerceAtMost(f.steps - 1)
-                drawLine(ejes.copy(alpha = 0.2f), Offset(x(i), 6f), Offset(x(i), abajo), 1f)
-                etiqueta("${h}h", x(i) - 6f, size.height - 6f, ejes, 9f)
+                drawLine(ejes.copy(alpha = 0.2f), Offset(x(i), MARGEN_ARRIBA), Offset(x(i), abajo), 1f)
+                etiqueta("${h}h", x(i), size.height - 6f, ejes, SP_EJE_X,
+                         alinear = Alineacion.CENTRO)
             }
-            drawLine(ejes, Offset(izq, abajo), Offset(size.width - 6f, abajo), 1.5f)
+            drawLine(ejes, Offset(izq, abajo), Offset(size.width - MARGEN_DER, abajo), 1.5f)
 
             // AHORA: una linea vertical. Sin ella hay que contar cuadros para situarse, que
             // es justo lo que uno no quiere hacer con guantes.
             val iAhora = ((ahora - f.startMillis) / f.stepMillis).toInt()
             if (iAhora in 0 until f.steps) {
-                drawLine(Color(0xFF888888), Offset(x(iAhora), 6f), Offset(x(iAhora), abajo),
+                drawLine(Color(0xFF888888), Offset(x(iAhora), MARGEN_ARRIBA), Offset(x(iAhora), abajo),
                          2f, pathEffect = androidx.compose.ui.graphics.PathEffect
                              .dashPathEffect(floatArrayOf(6f, 6f)))
             }
@@ -451,6 +491,27 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
                 drawPath(p, colorDe(serie.constellation),
                          style = Stroke(width = if (serie.constellation == null) 3.5f else 2f))
             }
+
+            // EL CURSOR, encima de todo para que se vea sobre las lineas.
+            cursor?.let { c ->
+                drawLine(acento, Offset(x(c), MARGEN_ARRIBA), Offset(x(c), abajo), 2.5f)
+                dibujadas.forEach { serie ->
+                    drawCircle(colorDe(serie.constellation), 5f, Offset(x(c), y(serie.counts[c])))
+                }
+            }
+        }
+
+        // La lectura del cursor, FUERA del grafico: bajo el dedo no se lee nada.
+        cursor?.let { c ->
+            val hhmm = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+                .format(java.util.Date(f.millisAt(c)))
+            Text(
+                hhmm + " — " + dibujadas.joinToString("  ") {
+                    "${nombre(it.constellation)} ${it.counts[c]}"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("planner-cursor"))
         }
 
         // Leyenda
@@ -474,19 +535,30 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
                  style = MaterialTheme.typography.bodyMedium,
                  modifier = Modifier.testTag("planner-best"))
         }
+
+        if (cursor == null) {
+            Text("Drag across the chart to read the hour and the counts at that moment.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
-/**
- * Texto en el Canvas.
- *
- * OJO CON `density`. La primera version calculaba `sp * density` DENTRO de un
- * `nativeCanvas.apply { }`, y ahi `density` no es el del DrawScope --el factor de escala--
- * sino `android.graphics.Canvas.density`, que son puntos por pulgada y vale cero
- * (DENSITY_NONE) en un canvas sin mapa de bits asociado. Resultado: textSize = 0 y ni una
- * etiqueta en los ejes, sin ningun error ni aviso. Se captura FUERA del apply.
- */
-private fun DrawScope.etiqueta(txt: String, x: Float, y: Float, c: Color, sp: Float) {
+// Margenes del grafico, en pixeles. Compartidos entre el dibujo y el gesto: si no fueran los
+// mismos, la linea del cursor caeria a un lado del punto que se esta tocando.
+private const val MARGEN_IZQ = 62f
+private const val MARGEN_DER = 10f
+private const val MARGEN_ARRIBA = 8f
+private const val MARGEN_ABAJO = 54f
+
+/** Tamanos de las etiquetas de los ejes, en sp. */
+private const val SP_EJE_X = 18f
+private const val SP_EJE_Y = 13f
+
+private enum class Alineacion { IZQUIERDA, CENTRO, DERECHA }
+
+private fun DrawScope.etiqueta(txt: String, x: Float, y: Float, c: Color, sp: Float,
+                               alinear: Alineacion = Alineacion.IZQUIERDA) {
     val px = sp * this.density
     val p = android.graphics.Paint().apply {
         color = android.graphics.Color.argb(
@@ -495,5 +567,14 @@ private fun DrawScope.etiqueta(txt: String, x: Float, y: Float, c: Color, sp: Fl
         textSize = px
         isAntiAlias = true
     }
-    drawContext.canvas.nativeCanvas.drawText(txt, x, y, p)
+    // Se mide el texto en vez de restar un numero a ojo: con la fuente mas grande, un
+    // desplazamiento fijo dejaba "12h" pegado a la linea de la rejilla y "0h" fuera del
+    // grafico. Lo que hay que centrar depende de cuantos digitos tenga la hora.
+    val ancho = p.measureText(txt)
+    val xx = when (alinear) {
+        Alineacion.IZQUIERDA -> x
+        Alineacion.CENTRO -> x - ancho / 2f
+        Alineacion.DERECHA -> x - ancho
+    }
+    drawContext.canvas.nativeCanvas.drawText(txt, xx, y, p)
 }
