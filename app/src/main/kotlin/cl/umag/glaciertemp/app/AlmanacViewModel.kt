@@ -58,6 +58,15 @@ data class AlmanacUiState(
      * mantener una lista de satelites retirados dentro de la app.
      */
     val excluded: Set<String> = emptySet(),
+    /**
+     * Mascara de elevacion, en grados.
+     *
+     * Estaba fija en 10. No hay un valor bueno: depende del horizonte que uno tenga delante
+     * --un circo glaciar con paredes de 30 grados no deja ver nada por debajo de eso-- y de
+     * lo exigente que sea el receptor con las senales rasantes, que llegan atravesando mas
+     * atmosfera y son las que mas error meten.
+     */
+    val maskDeg: Double = 10.0,
 )
 
 /**
@@ -83,7 +92,8 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(
             enabled = leerHabilitadas(),
             showTotal = prefs.getBoolean("showTotal", false),
-            excluded = prefs.getStringSet("excluded", null)?.toSet() ?: emptySet())
+            excluded = prefs.getStringSet("excluded", null)?.toSet() ?: emptySet(),
+            maskDeg = prefs.getFloat("maskDeg", 10f).toDouble())
         cargarYPonerAlDia()
     }
 
@@ -98,6 +108,12 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
     fun setShowTotal(on: Boolean) {
         prefs.edit().putBoolean("showTotal", on).apply()
         _state.value = _state.value.copy(showTotal = on)
+    }
+
+    fun setMask(deg: Double) {
+        prefs.edit().putFloat("maskDeg", deg.toFloat()).apply()
+        _state.value = _state.value.copy(maskDeg = deg)
+        recalcular()
     }
 
     fun setEnabled(c: Constellation, on: Boolean) {
@@ -224,7 +240,7 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
             val f = withContext(Dispatchers.Default) {
                 VisibilityForecast.compute(
                     VisibilityForecast.withoutMismatched(s.tles, s.excluded),
-                    lat, lon, cal.timeInMillis, enabled = s.enabled)
+                    lat, lon, cal.timeInMillis, maskDeg = s.maskDeg, enabled = s.enabled)
             }
             _state.value = _state.value.copy(forecast = f, computing = false)
         }
@@ -287,6 +303,7 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
             check = _state.value.check,
             showTotal = _state.value.showTotal,
             excluded = _state.value.excluded,
+            maskDeg = _state.value.maskDeg,
         )
         recalcular()
     }

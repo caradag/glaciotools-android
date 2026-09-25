@@ -73,8 +73,16 @@ fun PlannerScreen(vm: AlmanacViewModel) {
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
 
-        TarjetaAlmanaque(vm, s, ahora)
-        TarjetaPosicion(vm, s)
+        // LA RESPUESTA PRIMERO. Antes lo primero que se veia al abrir la pestana era la
+        // edad del almanaque, que es un dato de mantenimiento: interesa una vez al mes y no
+        // cuando uno esta decidiendo a que hora salir. La grafica arriba, los mandos debajo,
+        // y el estado del almanaque al final, que es donde se mira cuando se va a buscar.
+        s.forecast?.let { Grafica(it, s.enabled, s.showTotal, s.maskDeg) } ?: Text(
+            if (s.tles.isEmpty()) "No orbit data yet."
+            else "Waiting for a position to compute from.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag("planner-nochart"))
 
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -82,6 +90,7 @@ fun PlannerScreen(vm: AlmanacViewModel) {
                            modifier = Modifier.testTag("planner-constellations")) {
                 Text("Constellations (${s.enabled.size})")
             }
+            SelectorMascara(s.maskDeg) { vm.setMask(it) }
             if (s.computing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
         }
 
@@ -98,12 +107,8 @@ fun PlannerScreen(vm: AlmanacViewModel) {
             }
         }
 
-        s.forecast?.let { Grafica(it, s.enabled, s.showTotal) } ?: Text(
-            if (s.tles.isEmpty()) "No orbit data yet."
-            else "Waiting for a position to compute from.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.testTag("planner-nochart"))
+        TarjetaPosicion(vm, s)
+        TarjetaAlmanaque(vm, s, ahora)
 
         s.note?.let {
             Card(Modifier.fillMaxWidth()) {
@@ -120,6 +125,35 @@ fun PlannerScreen(vm: AlmanacViewModel) {
         ConstellationDialog(s, onToggle = { c, on -> vm.setEnabled(c, on) },
                             onTotal = { vm.setShowTotal(it) },
                             onDismiss = { constelaciones = false })
+    }
+}
+
+/**
+ * La mascara de elevacion.
+ *
+ * Valores redondos en un menu y no un campo numerico: es una decision de terreno --que tan
+ * cerca del horizonte me fio-- y no una medida. Tecleando se pierde mas tiempo del que se
+ * gana, y con guantes, mas.
+ *
+ * Cero incluido a proposito: sirve para ver el horizonte teorico completo y comparar cuanto
+ * quita cada grado de mascara.
+ */
+@Composable
+private fun SelectorMascara(actual: Double, onSet: (Double) -> Unit) {
+    var abierto by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { abierto = true },
+                       modifier = Modifier.testTag("planner-mask")) {
+            Text("Mask ${actual.toInt()}°")
+        }
+        DropdownMenu(abierto, onDismissRequest = { abierto = false }) {
+            listOf(0, 5, 10, 15, 20, 25, 30, 35).forEach { g ->
+                DropdownMenuItem(
+                    text = { Text("$g°" + if (g == 10) "  (usual)" else "") },
+                    onClick = { abierto = false; onSet(g.toDouble()) },
+                    modifier = Modifier.testTag("planner-mask-$g"))
+            }
+        }
     }
 }
 
@@ -359,7 +393,8 @@ private fun ConstellationDialog(s: AlmanacUiState, onToggle: (Constellation, Boo
  * caber en un telefono que se lleva a un glaciar.
  */
 @Composable
-private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean) {
+private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
+                    maskDeg: Double) {
     // El total se dibuja SOLO si se pide, y por eso viene apagado de fabrica: con cuatro
     // constelaciones suma unos cuarenta satelites frente a los diez de cada una, asi que
     // estira el eje y aplasta contra el suelo justo las lineas que uno queria comparar.
@@ -370,7 +405,8 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean)
     val ahora = System.currentTimeMillis()
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Satellites above 10° today", style = MaterialTheme.typography.titleSmall)
+        Text("Satellites above ${maskDeg.toInt()}° today",
+             style = MaterialTheme.typography.titleSmall)
 
         Canvas(Modifier.fillMaxWidth().height(220.dp).testTag("planner-chart")) {
             val izq = 34f; val abajo = size.height - 22f
