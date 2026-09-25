@@ -12,6 +12,9 @@ class MainActivity : ComponentActivity() {
     private val vm: DeviceViewModel by viewModels()
     private val gps: GpsViewModel by viewModels()
     private val fieldbook: FieldbookViewModel by viewModels()
+    // Se crea con la actividad, no al abrir la herramienta: la regla es "al iniciar
+    // la app", y quien sale a terreno abre GPS tools cuando ya no hay red.
+    private val almanac: AlmanacViewModel by viewModels()
 
     private val askPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -100,7 +103,7 @@ class MainActivity : ComponentActivity() {
         atenderCableEnchufado(intent)
         setContent {
             GlacioToolsTheme {
-                Surface { GlacioToolsApp(vm, gps, fieldbook) }
+                Surface { GlacioToolsApp(vm, gps, fieldbook, almanac) }
             }
         }
     }

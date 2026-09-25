@@ -31,7 +31,7 @@ private fun duracion(s: Long): String = when {
 
 /** La herramienta entera: lista, promediado y detalle de un punto. */
 @Composable
-fun GpsToolScreen(vm: GpsViewModel, onBack: () -> Unit) {
+fun GpsToolScreen(vm: GpsViewModel, almanac: AlmanacViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refresh() }
     var explicar by rememberSaveable { mutableStateOf(false) }
@@ -62,6 +62,8 @@ fun GpsToolScreen(vm: GpsViewModel, onBack: () -> Unit) {
                 text = { Text("Average") }, modifier = Modifier.testTag("gps-tab-average"))
             Tab(selected = tab == 1, onClick = { tab = 1 },
                 text = { Text("GPS time") }, modifier = Modifier.testTag("gps-tab-time"))
+            Tab(selected = tab == 2, onClick = { tab = 2 },
+                text = { Text("Planner") }, modifier = Modifier.testTag("gps-tab-planner"))
         }
 
         Box(Modifier.weight(1f)) {
@@ -71,7 +73,8 @@ fun GpsToolScreen(vm: GpsViewModel, onBack: () -> Unit) {
                     s.openPoint != null -> PointScreen(vm, s, s.openPoint!!)
                     else -> PointListScreen(vm, s)
                 }
-                else -> GpsTimeScreen()
+                1 -> GpsTimeScreen()
+                else -> PlannerScreen(almanac)
             }
         }
     }

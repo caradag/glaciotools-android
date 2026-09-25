@@ -27,7 +27,7 @@ private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA }
  */
 @Composable
 fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
-                   fieldbook: FieldbookViewModel) {
+                   fieldbook: FieldbookViewModel, almanac: AlmanacViewModel) {
     // Con un Saver explicito y no el automatico: lo que se guarda en el Bundle al girar la
     // pantalla es el NOMBRE, que es texto y no depende de en que orden queden las constantes
     // el dia que se anada una herramienta en medio.
@@ -52,7 +52,7 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
         }
         Herramienta.GPS -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
-            GpsToolScreen(gps, onBack = { donde = Herramienta.INICIO })
+            GpsToolScreen(gps, almanac, onBack = { donde = Herramienta.INICIO })
         }
         Herramienta.LIBRETA -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {

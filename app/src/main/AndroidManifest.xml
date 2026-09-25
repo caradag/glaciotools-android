@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Para no intentar la descarga del almanaque sin red: sin esto, cada arranque en
+         terreno gastaria unos segundos esperando un tiempo de espera que ya se sabe que
+         va a vencer. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Notas de audio de la libreta. Se pide al pulsar grabar, no al arrancar. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
