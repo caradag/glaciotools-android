@@ -455,7 +455,17 @@ fun rememberPhotoAdders(
         if (f != null) {
             pendiente = f.absolutePath
             runCatching { camara.launch(MediaVault.uriFor(ctx, f)) }
-                .onFailure { pendiente = null; f.delete() }
+                // SE DICE. Antes esto moria callado: al faltar la carpeta del diario en
+                // file_paths.xml, getUriForFile lanzaba, el fichero se borraba y el boton
+                // de camara no hacia absolutamente nada -- sin aviso, sin registro, y sin
+                // ninguna forma de distinguirlo de un toque que no se registro.
+                .onFailure { e ->
+                    pendiente = null; f.delete()
+                    android.util.Log.e("GlacioTools", "camara: ${f.absolutePath}", e)
+                    android.widget.Toast.makeText(
+                        ctx, "The camera could not be opened", android.widget.Toast.LENGTH_LONG)
+                        .show()
+                }
             Unit
         } else Unit
     }

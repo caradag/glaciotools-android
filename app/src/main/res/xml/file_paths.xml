@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Lo unico que el FileProvider deja salir: la carpeta de medios de la libreta.
+    Lo unico que el FileProvider deja salir: las carpetas de medios.
 
-    Acotado a `fieldbook/media` y no a la carpeta privada entera. La URI que se le entrega a
-    la camara da permiso de escritura sobre lo que este dentro del camino declarado, y ahi
-    tambien viven los puntos de GPS y las preferencias.
+    UNA LINEA POR ALMACEN, y hay que anadirla al crear uno nuevo. El diario guarda sus fotos
+    aparte de las de la libreta (si compartieran carpeta, el barrido de huerfanos de la
+    libreta las borraria) y esta lista se quedo sin esa segunda linea: el boton de camara del
+    diario no hacia NADA, en silencio, porque getUriForFile lanza al no encontrar una raiz
+    declarada que contenga el fichero.
+
+    Acotado a las carpetas de medios y no a la carpeta privada entera. La URI que se le
+    entrega a la camara da permiso de escritura sobre lo que este dentro del camino
+    declarado, y ahi tambien viven los puntos de GPS y las preferencias.
 -->
 <paths>
     <files-path name="fieldbook-media" path="fieldbook/media/" />
+    <files-path name="journal-media" path="journal/media/" />
 </paths>
