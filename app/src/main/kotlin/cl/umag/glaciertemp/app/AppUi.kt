@@ -60,44 +60,14 @@ fun GlacierTempApp(vm: DeviceViewModel, onBack: (() -> Unit)? = null) {
     // debajo de la barra de navegacion de Android y, en Terminal, el boton Send se veia
     // tapado en sus tres cuartas partes.
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        // La barra comun, como el resto de las herramientas. Antes esta pantalla tenia
+        // cabecera propia con el logotipo, asi que arriba solo ponia "Tools" y no decia en
+        // que herramienta estabas -- justo al reves que GPS y la libreta. El logotipo y la
+        // version viven en la pantalla de inicio y en Info, que es donde se consultan.
+        onBack?.let { ToolBar("Connect a device", onBack = it) }
+
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // Los dos colores del logotipo, y separado de la barra de estado: sin el
-            // margen, la parte alta de las mayusculas quedaba bajo el reloj del telefono.
-            val estilo = MaterialTheme.typography.headlineSmall
-            val oscuro = androidx.compose.foundation.isSystemInDarkTheme()
-            onBack?.let {
-                TextButton(onClick = it, contentPadding = PaddingValues(0.dp),
-                           modifier = Modifier.testTag("device-back")) { Text("‹ Tools") }
-            }
-            Text(
-                buildAnnotatedString {
-                    withStyle(SpanStyle(color = if (oscuro) WordmarkBlueDark else WordmarkBlue)) {
-                        append("Glacio")
-                    }
-                    // Del esquema y no un color fijo: en oscuro el fondo es el marino del
-                    // logo, y "Tools" en marino quedaba invisible.
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onBackground)) {
-                        append("Tools")
-                    }
-                    // La version, en pequeno y apagada. Sirve para una sola cosa --saber que
-                    // APK hay instalado cuando se reporta un fallo-- y para eso tiene que
-                    // estar SIEMPRE a la vista, no detras de un menu que nadie abre. Sale de
-                    // BuildConfig y no de una constante escrita a mano: la que se escribe a
-                    // mano se olvida, y una version equivocada es peor que ninguna.
-                    withStyle(SpanStyle(
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
-                        fontSize = estilo.fontSize * 0.5f,
-                        fontWeight = FontWeight.Normal,
-                    )) {
-                        append("  v${BuildConfig.VERSION_NAME}")
-                    }
-                },
-                style = estilo,
-                modifier = Modifier.padding(top = with(LocalDensity.current) {
-                    (estilo.fontSize.toPx() * 0.25f).toDp()
-                }),
-            )
             Text(s.status, Modifier.testTag("status"),
                  style = MaterialTheme.typography.bodyMedium)
             s.transportNote?.let {

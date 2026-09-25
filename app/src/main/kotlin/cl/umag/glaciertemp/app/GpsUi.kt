@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -30,20 +31,52 @@ private fun duracion(s: Long): String = when {
 
 /** La herramienta entera: lista, promediado y detalle de un punto. */
 @Composable
-fun GpsToolScreen(vm: GpsViewModel) {
+fun GpsToolScreen(vm: GpsViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refresh() }
+    var explicar by rememberSaveable { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
 
     // El atras del sistema retrocede una pantalla dentro de la herramienta antes de salir
     // de ella. Desde la pantalla de medir NO se sale sin mas: se deja que el boton Done
     // haga su trabajo, que es el que pregunta por lo que no se ha guardado.
     androidx.activity.compose.BackHandler(enabled = s.openPoint != null) { vm.closePoint() }
 
-    when {
-        s.averaging != null -> AveragingScreen(vm, s, s.averaging!!)
-        s.openPoint != null -> PointScreen(vm, s, s.openPoint!!)
-        else -> PointListScreen(vm, s)
+    Column(Modifier.fillMaxSize()) {
+        ToolBar("GPS tools", onBack = onBack) {
+            // El icono explica el PROMEDIADO, asi que solo en su pestana: en la del reloj
+            // abriria un texto que no habla de lo que se esta mirando.
+            if (tab == 0) {
+                IconButton(onClick = { explicar = true },
+                           modifier = Modifier.testTag("gps-info")) {
+                    Icon(Icons.Outlined.Info, contentDescription = "How the averaging works")
+                }
+            }
+        }
+
+        // Pestanas, como en la pantalla del aparato. El promediado deja de ser "la
+        // herramienta de GPS" entera y pasa a ser una de sus herramientas, que es lo que
+        // hace sitio para las que vienen detras.
+        TabRow(selectedTabIndex = tab) {
+            Tab(selected = tab == 0, onClick = { tab = 0 },
+                text = { Text("Average") }, modifier = Modifier.testTag("gps-tab-average"))
+            Tab(selected = tab == 1, onClick = { tab = 1 },
+                text = { Text("GPS time") }, modifier = Modifier.testTag("gps-tab-time"))
+        }
+
+        Box(Modifier.weight(1f)) {
+            when (tab) {
+                0 -> when {
+                    s.averaging != null -> AveragingScreen(vm, s, s.averaging!!)
+                    s.openPoint != null -> PointScreen(vm, s, s.openPoint!!)
+                    else -> PointListScreen(vm, s)
+                }
+                else -> GpsTimeScreen()
+            }
+        }
     }
+
+    if (explicar) AveragingExplained { explicar = false }
 }
 
 @Composable
@@ -70,14 +103,6 @@ private fun PointListScreen(vm: GpsViewModel, s: GpsUiState) {
 
     Column(Modifier.fillMaxSize().padding(16.dp),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Averaged positions", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { explicar = true },
-                       modifier = Modifier.testTag("gps-info")) {
-                Icon(Icons.Outlined.Info, contentDescription = "How the averaging works")
-            }
-        }
         Text("Records GNSS fixes for as long as you like and combines them. " +
              "Nothing is uploaded anywhere.",
              style = MaterialTheme.typography.bodySmall,

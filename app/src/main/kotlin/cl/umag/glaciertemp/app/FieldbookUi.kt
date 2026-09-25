@@ -13,6 +13,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -46,7 +47,7 @@ private fun typeBlurb(t: EntryType): String = when (t) {
  * algo a lo que ya se estaba haciendo mucho mas a menudo que para empezar de cero.
  */
 @Composable
-fun FieldbookScreen(vm: FieldbookViewModel) {
+fun FieldbookScreen(vm: FieldbookViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refresh() }
 
@@ -65,29 +66,26 @@ fun FieldbookScreen(vm: FieldbookViewModel) {
     androidx.activity.compose.BackHandler(enabled = s.open != null) { vm.close() }
 
     val abierta = s.open
-    if (abierta == null) EntryListScreen(vm, s) else EntryScreen(vm, s, abierta)
-}
 
-@Composable
-private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState) {
-    var eligiendoTipo by remember { mutableStateOf(false) }
-    var explicar by remember { mutableStateOf(false) }
-    var terminarCampana by remember { mutableStateOf(false) }
-    var verArchivadas by remember { mutableStateOf(false) }
-    // La campana CONCRETA que se renombra, no un booleano: el cuadro sirve para la abierta y
-    // para cualquier archivada, y confundir cual se esta tocando es justo el fallo que se
-    // esta arreglando aqui.
-    var renombrando by remember { mutableStateOf<Campaign?>(null) }
-    var exportar by remember { mutableStateOf(false) }
+    // Una sola cabecera. Antes habia dos filas diciendo lo mismo: la barra de navegacion con
+    // "Fieldbook" y, justo debajo, un titulo "Field notebook" con los iconos. Dos franjas de
+    // pantalla para un nombre que ya estaba escrito, y en un telefono eso empuja la primera
+    // anotacion fuera de la vista.
+    var exportar by rememberSaveable { mutableStateOf(false) }
+    var explicar by rememberSaveable { mutableStateOf(false) }
 
-    val mirandoArchivada = s.viewingCampaign != null
-
-    Column(Modifier.fillMaxSize().padding(16.dp),
-           verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (mirandoArchivada) "Archived campaign" else "Field notebook",
-                 style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.weight(1f))
+    ToolBar(
+        titulo = when {
+            abierta != null -> "Entry"
+            s.viewingCampaign != null -> "Archived campaign"
+            else -> "Fieldbook"
+        },
+        onBack = { if (abierta != null) vm.close() else onBack() },
+    ) {
+        // Solo en la lista: dentro de una entrada, exportar la libreta entera o abrir la
+        // explicacion general no viene a cuento, y un icono que no toca es un icono que
+        // alguien toca.
+        if (abierta == null) {
             IconButton(onClick = { exportar = true },
                        enabled = s.total > 0 && !s.exporting,
                        modifier = Modifier.testTag("fb-export")) {
@@ -97,7 +95,29 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState) {
                 Icon(Icons.Outlined.Info, contentDescription = "What the notebook records")
             }
         }
+    }
 
+    if (abierta == null) EntryListScreen(vm, s, onExport = { exportar = true })
+    else EntryScreen(vm, s, abierta)
+
+    if (exportar) ExportDialog(vm, s) { exportar = false }
+    if (explicar) FieldbookExplained { explicar = false }
+}
+
+@Composable
+private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
+                            onExport: () -> Unit) {
+    var eligiendoTipo by remember { mutableStateOf(false) }
+    var terminarCampana by remember { mutableStateOf(false) }
+    var verArchivadas by remember { mutableStateOf(false) }
+    // La campana CONCRETA que se renombra, no un booleano: el cuadro sirve para la abierta y
+    // para cualquier archivada, y confundir cual se esta tocando es justo el fallo que se
+    // esta arreglando aqui.
+    var renombrando by remember { mutableStateOf<Campaign?>(null) }
+    val mirandoArchivada = s.viewingCampaign != null
+
+    Column(Modifier.fillMaxSize().padding(16.dp),
+           verticalArrangement = Arrangement.spacedBy(12.dp)) {
         CampaignBar(
             s = s,
             onRename = { renombrando = s.viewingCampaign ?: s.activeCampaign },
@@ -185,8 +205,6 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState) {
         }
     }
 
-    if (exportar) ExportDialog(vm, s) { exportar = false }
-    if (explicar) FieldbookExplained { explicar = false }
 }
 
 /**

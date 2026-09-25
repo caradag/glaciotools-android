@@ -52,26 +52,42 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
         }
         Herramienta.GPS -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
-            ToolBar("GPS tools", onBack = { donde = Herramienta.INICIO })
-            GpsToolScreen(gps)
+            GpsToolScreen(gps, onBack = { donde = Herramienta.INICIO })
         }
         Herramienta.LIBRETA -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
-            ToolBar("Fieldbook", onBack = { donde = Herramienta.INICIO })
-            FieldbookScreen(fieldbook)
+            FieldbookScreen(fieldbook, onBack = { donde = Herramienta.INICIO })
         }
     }
 }
 
-/** La cabecera de una herramienta: volver, y el nombre de donde se esta. */
+/**
+ * La cabecera de una herramienta: volver, el nombre de donde se esta, y sus acciones.
+ *
+ * UNA SOLA PARA TODAS. Antes cada herramienta resolvia su cabecera a su manera: GPS y la
+ * libreta usaban esta barra, la pantalla del aparato tenia la suya con el logotipo --de modo
+ * que arriba solo ponia "Tools", sin decir en que herramienta estabas-- y la libreta ademas
+ * repetia su nombre debajo, en un titulo que decia lo mismo que la barra. Tres formas de
+ * encabezar tres pantallas de la misma app.
+ *
+ * Las acciones van AQUI, a la derecha del nombre, y no en una fila propia: en un telefono
+ * cada fila de cabecera es una franja de pantalla que no muestra datos, y en la libreta esa
+ * franja empujaba la primera anotacion fuera de la vista.
+ *
+ * El logotipo se queda en la pantalla de inicio, que es donde significa algo. Repetido en
+ * cada herramienta solo gasta la altura que necesita el trabajo.
+ */
 @Composable
-fun ToolBar(titulo: String, onBack: () -> Unit) {
+fun ToolBar(titulo: String, onBack: () -> Unit,
+            acciones: @Composable RowScope.() -> Unit = {}) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically) {
         TextButton(onClick = onBack, modifier = Modifier.testTag("tool-back")) {
-            Text("‹ Tools")
+            Text("‹ Tools", style = MaterialTheme.typography.titleMedium)
         }
-        Text(titulo, style = MaterialTheme.typography.titleMedium)
+        Text(titulo, style = MaterialTheme.typography.titleLarge,
+             modifier = Modifier.weight(1f).testTag("tool-title"))
+        acciones()
     }
 }
 
