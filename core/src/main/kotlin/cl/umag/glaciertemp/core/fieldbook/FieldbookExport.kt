@@ -44,8 +44,19 @@ object FieldbookExport {
     const val STAKE_CSV = "stake_measurements.csv"
     const val DENDRO_CSV = "dendro_samples.csv"
     const val NOTEBOOK_ODT = "fieldbook.odt"
+    const val JOURNAL_ODT = "journal.odt"
     const val PICTURES = "Pictures"
     const val AUDIO = "Audio"
+
+    /**
+     * Fotos Y audios del diario, TODOS EN UNA CARPETA.
+     *
+     * A diferencia de los medios de las notas, que se reparten por punto o baliza, los del
+     * diario no cuelgan de ningun objeto medido: cuelgan de un rato de un dia. Repartirlos
+     * por entrada daria cien carpetas de una foto cada una. Lo que los ordena es la marca de
+     * tiempo del nombre, que ademas es lo que los hace unicos.
+     */
+    const val JOURNAL_MEDIA = "Journal"
 
     /**
      * Donde va cada foto: `Pictures/<nombre del punto o baliza>/`.
@@ -75,6 +86,43 @@ object FieldbookExport {
         return salida
     }
 
+    /**
+     * Como se llama cada foto y cada audio del diario DENTRO DEL ZIP.
+     *
+     * El nombre interno ("m1790360309068-414081.jpg") no dice nada al abrirlo en un
+     * ordenador. Se rebautizan con la marca de tiempo de SU ENTRADA, que es lo que permite
+     * ordenar la carpeta por nombre y que salga el orden del terreno, y cruzarla con el
+     * documento sin abrir cada fichero.
+     *
+     * Dos medios de la misma entrada caen en el mismo segundo, asi que el que repite lleva
+     * un sufijo. Sin el, el segundo pisaria al primero dentro del zip.
+     */
+    fun journalMediaNames(
+        entries: List<JournalEntry>,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+    ): Map<String, String> {
+        val f = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
+        val usados = HashSet<String>()
+        val salida = LinkedHashMap<String, String>()
+        entries.sortedBy { it.epochMillis }.forEach { e ->
+            val marca = f.format(java.time.Instant.ofEpochMilli(e.epochMillis).atZone(zone))
+            e.mediaFiles().forEach { interno ->
+                if (interno in salida) return@forEach
+                val ext = interno.substringAfterLast('.', "").lowercase()
+                val base = if (ext.isEmpty()) marca else "$marca.$ext"
+                var nombre = base
+                var n = 2
+                while (nombre in usados) {
+                    nombre = if (ext.isEmpty()) "${marca}_$n" else "${marca}_$n.$ext"
+                    n++
+                }
+                usados += nombre
+                salida[interno] = nombre
+            }
+        }
+        return salida
+    }
+
     /** Nombre propuesto para el fichero. Lleva la fecha porque se exporta mas de una vez. */
     fun suggestedName(campaign: Campaign?, now: Long = System.currentTimeMillis()): String {
         val t = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmm")
@@ -97,11 +145,16 @@ object FieldbookExport {
         media: Media = NoMedia,
         campaigns: List<Campaign> = emptyList(),
         zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+        journal: List<JournalEntry> = emptyList(),
+        dayTitles: Map<String, String> = emptyMap(),
+        // El diario guarda sus medios en OTRA carpeta, asi que necesita su propia fuente.
+        journalMedia: Media = NoMedia,
     ): Result {
         val nombreCampana: (String?) -> String = { id ->
             campaigns.firstOrNull { it.id == id }?.displayName() ?: ""
         }
         val carpetas = folderFor(entries)
+        val nombresDiario = journalMediaNames(journal, zone)
         var fotos = 0
         var audios = 0
         var ausentes = 0
@@ -120,6 +173,36 @@ object FieldbookExport {
             zip.putNextEntry(ZipEntry(NOTEBOOK_ODT))
             zip.write(FieldbookOdt.build(entries, media, campaigns, zone))
             zip.closeEntry()
+
+            if (journal.isNotEmpty()) {
+                val deQuien = campaigns.firstOrNull { c -> journal.any { it.campaignId == c.id } }
+                zip.putNextEntry(ZipEntry(JOURNAL_ODT))
+                zip.write(JournalOdt.build(
+                    journal, dayTitles, journalMedia, nombresDiario,
+                    deQuien?.displayName() ?: "Field journal", zone))
+                zip.closeEntry()
+
+                journal.forEach { e ->
+                    e.photos.forEach { interno ->
+                        val entrada = journalMedia.open(interno)
+                        if (entrada == null) { ausentes++; return@forEach }
+                        zip.putNextEntry(ZipEntry(
+                            "$JOURNAL_MEDIA/${nombresDiario[interno] ?: interno}"))
+                        entrada.use { it.copyTo(zip) }
+                        zip.closeEntry()
+                        fotos++
+                    }
+                    e.audio.map { it.file }.forEach { interno ->
+                        val entrada = journalMedia.open(interno)
+                        if (entrada == null) { ausentes++; return@forEach }
+                        zip.putNextEntry(ZipEntry(
+                            "$JOURNAL_MEDIA/${nombresDiario[interno] ?: interno}"))
+                        entrada.use { it.copyTo(zip) }
+                        zip.closeEntry()
+                        audios++
+                    }
+                }
+            }
 
             entries.forEach { e ->
                 val carpeta = carpetas[e.id] ?: FieldbookCsv.folderName(e.id)
@@ -144,7 +227,7 @@ object FieldbookExport {
                     }
             }
         }
-        return Result(entries.size, fotos, audios, ausentes)
+        return Result(entries.size, fotos, audios, ausentes, journal.size)
     }
 
     data class Result(
@@ -153,9 +236,12 @@ object FieldbookExport {
         val audioNotes: Int,
         /** Medios que la libreta nombra y que ya no estan en el telefono. */
         val missingMedia: Int,
+        val journalEntries: Int = 0,
     ) {
         fun describe(): String = buildString {
             append("$entries entr").append(if (entries == 1) "y" else "ies")
+            if (journalEntries > 0)
+                append(", $journalEntries journal entr").append(if (journalEntries == 1) "y" else "ies")
             append(", $photos photo").append(if (photos == 1) "" else "s")
             append(", $audioNotes audio note").append(if (audioNotes == 1) "" else "s")
             if (missingMedia > 0) append("  ·  $missingMedia file(s) missing from the phone")

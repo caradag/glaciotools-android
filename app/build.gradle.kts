@@ -14,8 +14,8 @@ android {
         targetSdk = 36
         // Primera version que se distribuye para instalar. El versionCode tiene que subir
         // en cada APK que se publique, o Android se niega a instalarlo encima del anterior.
-        versionCode = 27
-        versionName = "2.7"
+        versionCode = 28
+        versionName = "2.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

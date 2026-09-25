@@ -15,7 +15,14 @@ import java.io.InputStream
  * decodificador de Android. `:core` define la interfaz y hace todo lo demas --los CSV, el ODT,
  * el zip-- de forma que se prueba entera en el escritorio con una fuente falsa.
  */
-class FieldbookMedia(private val store: FieldbookStore) : FieldbookExport.Media {
+class FieldbookMedia(private val locate: (String) -> java.io.File) : FieldbookExport.Media {
+
+    // El diario guarda sus medios en OTRA carpeta --si compartiera la de la libreta, el
+    // barrido de huerfanos los borraria-- pero leerlos y reducirlos es identico. Lo unico
+    // que cambia es donde se busca el fichero, y eso es lo que se recibe.
+    constructor(store: FieldbookStore) : this({ store.media(it) })
+    constructor(store: cl.umag.glaciertemp.core.fieldbook.JournalStore) : this({ store.media(it) })
+
 
     companion object {
         /**
@@ -31,7 +38,7 @@ class FieldbookMedia(private val store: FieldbookStore) : FieldbookExport.Media 
     }
 
     override fun open(name: String): InputStream? {
-        val f = store.media(name)
+        val f = locate(name)
         return if (f.exists() && f.length() > 0L) f.inputStream() else null
     }
 
@@ -44,7 +51,7 @@ class FieldbookMedia(private val store: FieldbookStore) : FieldbookExport.Media 
      * dice en el documento en vez de dejar un hueco mudo.
      */
     override fun preview(name: String): OdtWriter.Image? {
-        val f = store.media(name)
+        val f = locate(name)
         if (!f.exists() || f.length() == 0L) return null
         return runCatching {
             val medir = BitmapFactory.Options().apply { inJustDecodeBounds = true }

@@ -7,9 +7,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -68,7 +75,13 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
         onDispose { duenoCiclo.lifecycle.removeObserver(observador); vm.flush() }
     }
 
-    androidx.activity.compose.BackHandler(enabled = s.open != null) { vm.close() }
+    var exportar by rememberSaveable { mutableStateOf(false) }
+    var explicar by rememberSaveable { mutableStateOf(false) }
+    var buscar by rememberSaveable { mutableStateOf(false) }
+
+    androidx.activity.compose.BackHandler(enabled = s.open != null || buscar) {
+        if (buscar) { buscar = false; vm.clearSearch() } else vm.close()
+    }
 
     val abierta = s.open
 
@@ -76,21 +89,40 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
     // "Fieldbook" y, justo debajo, un titulo "Field notebook" con los iconos. Dos franjas de
     // pantalla para un nombre que ya estaba escrito, y en un telefono eso empuja la primera
     // anotacion fuera de la vista.
-    var exportar by rememberSaveable { mutableStateOf(false) }
-    var explicar by rememberSaveable { mutableStateOf(false) }
+
+    var borrarEntrada by rememberSaveable { mutableStateOf(false) }
 
     ToolBar(
         titulo = when {
-            abierta != null -> "Entry"
+            buscar -> "Search"
+            abierta != null -> typeLabel(abierta.type)
             s.viewingCampaign != null -> "Archived campaign"
             else -> "Fieldbook"
         },
-        onBack = { if (abierta != null) vm.close() else onBack() },
+        atras = if (buscar || abierta != null) "Fieldbook" else "Tools",
+        onBack = {
+            when {
+                buscar -> { buscar = false; vm.clearSearch() }
+                abierta != null -> vm.close()
+                else -> onBack()
+            }
+        },
     ) {
         // Solo en la lista: dentro de una entrada, exportar la libreta entera o abrir la
         // explicacion general no viene a cuento, y un icono que no toca es un icono que
         // alguien toca.
-        if (abierta == null) {
+        if (abierta != null) {
+            IconButton(onClick = { borrarEntrada = true },
+                       modifier = Modifier.testTag("fb-delete")) {
+                Icon(Icons.Outlined.Delete, contentDescription = "Delete entry",
+                     tint = MaterialTheme.colorScheme.error)
+            }
+        }
+        if (abierta == null && !buscar) {
+            IconButton(onClick = { buscar = true },
+                       modifier = Modifier.testTag("fb-search")) {
+                Icon(Icons.Outlined.Search, contentDescription = "Search")
+            }
             IconButton(onClick = { exportar = true },
                        enabled = s.total > 0 && !s.exporting,
                        modifier = Modifier.testTag("fb-export")) {
@@ -102,9 +134,13 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
         }
     }
 
-    if (abierta == null) EntryListScreen(vm, s, onExport = { exportar = true },
-                                        onJournal = onJournal)
-    else EntryScreen(vm, s, abierta)
+    when {
+        buscar && abierta == null ->
+            SearchScreen(vm, s, onClose = { buscar = false; vm.clearSearch() })
+        abierta == null -> EntryListScreen(vm, s, onExport = { exportar = true },
+                                           onJournal = onJournal)
+        else -> EntryScreen(vm, s, abierta, borrarEntrada) { borrarEntrada = it }
+    }
 
     if (exportar) ExportDialog(vm, s) { exportar = false }
     if (explicar) FieldbookExplained { explicar = false }
@@ -254,22 +290,58 @@ private fun CampaignBar(
                      style = MaterialTheme.typography.titleSmall,
                      modifier = Modifier.testTag("fb-campaign"))
             } else {
-                // EL NOMBRE SE ESCRIBE AQUI MISMO, sin un boton "Rename" que abra un cuadro
-                // para una sola linea de texto. Un campo que ya esta en pantalla invita a
-                // rellenarlo el primer dia, que es cuando uno sabe como se llama aquello; un
-                // boton escondido detras de otro paso se usa el ultimo dia o nunca.
+                // EL NOMBRE ES TEXTO, no un campo. Un OutlinedTextField siempre abierto ocupa
+                // tres veces el alto de una linea y empuja hacia abajo la lista de notas, que
+                // es lo que se viene a mirar. El lapiz a su lado dice que se puede cambiar y
+                // no cuesta nada; el campo solo aparece mientras se escribe.
                 //
                 // La clave del remember lleva el id: al cambiar de campana --reabrir otra,
                 // mirar una archivada-- el campo tiene que recargarse con el nombre nuevo, y
                 // sin el id seguiria mostrando el anterior.
+                var editando by remember(campana.id) { mutableStateOf(false) }
                 var texto by remember(campana.id) { mutableStateOf(campana.name) }
-                OutlinedTextField(
-                    value = texto,
-                    onValueChange = { texto = it; onName(it) },
-                    placeholder = { Text("Name this campaign") },
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.fillMaxWidth().testTag("fb-campaign"))
+
+                if (editando) {
+                    // Se enfoca solo: si ya se pulso el lapiz, pedir un segundo toque sobre
+                    // el campo que acaba de salir es un paso que nadie queria dar.
+                    val foco = remember { androidx.compose.ui.focus.FocusRequester() }
+                    LaunchedEffect(Unit) { runCatching { foco.requestFocus() } }
+                    OutlinedTextField(
+                        value = texto,
+                        onValueChange = { texto = it; onName(it) },
+                        placeholder = { Text("Name this campaign") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.titleSmall,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { editando = false }),
+                        trailingIcon = {
+                            IconButton(onClick = { editando = false },
+                                       modifier = Modifier.testTag("fb-campaign-name-done")) {
+                                Icon(Icons.Outlined.Check, contentDescription = "Done")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                            .focusRequester(foco)
+                            .testTag("fb-campaign"))
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(campana.name.ifBlank { "Name this campaign" },
+                             style = MaterialTheme.typography.titleSmall,
+                             color = if (campana.name.isBlank())
+                                 MaterialTheme.colorScheme.onSurfaceVariant
+                             else MaterialTheme.colorScheme.onSurface,
+                             maxLines = 2,
+                             modifier = Modifier.weight(1f, fill = false)
+                                 .testTag("fb-campaign"))
+                        IconButton(onClick = { editando = true },
+                                   modifier = Modifier.size(32.dp)
+                                       .testTag("fb-campaign-edit")) {
+                            Icon(Icons.Outlined.Edit,
+                                 contentDescription = "Rename campaign",
+                                 modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -531,8 +603,8 @@ fun FieldbookNotice(vm: FieldbookViewModel, s: FieldbookUiState) {
 // ------------------------------------ entrada abierta ------------------------------------
 
 @Composable
-private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry) {
-    var borrar by remember { mutableStateOf(false) }
+private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
+                        borrar: Boolean, onBorrar: (Boolean) -> Unit) {
     var falta by remember { mutableStateOf<List<String>?>(null) }
 
     /**
@@ -545,20 +617,11 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
         if (pendiente.isNotEmpty()) falta = pendiente
     }
 
+    // SIN CABECERA PROPIA. Habia dos, una encima de otra: la barra de navegacion decia
+    // "Entry" y justo debajo esta fila repetia el "‹ Notebook" y el tipo. Dos franjas para lo
+    // mismo, y en un telefono eso es lo que empuja el primer campo fuera de la vista. El tipo
+    // y la papelera viven ahora en la barra de arriba.
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { vm.close() }, modifier = Modifier.testTag("fb-back")) {
-                Text("‹ Notebook")
-            }
-            Text(typeLabel(e.type), style = MaterialTheme.typography.titleSmall,
-                 modifier = Modifier.weight(1f))
-            IconButton(onClick = { borrar = true }, modifier = Modifier.testTag("fb-delete")) {
-                Icon(Icons.Outlined.Delete, contentDescription = "Delete entry",
-                     tint = MaterialTheme.colorScheme.error)
-            }
-        }
-
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)
                    .verticalScroll(rememberScrollState()),
                verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -652,7 +715,7 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
 
     if (borrar) {
         AlertDialog(
-            onDismissRequest = { borrar = false },
+            onDismissRequest = { onBorrar(false) },
             modifier = Modifier.testTag("fb-delete-dialog"),
             title = { Text("Delete this entry?") },
             text = {
@@ -664,12 +727,12 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
                 })
             },
             confirmButton = {
-                TextButton(onClick = { borrar = false; vm.delete(e.id) },
+                TextButton(onClick = { onBorrar(false); vm.delete(e.id) },
                            modifier = Modifier.testTag("fb-delete-confirm")) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = { TextButton(onClick = { borrar = false }) { Text("Cancel") } })
+            dismissButton = { TextButton(onClick = { onBorrar(false) }) { Text("Cancel") } })
     }
 }
 
@@ -693,7 +756,8 @@ private fun ExportDialog(vm: FieldbookViewModel, s: FieldbookUiState, onClose: (
         if (uri == null) return@rememberLauncherForActivityResult
         val salida = runCatching { ctx.contentResolver.openOutputStream(uri) }.getOrNull()
         if (salida == null) { vm.report("Could not write there."); return@rememberLauncherForActivityResult }
-        vm.export(salida, FieldbookMedia(vm.store!!), todo)
+        vm.export(salida, FieldbookMedia(vm.store!!), todo,
+                  vm.journal?.let { FieldbookMedia(it) } ?: FieldbookExport.NoMedia)
     }
 
     val queCampana = s.viewingCampaign ?: s.activeCampaign
@@ -714,8 +778,10 @@ private fun ExportDialog(vm: FieldbookViewModel, s: FieldbookUiState, onClose: (
                 }
                 Text("One ZIP with three CSV files (GNSS measurements, stake readings with " +
                      "their ablation rates, dendro samples), an ODT document with every note " +
-                     "in chronological order, and the photos and audio in folders named after " +
-                     "each point.",
+                     "in chronological order, a second ODT with the journal day by day, and " +
+                     "the photos and audio — those of the notes in folders named after each " +
+                     "point, those of the journal together in one folder, each named by the " +
+                     "time it belongs to.",
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("You pick the folder in the next screen.",
@@ -865,9 +931,11 @@ private fun FieldbookExplained(onClose: () -> Unit) {
                         "Those are the phone's numbers, not the geodetic receiver's.")
                 Parrafo("Exporting",
                         "One ZIP with three CSV files, an ODT document with every note in " +
-                        "chronological order, and the photos and audio in folders named " +
-                        "after each point. You can export the current campaign, an archived " +
-                        "one, or everything.")
+                        "chronological order, another ODT with the journal day by day, and " +
+                        "the photos and audio. The notes' media go in folders named after " +
+                        "each point; the journal's go together in one folder, each file " +
+                        "named by the time it belongs to. You can export the current " +
+                        "campaign, an archived one, or everything.")
                 Parrafo("Ablation rate",
                         "Between two consecutive stake readings the rate is the change in " +
                         "exposed height divided by the days between them, in cm/day. " +

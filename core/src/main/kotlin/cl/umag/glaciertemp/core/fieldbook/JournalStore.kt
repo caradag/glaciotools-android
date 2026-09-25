@@ -44,10 +44,21 @@ class JournalStore(private val dir: File) {
 
     /** Todas las entradas de una campana. */
     fun list(campaignId: String): List<JournalEntry> =
+        listAll().filter { it.campaignId == campaignId }
+
+    /**
+     * Todo el diario, de todas las campanas.
+     *
+     * Lo usa la busqueda, que no se limita a la campana abierta: lo que uno no recuerda esta
+     * casi siempre en una campana cerrada hace anos.
+     */
+    fun listAll(): List<JournalEntry> =
         (dir.listFiles { f -> f.isFile && f.name.endsWith(EXTENSION) } ?: emptyArray())
             .mapNotNull { f -> runCatching { parse(f.readText()) }.getOrNull() }
-            .filter { it.campaignId == campaignId }
             .sortedBy { it.epochMillis }
+
+    /** Todos los titulos de dia, con su clave "campana|dia". Lo usa la exportacion. */
+    fun allDayTitles(): Map<String, String> = titles()
 
     fun load(id: String): JournalEntry? =
         file(id).takeIf { it.exists() }

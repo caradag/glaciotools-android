@@ -59,6 +59,11 @@ data class FieldbookUiState(
     val viewingCampaign: Campaign? = null,
     val sky: SkyView? = null,
     val exporting: Boolean = false,
+
+    /** Lo tecleado en la busqueda y lo que ha encontrado. */
+    val query: String = "",
+    val hits: List<FieldbookSearch.Hit> = emptyList(),
+    val searched: Boolean = false,
     val error: String? = null,
     val note: String? = null,
 )
@@ -745,6 +750,48 @@ class FieldbookViewModel : ViewModel() {
         return g.missingForUse(hasPosition = e.position != null)
     }
 
+    // ------------------------------------- busqueda --------------------------------------
+
+    private var buscando: kotlinx.coroutines.Job? = null
+
+    /**
+     * Busca en TODO lo guardado, incluidas las campanas archivadas.
+     *
+     * Se lee el disco entero en cada consulta en vez de mantener un indice. Una libreta de
+     * varios anos son unos pocos miles de ficheros de texto: se recorren en decimas de
+     * segundo, y un indice habria que mantenerlo al dia en cada edicion --que es justo donde
+     * se cuelan los fallos que hacen que algo guardado no aparezca al buscarlo.
+     */
+    fun search(q: String) {
+        val s = store ?: return
+        _state.value = _state.value.copy(query = q)
+        buscando?.cancel()
+        if (q.isBlank()) {
+            _state.value = _state.value.copy(hits = emptyList(), searched = false)
+            return
+        }
+        buscando = viewModelScope.launch {
+            // Se espera a que pare de teclear: sin esto se recorre el disco entero por cada
+            // letra y la lista parpadea con resultados de consultas a medio escribir.
+            kotlinx.coroutines.delay(250)
+            val r = withContext(Dispatchers.IO) {
+                val cs = campaigns?.list() ?: emptyList()
+                FieldbookSearch.search(
+                    q, s.list(), journal?.listAll() ?: emptyList(),
+                    { id -> cs.firstOrNull { it.id == id }?.displayName() ?: "" })
+            }
+            _state.value = _state.value.copy(hits = r, searched = true)
+        }
+    }
+
+    fun clearSearch() {
+        buscando?.cancel()
+        _state.value = _state.value.copy(query = "", hits = emptyList(), searched = false)
+    }
+
+    /** Una entrada del diario, para mirarla desde los resultados sin salir de la busqueda. */
+    fun journalEntry(id: String): JournalEntry? = journal?.load(id)
+
     // ------------------------------------ exportacion ------------------------------------
 
     /**
@@ -754,7 +801,12 @@ class FieldbookViewModel : ViewModel() {
      * mas lo que no tenga campana-- y no siempre todo. Es lo mismo que la lista muestra, asi
      * que no hay forma de creer que se exporto una cosa y haber exportado otra.
      */
-    fun export(out: java.io.OutputStream, media: FieldbookExport.Media, todo: Boolean) {
+    fun export(
+        out: java.io.OutputStream,
+        media: FieldbookExport.Media,
+        todo: Boolean,
+        journalMedia: FieldbookExport.Media = FieldbookExport.NoMedia,
+    ) {
         val s = store ?: return
         _state.value = _state.value.copy(exporting = true, error = null, note = null)
         viewModelScope.launch {
@@ -765,7 +817,25 @@ class FieldbookViewModel : ViewModel() {
                     val seleccion = if (todo) todas
                                     else enVista(todas, _state.value.viewingCampaign,
                                                  _state.value.activeCampaign)
-                    out.use { FieldbookExport.writeZip(it, seleccion, media, cs) }
+                    // EL DIARIO SIGUE A LA MISMA SELECCION que las notas. Exportar la campana
+                    // que se esta mirando y colar el diario de otra seria justo el tipo de
+                    // mezcla que la exportacion existe para evitar.
+                    val deQuien = (_state.value.viewingCampaign
+                                   ?: _state.value.activeCampaign)?.id
+                    val diario = journal?.let {
+                        if (todo) it.listAll()
+                        else if (deQuien != null) it.list(deQuien) else emptyList()
+                    } ?: emptyList()
+                    // Los titulos vienen con clave "campana|dia"; el documento agrupa por dia.
+                    val campanasDelDiario = diario.map { it.campaignId }.toSet()
+                    val titulos = journal?.allDayTitles().orEmpty()
+                        .filterKeys { it.substringBefore("|") in campanasDelDiario }
+                        .mapKeys { (k, _) -> k.substringAfter("|") }
+                    out.use {
+                        FieldbookExport.writeZip(it, seleccion, media, cs,
+                                                 java.time.ZoneId.systemDefault(),
+                                                 diario, titulos, journalMedia)
+                    }
                 }
             }
             _state.value = r.fold(
