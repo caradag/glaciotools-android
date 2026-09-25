@@ -32,6 +32,25 @@ data class Tle(
     /** Movimiento medio, revoluciones por dia. */
     val meanMotionRevPerDay: Double,
 ) {
+    /**
+     * El numero con el que el receptor identifica este satelite, si se puede saber.
+     *
+     * SOLO GPS Y BEIDOU. Sus nombres traen "(PRN 22)" y "(C06)", que son exactamente lo que
+     * GnssStatus devuelve como svid. Galileo trae "GSAT0101", que es el numero de serie de
+     * la nave y NO el numero E que emite; GLONASS trae "(720)", que es el numero GLONASS y
+     * no la ranura orbital. Emparejar esos dos exigiria una tabla externa que envejece.
+     *
+     * Se devuelve null antes que adivinar: un emparejamiento equivocado convertiria la
+     * comprobacion contra el cielo real --que existe para detectar errores-- en una fuente
+     * de errores propia.
+     */
+    val svid: Int?
+        get() = when (constellation) {
+            Constellation.GPS -> Regex("""PRN\s*(\d+)""").find(name)?.groupValues?.get(1)?.toIntOrNull()
+            Constellation.BEIDOU -> Regex("""\(C(\d+)\)""").find(name)?.groupValues?.get(1)?.toIntOrNull()
+            else -> null
+        }
+
     /** Movimiento medio en radianes por segundo. */
     val meanMotionRadPerSec: Double get() = meanMotionRevPerDay * 2.0 * PI / 86400.0
 

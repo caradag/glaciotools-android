@@ -1,12 +1,24 @@
 package cl.umag.glaciertemp.app
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Application
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.GnssStatus
+import android.location.LocationListener
+import android.location.LocationManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import cl.umag.glaciertemp.core.gnss.AlmanacFreshness
 import cl.umag.glaciertemp.core.gnss.Constellation
 import cl.umag.glaciertemp.core.gnss.Freshness
+import cl.umag.glaciertemp.core.gnss.CheckResult
+import cl.umag.glaciertemp.core.gnss.Forecast
+import cl.umag.glaciertemp.core.gnss.ModelCheck
+import cl.umag.glaciertemp.core.gnss.ObservedSat
 import cl.umag.glaciertemp.core.gnss.Tle
+import cl.umag.glaciertemp.core.gnss.VisibilityForecast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +34,22 @@ data class AlmanacUiState(
     /** Que paso en el ultimo intento. Null mientras no se haya intentado nada. */
     val note: String? = null,
     val counts: Map<Constellation, Int> = emptyMap(),
+
+    // ---- planificacion ----
+    /** Las que usa el receptor que se va a llevar. Se guardan entre sesiones. */
+    val enabled: Set<Constellation> = Constellation.entries.toSet(),
+    /** Desde donde se calcula. Sale del GPS y se puede cambiar a mano. */
+    val latDeg: Double? = null,
+    val lonDeg: Double? = null,
+    /** Si la coordenada la puso el GPS o la escribio el usuario. */
+    val fromFix: Boolean = false,
+    val waitingFix: Boolean = false,
+    val forecast: Forecast? = null,
+    val computing: Boolean = false,
+    /** Lo que se equivoca el modelo contra el cielo de ahora, si hay con que compararlo. */
+    val check: CheckResult? = null,
+    /** Dibujar tambien la suma. Apagado de fabrica: aplasta las lineas de cada constelacion. */
+    val showTotal: Boolean = false,
 )
 
 /**
@@ -39,10 +67,145 @@ data class AlmanacUiState(
 class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = AlmanacStore(File(app.filesDir, "almanac"))
+    private val prefs = app.getSharedPreferences("planner", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(AlmanacUiState())
     val state: StateFlow<AlmanacUiState> = _state
 
-    init { cargarYPonerAlDia() }
+    init {
+        _state.value = _state.value.copy(enabled = leerHabilitadas(),
+                                         showTotal = prefs.getBoolean("showTotal", false))
+        cargarYPonerAlDia()
+    }
+
+    private fun leerHabilitadas(): Set<Constellation> {
+        val guardado = prefs.getStringSet("enabled", null) ?: return Constellation.entries.toSet()
+        val s = guardado.mapNotNull { n -> Constellation.entries.firstOrNull { it.name == n } }.toSet()
+        // Nunca vacio: un grafico sin ninguna linea no informa de nada y no hay forma de
+        // saber, mirandolo, que lo que falta es una casilla marcada en otra pantalla.
+        return s.ifEmpty { Constellation.entries.toSet() }
+    }
+
+    fun setShowTotal(on: Boolean) {
+        prefs.edit().putBoolean("showTotal", on).apply()
+        _state.value = _state.value.copy(showTotal = on)
+    }
+
+    fun setEnabled(c: Constellation, on: Boolean) {
+        val nuevo = if (on) _state.value.enabled + c else _state.value.enabled - c
+        if (nuevo.isEmpty()) return          // dejar al menos una
+        prefs.edit().putStringSet("enabled", nuevo.map { it.name }.toSet()).apply()
+        _state.value = _state.value.copy(enabled = nuevo)
+        recalcular()
+    }
+
+    // ------------------------------- posicion y cielo -------------------------------
+
+    private var oyente: LocationListener? = null
+    private var cielo: GnssStatus.Callback? = null
+    private var observados: List<ObservedSat> = emptyList()
+
+    /** Se llama al entrar en la pestana: enciende el GPS para saber DONDE estamos. */
+    @SuppressLint("MissingPermission")
+    fun watchSky() {
+        val ctx = getApplication<Application>()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+        if (oyente != null) return
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+
+        _state.value = _state.value.copy(waitingFix = _state.value.latDeg == null)
+        val l = LocationListener { loc ->
+            // Solo la PRIMERA vez, o si el usuario no ha tocado la coordenada: si la ha
+            // editado para planificar otro sitio, el GPS no debe devolverla a donde esta.
+            if (_state.value.latDeg == null || _state.value.fromFix) {
+                _state.value = _state.value.copy(
+                    latDeg = loc.latitude, lonDeg = loc.longitude,
+                    fromFix = true, waitingFix = false)
+                recalcular()
+            } else {
+                _state.value = _state.value.copy(waitingFix = false)
+            }
+        }
+        val c = object : GnssStatus.Callback() {
+            override fun onSatelliteStatusChanged(st: GnssStatus) {
+                observados = (0 until st.satelliteCount).mapNotNull { i ->
+                    val con = when (st.getConstellationType(i)) {
+                        GnssStatus.CONSTELLATION_GPS -> Constellation.GPS
+                        GnssStatus.CONSTELLATION_GLONASS -> Constellation.GLONASS
+                        GnssStatus.CONSTELLATION_GALILEO -> Constellation.GALILEO
+                        GnssStatus.CONSTELLATION_BEIDOU -> Constellation.BEIDOU
+                        else -> null
+                    } ?: return@mapNotNull null
+                    ObservedSat(con, st.getSvid(i),
+                                st.getAzimuthDegrees(i).toDouble(),
+                                st.getElevationDegrees(i).toDouble())
+                }
+                comprobarContraElCielo()
+            }
+        }
+        runCatching {
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, l)
+            lm.registerGnssStatusCallback(c, null)
+            oyente = l; cielo = c
+        }
+    }
+
+    fun stopSky() {
+        val ctx = getApplication<Application>()
+        val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        oyente?.let { runCatching { lm?.removeUpdates(it) } }
+        cielo?.let { runCatching { lm?.unregisterGnssStatusCallback(it) } }
+        oyente = null; cielo = null
+        _state.value = _state.value.copy(waitingFix = false)
+    }
+
+    /**
+     * El modelo contra el cielo real. Es la unica forma honesta de decir cuanto vale el
+     * almanaque guardado: por calendario solo se puede estimar, midiendo se sabe.
+     */
+    private fun comprobarContraElCielo() {
+        val s = _state.value
+        val lat = s.latDeg; val lon = s.lonDeg
+        if (lat == null || lon == null || s.tles.isEmpty() || observados.isEmpty()) return
+        _state.value = s.copy(
+            check = ModelCheck.compare(s.tles, observados, System.currentTimeMillis(), lat, lon))
+    }
+
+    /** La coordenada escrita a mano: se planifica para OTRO sitio. */
+    fun setManualPosition(lat: Double, lon: Double) {
+        _state.value = _state.value.copy(latDeg = lat, lonDeg = lon, fromFix = false)
+        recalcular()
+        comprobarContraElCielo()
+    }
+
+    /** Volver a la del GPS. */
+    fun useFix() {
+        _state.value = _state.value.copy(fromFix = true, waitingFix = true)
+        watchSky()
+    }
+
+    /** Recalcula la prevision del dia en curso. */
+    fun recalcular() {
+        val s = _state.value
+        val lat = s.latDeg; val lon = s.lonDeg
+        if (lat == null || lon == null || s.tles.isEmpty()) return
+        _state.value = s.copy(computing = true)
+        viewModelScope.launch {
+            // El dia EN CURSO en hora local, de medianoche a medianoche: la pregunta es "a
+            // que hora de hoy salgo a medir", no "que pasa en las proximas 24 horas".
+            val cal = java.util.Calendar.getInstance().apply {
+                set(java.util.Calendar.HOUR_OF_DAY, 0)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }
+            val f = withContext(Dispatchers.Default) {
+                VisibilityForecast.compute(s.tles, lat, lon, cal.timeInMillis,
+                                           enabled = s.enabled)
+            }
+            _state.value = _state.value.copy(forecast = f, computing = false)
+        }
+    }
 
     /** Lo que se hace al arrancar: cargar, y bajar solo si hace falta y se puede. */
     fun cargarYPonerAlDia() {
@@ -93,7 +256,15 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
             busy = false,
             note = nota,
             counts = Constellation.entries.associateWith { c -> tles.count { it.constellation == c } },
+            enabled = _state.value.enabled,
+            latDeg = _state.value.latDeg,
+            lonDeg = _state.value.lonDeg,
+            fromFix = _state.value.fromFix,
+            forecast = _state.value.forecast,
+            check = _state.value.check,
+            showTotal = _state.value.showTotal,
         )
+        recalcular()
     }
 
     fun clearNote() { _state.value = _state.value.copy(note = null) }
