@@ -47,6 +47,14 @@ data class FieldbookUiState(
      * creyendo que estaba vacio.
      */
     val campaignCounts: Map<String, Int> = emptyMap(),
+    /**
+     * Cuando se anoto la PRIMERA entrada de cada campana.
+     *
+     * Es la fecha que identifica una campana para quien la busca: "Bernal, el de febrero" se
+     * refiere a cuando se estuvo alli, no a cuando alguien se acordo de pulsar Archive --que
+     * pueden ser semanas despues, ya de vuelta.
+     */
+    val campaignFirstEntry: Map<String, Long> = emptyMap(),
     /** La campana archivada que se esta mirando, o null para la vista normal. */
     val viewingCampaign: Campaign? = null,
     val sky: SkyView? = null,
@@ -122,6 +130,9 @@ class FieldbookViewModel : ViewModel() {
             activeCampaign = activa,
             archivedCampaigns = archivadas,
             campaignCounts = todas.groupingBy { it.campaignId ?: "" }.eachCount(),
+            campaignFirstEntry = todas.filter { it.campaignId != null }
+                .groupBy { it.campaignId!! }
+                .mapValues { (_, l) -> l.minOf { it.createdEpochMillis } },
             viewingCampaign = mirando,
             people = people?.list() ?: emptyList(),
             receivers = receivers?.list() ?: emptyList(),
@@ -209,10 +220,27 @@ class FieldbookViewModel : ViewModel() {
      * Solo dejan de salir en la lista principal, que es lo que hace sitio para empezar la
      * siguiente. La proxima entrada que se cree abrira una campana nueva sola.
      */
-    fun archiveActiveCampaign(name: String) {
+    /**
+     * Archiva la campana abierta. Sin cuadros de por medio.
+     *
+     * SE EXIGE NOMBRE, y es el unico freno que queda. Antes el cuadro de confirmacion lo
+     * pedia de paso y se podia dejar en blanco; el resultado era una lista de archivadas
+     * llena de "Unnamed campaign" imposibles de distinguir meses despues. El nombre se
+     * escribe en la barra --esta ahi, editable, desde el primer dia-- asi que a la hora de
+     * archivar ya deberia estar puesto; si no lo esta, se dice y no se archiva nada.
+     */
+    fun archiveActiveCampaign(name: String = "") {
         val cs = campaigns ?: return
         val activa = cs.active() ?: return
         if (name.isNotBlank()) cs.rename(activa.id, name)
+        val conNombre = cs.byId(activa.id)?.name.orEmpty()
+        if (conNombre.isBlank()) {
+            _state.value = _state.value.copy(
+                error = "Give the campaign a name before archiving it: tap its name above " +
+                        "and type one. Months from now the name is all there is to tell " +
+                        "one campaign from another.")
+            return
+        }
 
         // SELLAR LO QUE NO TENIA CAMPANA ANTES DE ARCHIVAR.
         //
@@ -263,14 +291,45 @@ class FieldbookViewModel : ViewModel() {
     }
 
     /** Vuelve a abrirla, si no hay otra abierta. */
+    /**
+     * Reabre una campana archivada, archivando sola la que estuviera abierta.
+     *
+     * Antes esto fallaba con "termina la campana abierta antes de reabrir otra", que es
+     * hacerle a alguien un recado en vez de resolverselo: siempre hay una campana abierta en
+     * cuanto se anota algo, asi que el error salia CASI SIEMPRE y la unica respuesta posible
+     * era ir a archivar y volver.
+     *
+     * La abierta sin entradas se BORRA en vez de archivarse. Una campana vacia es un
+     * artefacto --se abre sola con la primera anotacion y se queda ahi si esa anotacion se
+     * borra-- y archivarla solo ensuciaria la lista con algo que nunca existio.
+     */
     fun unarchiveCampaign(id: String) {
         val cs = campaigns ?: return
+        val st = store ?: return
+
+        cs.active()?.let { abierta ->
+            val suyas = st.list().count { it.campaignId == abierta.id }
+            when {
+                suyas == 0 -> cs.delete(abierta.id)
+                abierta.name.isBlank() -> {
+                    _state.value = _state.value.copy(
+                        error = "Name the open campaign before reopening another one: tap " +
+                                "its name above and type one.")
+                    return
+                }
+                else -> {
+                    CampaignView.unfiled(st.list())
+                        .forEach { st.save(it.copy(campaignId = abierta.id)) }
+                    cs.archive(abierta.id)
+                }
+            }
+        }
+
         if (!cs.unarchive(id)) {
-            _state.value = _state.value.copy(
-                error = "Finish the campaign that is still open before reopening another one.")
+            _state.value = _state.value.copy(error = "That campaign could not be reopened.")
             return
         }
-        _state.value = _state.value.copy(viewingCampaign = null)
+        _state.value = _state.value.copy(viewingCampaign = null, filter = null, error = null)
         refresh()
     }
 
@@ -407,8 +466,15 @@ class FieldbookViewModel : ViewModel() {
         // que se acaba de eliminar, y la entrada volveria de entre los muertos en la lista.
         guardadoJob?.cancel(); guardadoJob = null; pendiente = null
         s.delete(id)
-        _state.value = _state.value.copy(open = null, entries = s.list(),
-                                         note = "Entry deleted")
+        // refresh() y NO `entries = s.list()`.
+        //
+        // EL DEFECTO QUE HABIA AQUI: s.list() es la lista CRUDA, sin filtrar por campana ni
+        // por tipo. Asignarla directamente metia en la pantalla entradas de campanas
+        // archivadas --una nota de otra campana aparecia en el hueco de la que se acababa de
+        // borrar-- y dejaba los contadores de los filtros rapidos con los numeros de antes,
+        // porque esos se calculan en refresh().
+        _state.value = _state.value.copy(open = null, note = "Entry deleted")
+        refresh()
     }
 
     // ------------------------------- personas y receptores -------------------------------

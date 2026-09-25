@@ -113,7 +113,6 @@ fun FieldbookScreen(vm: FieldbookViewModel, onBack: () -> Unit) {
 private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
                             onExport: () -> Unit) {
     var eligiendoTipo by remember { mutableStateOf(false) }
-    var terminarCampana by remember { mutableStateOf(false) }
     var verArchivadas by remember { mutableStateOf(false) }
     // La campana CONCRETA que se renombra, no un booleano: el cuadro sirve para la abierta y
     // para cualquier archivada, y confundir cual se esta tocando es justo el fallo que se
@@ -126,8 +125,10 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
         CampaignBar(
             s = s,
-            onRename = { renombrando = s.viewingCampaign ?: s.activeCampaign },
-            onFinish = { terminarCampana = true },
+            onName = { nombre ->
+                (s.viewingCampaign ?: s.activeCampaign)?.let { vm.renameCampaign(it.id, nombre) }
+            },
+            onArchive = { vm.archiveActiveCampaign() },
             onArchived = { verArchivadas = true },
             onBackToCurrent = { vm.viewCampaign(null) })
 
@@ -188,13 +189,6 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
             })
     }
 
-    if (terminarCampana) {
-        FinishCampaignDialog(s, onDismiss = { terminarCampana = false }) { nombre ->
-            terminarCampana = false
-            vm.archiveActiveCampaign(nombre)
-        }
-    }
-
     if (verArchivadas) {
         ArchivedCampaignsDialog(
             s,
@@ -232,44 +226,56 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
 @Composable
 private fun CampaignBar(
     s: FieldbookUiState,
-    onRename: () -> Unit,
-    onFinish: () -> Unit,
+    onName: (String) -> Unit,
+    onArchive: () -> Unit,
     onArchived: () -> Unit,
     onBackToCurrent: () -> Unit,
 ) {
     val mirando = s.viewingCampaign
+    val campana = mirando ?: s.activeCampaign
     Card(Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(if (mirando != null) "Viewing" else "Current campaign",
-                     style = MaterialTheme.typography.labelSmall,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(mirando?.displayName()
-                     ?: s.activeCampaign?.displayName()
-                     ?: "No campaign started yet",
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+               verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(if (mirando != null) "Viewing" else "Current campaign",
+                 style = MaterialTheme.typography.labelSmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            if (campana == null) {
+                Text("No campaign started yet",
                      style = MaterialTheme.typography.titleSmall,
                      modifier = Modifier.testTag("fb-campaign"))
-                Text("${s.total} entr" + if (s.total == 1) "y" else "ies",
-                     style = MaterialTheme.typography.bodySmall,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            // Bautizarla SIN cerrarla. El nombre se sabe el primer dia; obligar a terminar
-            // la campana para poder escribirlo convierte un rotulo en una decision, y de
-            // paso empuja a cerrarla antes de tiempo solo para poder nombrarla.
-            val nombrable = mirando ?: s.activeCampaign
-            if (nombrable != null) {
-                TextButton(onClick = onRename,
-                           modifier = Modifier.testTag("fb-campaign-rename")) {
-                    Text(if (nombrable.name.isBlank()) "Name" else "Rename")
-                }
-            }
-            if (mirando != null) {
-                TextButton(onClick = onBackToCurrent,
-                           modifier = Modifier.testTag("fb-campaign-back")) { Text("Current") }
             } else {
-                TextButton(onClick = onFinish, enabled = s.activeCampaign != null && s.total > 0,
-                           modifier = Modifier.testTag("fb-campaign-finish")) { Text("Finish") }
+                // EL NOMBRE SE ESCRIBE AQUI MISMO, sin un boton "Rename" que abra un cuadro
+                // para una sola linea de texto. Un campo que ya esta en pantalla invita a
+                // rellenarlo el primer dia, que es cuando uno sabe como se llama aquello; un
+                // boton escondido detras de otro paso se usa el ultimo dia o nunca.
+                //
+                // La clave del remember lleva el id: al cambiar de campana --reabrir otra,
+                // mirar una archivada-- el campo tiene que recargarse con el nombre nuevo, y
+                // sin el id seguiria mostrando el anterior.
+                var texto by remember(campana.id) { mutableStateOf(campana.name) }
+                OutlinedTextField(
+                    value = texto,
+                    onValueChange = { texto = it; onName(it) },
+                    placeholder = { Text("Name this campaign") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.fillMaxWidth().testTag("fb-campaign"))
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${s.total} entr" + (if (s.total == 1) "y" else "ies"),
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                     modifier = Modifier.weight(1f))
+                if (mirando != null) {
+                    TextButton(onClick = onBackToCurrent,
+                               modifier = Modifier.testTag("fb-campaign-back")) { Text("Current") }
+                } else {
+                    TextButton(onClick = onArchive,
+                               enabled = s.activeCampaign != null && s.total > 0,
+                               modifier = Modifier.testTag("fb-campaign-finish")) { Text("Archive") }
+                }
                 TextButton(onClick = onArchived, enabled = s.archivedCampaigns.isNotEmpty(),
                            modifier = Modifier.testTag("fb-campaign-archived")) {
                     Text("Archived (${s.archivedCampaigns.size})")
@@ -397,57 +403,6 @@ private fun RenameCampaignDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 
-/**
- * Terminar la campana: ponerle nombre y archivarla.
- *
- * El nombre se pide AQUI y no al empezar porque es cuando se sabe. Al abrir la libreta el
- * primer dia, un cuadro pidiendo un nombre es un obstaculo antes de la primera anotacion; al
- * cerrar, es la pregunta natural.
- */
-@Composable
-private fun FinishCampaignDialog(
-    s: FieldbookUiState, onDismiss: () -> Unit, onFinish: (String) -> Unit,
-) {
-    var nombre by remember { mutableStateOf(s.activeCampaign?.name ?: "") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        modifier = Modifier.testTag("fb-finish-dialog"),
-        title = { Text("Finish this campaign") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // DECIR CUAL. Archivar una campana y empezar a anotar abre otra en silencio,
-                // asi que despues de mirar una archivada es facil creer que este cuadro
-                // habla de aquella: se escribe su nombre, se archiva la NUEVA, y aparece una
-                // segunda campana con el nombre que uno acababa de teclear. Parecia un
-                // duplicado y era este cuadro, que no decia de que campana hablaba.
-                s.activeCampaign?.let { c ->
-                    Text("Archiving the campaign open now" +
-                         (if (c.name.isBlank()) "" else " — “${c.name}”") +
-                         ", with ${s.total} entr" + (if (s.total == 1) "y" else "ies") + ".",
-                         style = MaterialTheme.typography.bodySmall,
-                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                         modifier = Modifier.testTag("fb-finish-which"))
-                }
-                OutlinedTextField(
-                    value = nombre, onValueChange = { nombre = it },
-                    label = { Text("Campaign name") },
-                    placeholder = { Text("Bernal, February 2026") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("fb-finish-name"))
-                Text("Its ${s.total} entries move to Archived campaigns and the list is " +
-                     "empty again for the next one. Nothing is deleted, and you can open the " +
-                     "campaign or reopen it at any time.",
-                     style = MaterialTheme.typography.bodySmall,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onFinish(nombre) },
-                       modifier = Modifier.testTag("fb-finish-confirm")) { Text("Archive") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
-}
-
 @Composable
 private fun ArchivedCampaignsDialog(
     s: FieldbookUiState,
@@ -477,8 +432,12 @@ private fun ArchivedCampaignsDialog(
                         // campana que dice "0 entries" avisa de que algo no cuadra ANTES de
                         // que nadie borre nada por creerla vacia.
                         val n = s.campaignCounts[c.id] ?: 0
+                        // LA FECHA DE LA PRIMERA NOTA, no la de archivado. "Bernal, el de
+                        // febrero" se refiere a cuando se estuvo alli, no a cuando alguien
+                        // se acordo de pulsar Archive, que pueden ser semanas despues.
+                        val cuando = s.campaignFirstEntry[c.id]
                         Text("$n ${if (n == 1) "entry" else "entries"}" +
-                             (c.archivedEpochMillis?.let { "  ·  ${formatWhen(it)}" } ?: ""),
+                             (cuando?.let { "  ·  ${formatWhen(it)}" } ?: ""),
                              style = MaterialTheme.typography.bodySmall,
                              color = if (n == 0) MaterialTheme.colorScheme.error
                                      else MaterialTheme.colorScheme.onSurfaceVariant,
