@@ -34,6 +34,13 @@ private fun colorDe(c: Constellation?): Color = when (c) {
     null -> Color(0xFF444444)
 }
 
+private fun letra(c: Constellation) = when (c) {
+    Constellation.GPS -> "G"
+    Constellation.GLONASS -> "R"
+    Constellation.GALILEO -> "E"
+    Constellation.BEIDOU -> "C"
+}
+
 private fun nombre(c: Constellation?) = when (c) {
     Constellation.GPS -> "GPS"
     Constellation.GLONASS -> "GLONASS"
@@ -143,6 +150,34 @@ private fun TarjetaAlmanaque(vm: AlmanacViewModel, s: AlmanacUiState, ahora: Lon
                      "identity, so those are the ones counted.",
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // EL DETALLE, SATELITE A SATELITE. Un solo numero dice que algo va mal pero
+                // no que: si TODOS discrepan mucho, el problema es comun --marco de
+                // coordenadas, reloj, posicion--; si discrepa UNO, es su identidad, o sea
+                // que el PRN que trae el nombre del TLE ya no es el que emite ese satelite.
+                // Sin esta lista hay que adivinar cual de las dos cosas es.
+                var detalle by rememberSaveable { mutableStateOf(false) }
+                TextButton(onClick = { detalle = !detalle },
+                           modifier = Modifier.testTag("planner-check-details")) {
+                    Text(if (detalle) "Hide per-satellite detail" else "Per-satellite detail")
+                }
+                if (detalle) {
+                    Text("  sat    model az/el     seen az/el    diff",
+                         style = MaterialTheme.typography.bodySmall,
+                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    chk.details.forEach { d ->
+                        Text("%s%-3d %6.1f/%5.1f  %6.1f/%5.1f  %6.1f"
+                                 .format(letra(d.constellation), d.svid,
+                                         d.predictedAz, d.predictedEl,
+                                         d.observedAz, d.observedEl, d.separationDeg),
+                             style = MaterialTheme.typography.bodySmall,
+                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                             color = if (d.separationDeg > 5.0) MaterialTheme.colorScheme.error
+                                     else MaterialTheme.colorScheme.onSurface,
+                             modifier = Modifier.testTag("planner-detail-${d.svid}"))
+                    }
+                }
             }
 
             Text(

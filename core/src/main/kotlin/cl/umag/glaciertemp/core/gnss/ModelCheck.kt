@@ -13,8 +13,23 @@ data class ObservedSat(
     val elevationDeg: Double,
 )
 
+/** Un satelite emparejado: donde lo pone el modelo y donde lo ve el receptor. */
+data class SatComparison(
+    val constellation: Constellation,
+    val svid: Int,
+    val predictedAz: Double, val predictedEl: Double,
+    val observedAz: Double, val observedEl: Double,
+    val separationDeg: Double,
+)
+
 /** El resultado de contrastar el modelo con el cielo. */
-data class CheckResult(val matched: Int, val maxErrorDeg: Double?)
+data class CheckResult(
+    val matched: Int,
+    val maxErrorDeg: Double?,
+    /** Uno por satelite emparejado, el peor primero. Es lo que permite ver si el desacuerdo
+     *  es de TODOS --marco de coordenadas o reloj-- o de uno solo --identidad--. */
+    val details: List<SatComparison> = emptyList(),
+)
 
 /**
  * Cuanto se equivoca el modelo, medido contra el cielo de verdad.
@@ -56,18 +71,19 @@ object ModelCheck {
     fun compare(tles: List<Tle>, observed: List<ObservedSat>, atMillis: Long,
                 latDeg: Double, lonDeg: Double): CheckResult {
         val porId = tles.mapNotNull { t -> t.svid?.let { (t.constellation to it) to t } }.toMap()
-        var peor = -1.0
-        var n = 0
+        val filas = mutableListOf<SatComparison>()
         for (o in observed) {
             if (o.elevationDeg <= 0.0) continue
             val t = porId[o.constellation to o.svid] ?: continue
             val p = SkyModel.skyPos(t, atMillis, latDeg, lonDeg)
             // Si el modelo lo situa bajo el horizonte y el receptor lo ve, eso TAMBIEN es
             // error, y del grande: se mide igual.
-            val d = separationDeg(p.azimuthDeg, p.elevationDeg, o.azimuthDeg, o.elevationDeg)
-            if (d > peor) peor = d
-            n++
+            filas += SatComparison(
+                o.constellation, o.svid,
+                p.azimuthDeg, p.elevationDeg, o.azimuthDeg, o.elevationDeg,
+                separationDeg(p.azimuthDeg, p.elevationDeg, o.azimuthDeg, o.elevationDeg))
         }
-        return CheckResult(n, if (n == 0) null else peor)
+        filas.sortByDescending { it.separationDeg }
+        return CheckResult(filas.size, filas.firstOrNull()?.separationDeg, filas)
     }
 }
