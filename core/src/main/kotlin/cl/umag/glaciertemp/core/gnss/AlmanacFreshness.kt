@@ -52,6 +52,27 @@ object AlmanacFreshness {
     fun shouldDownload(downloadedAtMillis: Long?, nowMillis: Long): Boolean =
         of(downloadedAtMillis, nowMillis) != Freshness.FRESH
 
+    /**
+     * A cuantos dias del almanaque cae el dia que se quiere calcular, si es demasiado.
+     *
+     * POR QUE SE MIDE CONTRA LA EPOCA DE LOS ELEMENTOS Y NO CONTRA LA DESCARGA. Son cosas
+     * distintas: un TLE bajado hoy puede tener su epoca de ayer o de anteayer, y lo que
+     * gobierna el error de propagacion es la epoca. La diferencia es de un dia o dos, poca
+     * cosa, pero medir contra lo que de verdad manda evita tener que explicar despues por
+     * que el aviso sale un dia antes o despues de lo que uno esperaba.
+     *
+     * VALE EN LOS DOS SENTIDOS. Se puede pedir un dia futuro --planificar la semana que
+     * viene-- y tambien uno pasado, para reconstruir que cielo habia cuando se midio algo.
+     * La propagacion se degrada igual hacia atras que hacia adelante.
+     *
+     * @return los dias de separacion si pasan del limite, o null si esta dentro.
+     */
+    fun daysOutsideValidity(epochRefMillis: Long?, forDayMillis: Long): Long? {
+        if (epochRefMillis == null) return null
+        val dias = Math.abs(forDayMillis - epochRefMillis) / DIA
+        return if (dias > STALE_DAYS) dias else null
+    }
+
     /** La antiguedad en palabras, para la pantalla. */
     fun describeAge(downloadedAtMillis: Long?, nowMillis: Long): String {
         if (downloadedAtMillis == null) return "never downloaded"

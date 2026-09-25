@@ -67,6 +67,18 @@ data class AlmanacUiState(
      * atmosfera y son las que mas error meten.
      */
     val maskDeg: Double = 10.0,
+    /** Medianoche local del dia que se esta calculando. Cero mientras no se sepa. */
+    val dayStartMillis: Long = 0L,
+    /** Si ese dia es hoy. De ello depende que el contraste contra el cielo tenga sentido. */
+    val isToday: Boolean = true,
+    /**
+     * La epoca de referencia de los elementos orbitales: la mediana de las de los TLE.
+     *
+     * Es contra esto y no contra la fecha de descarga como se mide si un dia pedido cae
+     * fuera del alcance util del almanaque, porque es la epoca la que gobierna el error de
+     * propagacion.
+     */
+    val epochRefMillis: Long? = null,
 )
 
 /**
@@ -193,6 +205,8 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val lat = s.latDeg; val lon = s.lonDeg
         if (lat == null || lon == null || s.tles.isEmpty() || observados.isEmpty()) return
+        // Solo tiene sentido contra el cielo de AHORA. Ver setDay().
+        if (!s.isToday) return
         val r = ModelCheck.compare(s.tles, observados, System.currentTimeMillis(), lat, lon)
 
         // Lo que se pilla, se recuerda. Un satelite mal identificado no deja de estarlo al
@@ -222,27 +236,58 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
         watchSky()
     }
 
-    /** Recalcula la prevision del dia en curso. */
+    /** Medianoche local de un instante cualquiera. */
+    private fun medianoche(ms: Long): Long =
+        java.util.Calendar.getInstance().apply {
+            timeInMillis = ms
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+    /**
+     * Cambia el dia del que se calcula la prevision.
+     *
+     * PARA UN DIA QUE NO ES HOY SE APAGA EL CONTRASTE contra el cielo. El contraste mide el
+     * modelo contra lo que el receptor ve AHORA; comparar la prediccion de pasado manana con
+     * los satelites de este momento no mide nada, y un numero que no significa nada en una
+     * casilla que en otras circunstancias si significa algo es peor que no ponerlo.
+     */
+    fun setDay(ms: Long) {
+        val d = medianoche(ms)
+        _state.value = _state.value.copy(
+            dayStartMillis = d,
+            isToday = d == medianoche(System.currentTimeMillis()),
+            // Se tira la comprobacion anterior en vez de dejarla en pantalla: era del dia de
+            // hoy y quedaria bajo un grafico que ya habla de otro dia.
+            check = if (d == medianoche(System.currentTimeMillis())) _state.value.check else null)
+        recalcular()
+    }
+
+    fun setToday() = setDay(System.currentTimeMillis())
+    fun setTomorrow() = setDay(System.currentTimeMillis() + 86_400_000L)
+
+    /** Recalcula la prevision del dia elegido. */
     fun recalcular() {
         val s = _state.value
         val lat = s.latDeg; val lon = s.lonDeg
         if (lat == null || lon == null || s.tles.isEmpty()) return
         _state.value = s.copy(computing = true)
         viewModelScope.launch {
-            // El dia EN CURSO en hora local, de medianoche a medianoche: la pregunta es "a
-            // que hora de hoy salgo a medir", no "que pasa en las proximas 24 horas".
-            val cal = java.util.Calendar.getInstance().apply {
-                set(java.util.Calendar.HOUR_OF_DAY, 0)
-                set(java.util.Calendar.MINUTE, 0)
-                set(java.util.Calendar.SECOND, 0)
-                set(java.util.Calendar.MILLISECOND, 0)
-            }
+            // De medianoche a medianoche EN HORA LOCAL: la pregunta es "a que hora de ese
+            // dia salgo a medir", no "que pasa en las proximas 24 horas".
+            val inicio = s.dayStartMillis.takeIf { it > 0L }
+                ?: medianoche(System.currentTimeMillis())
             val f = withContext(Dispatchers.Default) {
                 VisibilityForecast.compute(
                     VisibilityForecast.withoutMismatched(s.tles, s.excluded),
-                    lat, lon, cal.timeInMillis, maskDeg = s.maskDeg, enabled = s.enabled)
+                    lat, lon, inicio, maskDeg = s.maskDeg, enabled = s.enabled)
             }
-            _state.value = _state.value.copy(forecast = f, computing = false)
+            _state.value = _state.value.copy(
+                forecast = f, computing = false,
+                dayStartMillis = inicio,
+                isToday = inicio == medianoche(System.currentTimeMillis()))
         }
     }
 
@@ -304,6 +349,13 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
             showTotal = _state.value.showTotal,
             excluded = _state.value.excluded,
             maskDeg = _state.value.maskDeg,
+            dayStartMillis = _state.value.dayStartMillis,
+            isToday = _state.value.isToday,
+            // La MEDIANA y no la media: un TLE con la epoca rara --uno recien lanzado, o uno
+            // que el catalogo no ha refrescado-- no debe mover la referencia de los otros
+            // ciento cuarenta.
+            epochRefMillis = tles.map { it.epochMillis }.sorted()
+                .let { if (it.isEmpty()) null else it[it.size / 2] },
         )
         recalcular()
     }

@@ -81,7 +81,7 @@ fun PlannerScreen(vm: AlmanacViewModel) {
         // edad del almanaque, que es un dato de mantenimiento: interesa una vez al mes y no
         // cuando uno esta decidiendo a que hora salir. La grafica arriba, los mandos debajo,
         // y el estado del almanaque al final, que es donde se mira cuando se va a buscar.
-        s.forecast?.let { Grafica(it, s.enabled, s.showTotal, s.maskDeg) } ?: Text(
+        s.forecast?.let { Grafica(it, s.enabled, s.showTotal, s.maskDeg, s.isToday) } ?: Text(
             if (s.tles.isEmpty()) "No orbit data yet."
             else "Waiting for a position to compute from.",
             style = MaterialTheme.typography.bodyMedium,
@@ -273,9 +273,11 @@ private fun TarjetaAlmanaque(vm: AlmanacViewModel, s: AlmanacUiState, ahora: Lon
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TarjetaPosicion(vm: AlmanacViewModel, s: AlmanacUiState) {
     var editando by rememberSaveable { mutableStateOf(false) }
+    var calendario by rememberSaveable { mutableStateOf(false) }
     var lat by rememberSaveable { mutableStateOf("") }
     var lon by rememberSaveable { mutableStateOf("") }
 
@@ -333,9 +335,77 @@ private fun TarjetaPosicion(vm: AlmanacViewModel, s: AlmanacUiState) {
                     TextButton(onClick = { editando = false }) { Text("Cancel") }
                 }
             }
+
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+
+            // ---------------------------------- el dia ----------------------------------
+            Text("Day", style = MaterialTheme.typography.labelMedium)
+            Text(if (s.dayStartMillis > 0L) fechaLarga(s.dayStartMillis) else "today",
+                 style = MaterialTheme.typography.bodyLarge,
+                 modifier = Modifier.testTag("planner-day"))
+
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!s.isToday) {
+                    TextButton(onClick = { vm.setToday() },
+                               modifier = Modifier.testTag("planner-today")) { Text("Today") }
+                }
+                TextButton(onClick = { vm.setTomorrow() },
+                           modifier = Modifier.testTag("planner-tomorrow")) { Text("Tomorrow") }
+                TextButton(onClick = { calendario = true },
+                           modifier = Modifier.testTag("planner-pick-date")) { Text("Pick a date…") }
+            }
+
+            // Para un dia que no es hoy, el contraste contra el cielo no mide nada: se dice
+            // por que esta apagado en vez de dejar la casilla en blanco, que se leeria como
+            // "no hay fix" y mandaria a buscar cielo abierto para nada.
+            if (!s.isToday) {
+                Text("Planning another day: the model check is off, because it compares " +
+                     "against the satellites overhead right now.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                     modifier = Modifier.testTag("planner-check-off"))
+            }
+
+            // Y si el dia cae lejos de la epoca de los elementos, se avisa con el numero.
+            AlmanacFreshness.daysOutsideValidity(s.epochRefMillis, s.dayStartMillis)?.let { d ->
+                Text("That day is $d days from the orbit data. Beyond about " +
+                     "${AlmanacFreshness.STALE_DAYS} days the prediction drifts by more than " +
+                     "the couple of degrees this tool is good for — update the orbit data " +
+                     "closer to that date.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.error,
+                     modifier = Modifier.testTag("planner-out-of-range"))
+            }
         }
     }
+
+    if (calendario) {
+        val estado = rememberDatePickerState(
+            initialSelectedDateMillis = s.dayStartMillis.takeIf { it > 0L }
+                ?: System.currentTimeMillis())
+        DatePickerDialog(
+            onDismissRequest = { calendario = false },
+            modifier = Modifier.testTag("planner-date-dialog"),
+            confirmButton = {
+                TextButton(onClick = {
+                    // El selector devuelve medianoche UTC; lo que hace falta es el dia
+                    // LOCAL. Se le suma medio dia antes de recortar para que una zona
+                    // horaria al oeste de Greenwich no retroceda al dia anterior -- que en
+                    // Patagonia son tres horas y el fallo saldria siempre.
+                    estado.selectedDateMillis?.let { vm.setDay(it + 12 * 3_600_000L) }
+                    calendario = false
+                }, modifier = Modifier.testTag("planner-date-ok")) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { calendario = false }) { Text("Cancel") } },
+        ) { DatePicker(state = estado) }
+    }
 }
+
+private fun fechaLarga(ms: Long): String =
+    java.text.SimpleDateFormat("EEEE d MMMM yyyy", java.util.Locale.US)
+        .format(java.util.Date(ms))
 
 @Composable
 private fun ConstellationDialog(s: AlmanacUiState, onToggle: (Constellation, Boolean) -> Unit,
@@ -404,7 +474,7 @@ private fun ConstellationDialog(s: AlmanacUiState, onToggle: (Constellation, Boo
  */
 @Composable
 private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
-                    maskDeg: Double) {
+                    maskDeg: Double, esHoy: Boolean) {
     // El total se dibuja SOLO si se pide, y por eso viene apagado de fabrica: con cuatro
     // constelaciones suma unos cuarenta satelites frente a los diez de cada una, asi que
     // estira el eje y aplasta contra el suelo justo las lineas que uno queria comparar.
@@ -417,7 +487,10 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
     var cursor by remember(f) { mutableStateOf<Int?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Satellites above ${maskDeg.toInt()}° today",
+        Text("Satellites above ${maskDeg.toInt()}° " +
+             if (esHoy) "today"
+             else "on ${java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.US)
+                        .format(java.util.Date(f.startMillis))}",
              style = MaterialTheme.typography.titleSmall)
 
         Canvas(
@@ -475,8 +548,10 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
 
             // AHORA: una linea vertical. Sin ella hay que contar cuadros para situarse, que
             // es justo lo que uno no quiere hacer con guantes.
+            // La marca de "ahora" solo si el grafico habla de hoy: en otro dia caeria
+            // siempre en un extremo y se leeria como un dato.
             val iAhora = ((ahora - f.startMillis) / f.stepMillis).toInt()
-            if (iAhora in 0 until f.steps) {
+            if (esHoy && iAhora in 0 until f.steps) {
                 drawLine(Color(0xFF888888), Offset(x(iAhora), MARGEN_ARRIBA), Offset(x(iAhora), abajo),
                          2f, pathEffect = androidx.compose.ui.graphics.PathEffect
                              .dashPathEffect(floatArrayOf(6f, 6f)))
@@ -531,7 +606,8 @@ private fun Grafica(f: Forecast, enabled: Set<Constellation>, conTotal: Boolean,
             val hhmm = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
                 .format(java.util.Date(t))
             val total = f.series.first { it.constellation == null }.counts[i]
-            Text("Best window today: around $hhmm, with $total satellites.",
+            Text("Best window${if (esHoy) " today" else " that day"}: around $hhmm, " +
+                 "with $total satellites.",
                  style = MaterialTheme.typography.bodyMedium,
                  modifier = Modifier.testTag("planner-best"))
         }

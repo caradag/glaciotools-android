@@ -48,3 +48,27 @@ class AlmanacFreshnessTest {
         assertEquals("updated 3 months ago", AlmanacFreshness.describeAge(ahora - 95 * dia, ahora))
     }
 }
+
+class ValidityHorizonTest {
+    private val dia = 86_400_000L
+    private val epoca = 1_790_000_000_000L
+
+    @Test fun `sin almanaque no se avisa de nada`() {
+        assertEquals(null, AlmanacFreshness.daysOutsideValidity(null, epoca + 1000 * dia))
+    }
+
+    @Test fun `dentro del limite no avisa`() {
+        assertEquals(null, AlmanacFreshness.daysOutsideValidity(epoca, epoca))
+        assertEquals(null, AlmanacFreshness.daysOutsideValidity(epoca, epoca + 59 * dia))
+    }
+
+    @Test fun `fuera del limite devuelve los dias`() {
+        assertEquals(61L, AlmanacFreshness.daysOutsideValidity(epoca, epoca + 61 * dia))
+    }
+
+    /** Hacia atras se degrada igual: reconstruir un cielo viejo tiene el mismo problema. */
+    @Test fun `tambien avisa hacia el pasado`() {
+        assertEquals(61L, AlmanacFreshness.daysOutsideValidity(epoca, epoca - 61 * dia))
+        assertEquals(null, AlmanacFreshness.daysOutsideValidity(epoca, epoca - 59 * dia))
+    }
+}
