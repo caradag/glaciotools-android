@@ -24,11 +24,18 @@ data class SatComparison(
 
 /** El resultado de contrastar el modelo con el cielo. */
 data class CheckResult(
+    /** Cuantos se usaron para el numero de arriba. */
     val matched: Int,
+    /** El peor desacuerdo entre los usables. Es la medida de cuanto ha envejecido el almanaque. */
     val maxErrorDeg: Double?,
-    /** Uno por satelite emparejado, el peor primero. Es lo que permite ver si el desacuerdo
-     *  es de TODOS --marco de coordenadas o reloj-- o de uno solo --identidad--. */
+    /** Uno por satelite emparejado, el peor primero. */
     val details: List<SatComparison> = emptyList(),
+    /**
+     * Los que NO se usaron porque su identidad no cuadra.
+     *
+     * No son error del modelo: son satelites distintos con el mismo numero.
+     */
+    val mismatched: List<SatComparison> = emptyList(),
 )
 
 /**
@@ -46,6 +53,9 @@ data class CheckResult(
  * comprobacion que no puede fallar no comprueba nada.
  */
 object ModelCheck {
+
+    /** Por encima de esto no es un almanaque viejo, es otro satelite. Ver [compare]. */
+    const val IDENTITY_MISMATCH_DEG = 30.0
 
     /**
      * Separacion angular real entre dos direcciones del cielo.
@@ -84,6 +94,29 @@ object ModelCheck {
                 separationDeg(p.azimuthDeg, p.elevationDeg, o.azimuthDeg, o.elevationDeg))
         }
         filas.sortByDescending { it.separationDeg }
-        return CheckResult(filas.size, filas.firstOrNull()?.separationDeg, filas)
+
+        // SEPARAR "EL ALMANAQUE HA ENVEJECIDO" DE "ESTE NO ES ESE SATELITE".
+        //
+        // Son dos averias distintas y una tapaba a la otra: como se reporta el PEOR
+        // desacuerdo, un solo satelite mal identificado daba 143 grados mientras los otros
+        // once coincidian dentro de un grado, y el numero dejaba de significar nada.
+        //
+        // Se distinguen por magnitud, y el limite no es arbitrario. El envejecimiento de los
+        // elementos orbitales es una deriva a lo largo de la orbita de unos pocos km/dia;
+        // llegar a 30 grados de cielo son unos 10 000 km, es decir MILES de dias. Ningun
+        // almanaque que alguien pueda tener guardado produce eso. Por encima de 30 grados no
+        // queda mas explicacion que estar mirando otro satelite.
+        //
+        // Ocurre de verdad: BeiDou-3 REUTILIZA los numeros de los BeiDou-2 retirados, y el
+        // nombre del TLE conserva la asignacion antigua. Medido en Chile: C13 --que el
+        // catalogo da como BEIDOU-2 IGSO-6, sobre 115 E y por tanto bajo el horizonte-- y
+        // C14 --BEIDOU-2 M6-- discrepaban 131 y 58 grados, mientras que los BeiDou-3 (C21,
+        // C26, C27, C28) y todos los GPS caian dentro de 1.2 grados.
+        val (malos, buenos) = filas.partition { it.separationDeg > IDENTITY_MISMATCH_DEG }
+        return CheckResult(
+            matched = buenos.size,
+            maxErrorDeg = buenos.firstOrNull()?.separationDeg,
+            details = filas,
+            mismatched = malos)
     }
 }

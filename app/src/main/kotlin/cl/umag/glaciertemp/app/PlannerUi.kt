@@ -130,8 +130,11 @@ private fun TarjetaAlmanaque(vm: AlmanacViewModel, s: AlmanacUiState, ahora: Lon
             val chk = s.check
             Text(
                 when {
-                    chk == null || chk.matched == 0 ->
+                    chk == null || (chk.matched == 0 && chk.mismatched.isEmpty()) ->
                         "Model check: needs a GNSS fix to compare against."
+                    chk.matched == 0 ->
+                        "Model check: nothing comparable — every satellite in view has a " +
+                        "catalogue mismatch."
                     else ->
                         "Model check: worst disagreement %.2f° over %d satellite%s in view."
                             .format(chk.maxErrorDeg, chk.matched, if (chk.matched == 1) "" else "s")
@@ -150,6 +153,22 @@ private fun TarjetaAlmanaque(vm: AlmanacViewModel, s: AlmanacUiState, ahora: Lon
                      "identity, so those are the ones counted.",
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // LOS MAL IDENTIFICADOS, EN SU PROPIA LINEA. No son error del modelo sino
+                // satelites distintos con el mismo numero, asi que meterlos en la cifra de
+                // arriba la volvia inservible: once coincidiendo dentro de un grado quedaban
+                // tapados por uno que discrepaba 131.
+                if (chk.mismatched.isNotEmpty()) {
+                    Text("%d ignored (%s): the catalogue's number no longer matches what is "
+                             .format(chk.mismatched.size,
+                                     chk.mismatched.joinToString(", ") {
+                                         "${letra(it.constellation)}${it.svid}" }) +
+                         "broadcasting. BeiDou-3 reuses the numbers of retired BeiDou-2 " +
+                         "satellites, and the catalogue keeps the old name.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                         modifier = Modifier.testTag("planner-mismatched"))
+                }
 
                 // EL DETALLE, SATELITE A SATELITE. Un solo numero dice que algo va mal pero
                 // no que: si TODOS discrepan mucho, el problema es comun --marco de

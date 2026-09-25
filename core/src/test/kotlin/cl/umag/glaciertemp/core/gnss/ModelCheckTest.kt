@@ -93,3 +93,56 @@ GSAT0101 (GALILEO-PFM)
         assertNull(r.maxErrorDeg)
     }
 }
+
+/**
+ * Con los numeros REALES medidos en un telefono en Chile el 2026-09-24.
+ *
+ * Es la prueba que faltaba: el defecto no se podia reproducir en el emulador --no entrega
+ * satelites en GnssStatus-- y solo aparecio contra el cielo de verdad. Estos son los datos
+ * tal cual salieron en pantalla.
+ */
+class ModelCheckRealSkyTest {
+
+    /** (constelacion, svid, model az, model el, seen az, seen el) tal como se vieron. */
+    private val medido = listOf(
+        Triple("C", 13, listOf(19.4, -78.2, 286.0, 42.0)),
+        Triple("C", 14, listOf(244.6, 71.4, 109.0, 46.0)),
+        Triple("G", 11, listOf(222.4, 16.1, 222.0, 15.0)),
+        Triple("G", 6, listOf(240.4, 47.0, 240.0, 46.0)),
+        Triple("C", 27, listOf(212.3, 8.9, 212.0, 8.0)),
+        Triple("G", 1, listOf(23.8, 10.4, 23.0, 10.0)),
+        Triple("C", 28, listOf(248.6, 35.3, 248.0, 35.0)),
+        Triple("C", 26, listOf(68.4, 25.5, 68.0, 25.0)),
+        Triple("G", 3, listOf(83.4, 49.4, 83.0, 49.0)),
+        Triple("G", 9, listOf(295.0, 59.4, 295.0, 59.0)),
+        Triple("G", 31, listOf(135.4, 22.2, 135.0, 22.0)),
+        Triple("G", 4, listOf(128.0, 81.8, 127.0, 82.0)),
+        Triple("C", 21, listOf(105.2, 22.0, 105.0, 22.0)),
+    )
+
+    private fun filas() = medido.map { (letra, svid, v) ->
+        val c = if (letra == "G") Constellation.GPS else Constellation.BEIDOU
+        SatComparison(c, svid, v[0], v[1], v[2], v[3],
+                      ModelCheck.separationDeg(v[0], v[1], v[2], v[3]))
+    }
+
+    @Test fun `los dos BeiDou-2 se separan, y el resto coincide dentro de grado y medio`() {
+        val (malos, buenos) = filas().partition {
+            it.separationDeg > ModelCheck.IDENTITY_MISMATCH_DEG
+        }
+        assertEquals(setOf(13, 14), malos.map { it.svid }.toSet(),
+                     "solo C13 y C14 deberian quedar fuera")
+        assertEquals(11, buenos.size)
+        assertTrue(buenos.maxOf { it.separationDeg } < 1.5,
+                   "los buenos llegan a ${buenos.maxOf { it.separationDeg }} grados")
+    }
+
+    /**
+     * Y esto es lo que hacia inutil el numero: sin separar las dos averias, once satelites
+     * coincidiendo dentro de un grado quedaban tapados por uno mal identificado.
+     */
+    @Test fun `sin separar, el peor tapaba a los once buenos`() {
+        val peorDeTodos = filas().maxOf { it.separationDeg }
+        assertTrue(peorDeTodos > 130.0, "el peor bruto era $peorDeTodos")
+    }
+}
