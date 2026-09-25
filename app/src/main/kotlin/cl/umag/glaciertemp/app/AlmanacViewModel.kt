@@ -50,6 +50,14 @@ data class AlmanacUiState(
     val check: CheckResult? = null,
     /** Dibujar tambien la suma. Apagado de fabrica: aplasta las lineas de cada constelacion. */
     val showTotal: Boolean = false,
+    /**
+     * Satelites descartados del recuento por identidad que no cuadra.
+     *
+     * Se APRENDEN: cada vez que el contraste contra el cielo pilla uno, se recuerda. De modo
+     * que la grafica mejora sola segun se usa la herramienta, sin que nadie tenga que
+     * mantener una lista de satelites retirados dentro de la app.
+     */
+    val excluded: Set<String> = emptySet(),
 )
 
 /**
@@ -72,8 +80,10 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<AlmanacUiState> = _state
 
     init {
-        _state.value = _state.value.copy(enabled = leerHabilitadas(),
-                                         showTotal = prefs.getBoolean("showTotal", false))
+        _state.value = _state.value.copy(
+            enabled = leerHabilitadas(),
+            showTotal = prefs.getBoolean("showTotal", false),
+            excluded = prefs.getStringSet("excluded", null)?.toSet() ?: emptySet())
         cargarYPonerAlDia()
     }
 
@@ -167,8 +177,20 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val lat = s.latDeg; val lon = s.lonDeg
         if (lat == null || lon == null || s.tles.isEmpty() || observados.isEmpty()) return
-        _state.value = s.copy(
-            check = ModelCheck.compare(s.tles, observados, System.currentTimeMillis(), lat, lon))
+        val r = ModelCheck.compare(s.tles, observados, System.currentTimeMillis(), lat, lon)
+
+        // Lo que se pilla, se recuerda. Un satelite mal identificado no deja de estarlo al
+        // salir de la vista, y la proxima vez puede que no este en el cielo para volver a
+        // pillarlo -- pero seguiria inflando el recuento del dia entero.
+        val nuevos = r.mismatched.map { VisibilityForecast.key(it.constellation, it.svid) }
+        val union = s.excluded + nuevos
+        if (union != s.excluded) {
+            prefs.edit().putStringSet("excluded", union).apply()
+            _state.value = s.copy(check = r, excluded = union)
+            recalcular()          // la grafica deja de contarlos AHORA, no al reabrir
+        } else {
+            _state.value = s.copy(check = r)
+        }
     }
 
     /** La coordenada escrita a mano: se planifica para OTRO sitio. */
@@ -200,8 +222,9 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
                 set(java.util.Calendar.MILLISECOND, 0)
             }
             val f = withContext(Dispatchers.Default) {
-                VisibilityForecast.compute(s.tles, lat, lon, cal.timeInMillis,
-                                           enabled = s.enabled)
+                VisibilityForecast.compute(
+                    VisibilityForecast.withoutMismatched(s.tles, s.excluded),
+                    lat, lon, cal.timeInMillis, enabled = s.enabled)
             }
             _state.value = _state.value.copy(forecast = f, computing = false)
         }
@@ -263,7 +286,22 @@ class AlmanacViewModel(app: Application) : AndroidViewModel(app) {
             forecast = _state.value.forecast,
             check = _state.value.check,
             showTotal = _state.value.showTotal,
+            excluded = _state.value.excluded,
         )
+        recalcular()
+    }
+
+    /**
+     * Olvida los descartados y vuelve a contarlos todos.
+     *
+     * Tiene que existir: la exclusion se aprende de una sola observacion, y una observacion
+     * con la posicion equivocada --por ejemplo tras teclear a mano una coordenada de otro
+     * sitio y olvidarse-- descartaria satelites buenos. Sin forma de deshacerlo, ese error
+     * quedaria pegado a la app para siempre.
+     */
+    fun clearExcluded() {
+        prefs.edit().remove("excluded").apply()
+        _state.value = _state.value.copy(excluded = emptySet())
         recalcular()
     }
 

@@ -85,6 +85,19 @@ fun PlannerScreen(vm: AlmanacViewModel) {
             if (s.computing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
         }
 
+        if (s.excluded.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${s.excluded.size} satellite${if (s.excluded.size == 1) "" else "s"} " +
+                     "left out of the count: seen broadcasting from somewhere the catalogue " +
+                     "does not place them.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                     modifier = Modifier.weight(1f).testTag("planner-excluded"))
+                TextButton(onClick = { vm.clearExcluded() },
+                           modifier = Modifier.testTag("planner-clear-excluded")) { Text("Reset") }
+            }
+        }
+
         s.forecast?.let { Grafica(it, s.enabled, s.showTotal) } ?: Text(
             if (s.tles.isEmpty()) "No orbit data yet."
             else "Waiting for a position to compute from.",

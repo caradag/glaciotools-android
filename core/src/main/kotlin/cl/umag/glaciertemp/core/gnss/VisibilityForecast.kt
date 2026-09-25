@@ -30,6 +30,29 @@ data class Forecast(
  */
 object VisibilityForecast {
 
+    /**
+     * Quita del catalogo los satelites cuya identidad no cuadra con lo que emite el cielo.
+     *
+     * POR QUE AFECTA AL RECUENTO. Un satelite que el catalogo nombra con un numero que hoy
+     * emite otro es, casi siempre, uno retirado: sigue en orbita y sigue en el fichero, pero
+     * ningun receptor lo va a rastrear. Contarlo infla la grafica justo donde uno se apoya
+     * para decidir a que hora medir. Medido en Chile: C14, un BeiDou-2 MEO retirado, se
+     * contaba como visible durante medio dia.
+     *
+     * LO QUE ESTA SUPOSICION PUEDE FALLAR. La evidencia es "el receptor vio ese numero en
+     * otro sitio del cielo", y eso demuestra que el catalogo se equivoca de numero, no que
+     * la nave este muerta: podria seguir emitiendo con OTRO numero, y entonces quitarla hace
+     * que falte una. Se acepta porque contar de mas es el error que enganna --promete
+     * satelites que no van a estar-- y contar de menos solo hace elegir una ventana algo
+     * mejor de lo previsto.
+     */
+    fun withoutMismatched(tles: List<Tle>, excluded: Set<String>): List<Tle> =
+        if (excluded.isEmpty()) tles
+        else tles.filterNot { t -> t.svid?.let { key(t.constellation, it) in excluded } ?: false }
+
+    /** La clave con la que se recuerda un satelite descartado. */
+    fun key(c: Constellation, svid: Int) = "${c.name}:$svid"
+
     fun compute(
         tles: List<Tle>,
         latDeg: Double,

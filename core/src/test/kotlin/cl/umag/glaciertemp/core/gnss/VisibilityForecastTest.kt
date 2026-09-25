@@ -56,3 +56,43 @@ class VisibilityForecastTest {
         assertEquals(total.indexOf(total.max()), f.bestIndex())
     }
 }
+
+class ExcludeMismatchedTest {
+
+    private val gps: List<Tle> by lazy {
+        Tle.parse(javaClass.getResourceAsStream("/gps-ops-20260924.tle")!!
+                      .bufferedReader().readText(), Constellation.GPS)
+    }
+
+    @Test fun `sin descartados no se toca nada`() {
+        assertEquals(gps.size, VisibilityForecast.withoutMismatched(gps, emptySet()).size)
+    }
+
+    @Test fun `se quita el que se nombra, y solo ese`() {
+        val fuera = setOf(VisibilityForecast.key(Constellation.GPS, 22))
+        val r = VisibilityForecast.withoutMismatched(gps, fuera)
+        assertEquals(gps.size - 1, r.size)
+        assertTrue(r.none { it.svid == 22 })
+        assertTrue(r.any { it.svid == 21 })
+    }
+
+    /** La clave lleva la constelacion: el 22 de GPS y el 22 de BeiDou no son el mismo. */
+    @Test fun `la clave distingue constelaciones`() {
+        val fuera = setOf(VisibilityForecast.key(Constellation.BEIDOU, 22))
+        assertEquals(gps.size, VisibilityForecast.withoutMismatched(gps, fuera).size)
+    }
+
+    /** Y quitar uno baja el recuento, que es el objetivo. */
+    @Test fun `quitar un satelite baja la cuenta del dia`() {
+        val t = gps.first().epochMillis
+        val con = VisibilityForecast.compute(gps, -47.79, -73.53, t,
+                                             enabled = setOf(Constellation.GPS))
+        val sin = VisibilityForecast.compute(
+            VisibilityForecast.withoutMismatched(
+                gps, setOf(VisibilityForecast.key(Constellation.GPS, 22))),
+            -47.79, -73.53, t, enabled = setOf(Constellation.GPS))
+        val a = con.series.single().counts.sum()
+        val b = sin.series.single().counts.sum()
+        assertTrue(b < a, "quitando un satelite la suma paso de $a a $b")
+    }
+}
