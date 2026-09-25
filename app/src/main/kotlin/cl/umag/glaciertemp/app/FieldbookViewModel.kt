@@ -39,6 +39,14 @@ data class FieldbookUiState(
     /** La campana abierta, o null si todavia no se ha empezado ninguna. */
     val activeCampaign: Campaign? = null,
     val archivedCampaigns: List<Campaign> = emptyList(),
+    /**
+     * Cuantas entradas tiene cada campana, por id.
+     *
+     * Se calcula para poder DECIRLO antes de borrar. Una lista de campanas sin el numero de
+     * anotaciones al lado invita exactamente al accidente que motivo esto: borrar algo
+     * creyendo que estaba vacio.
+     */
+    val campaignCounts: Map<String, Int> = emptyMap(),
     /** La campana archivada que se esta mirando, o null para la vista normal. */
     val viewingCampaign: Campaign? = null,
     val sky: SkyView? = null,
@@ -113,6 +121,7 @@ class FieldbookViewModel : ViewModel() {
             total = deLaVista.size,
             activeCampaign = activa,
             archivedCampaigns = archivadas,
+            campaignCounts = todas.groupingBy { it.campaignId ?: "" }.eachCount(),
             viewingCampaign = mirando,
             people = people?.list() ?: emptyList(),
             receivers = receivers?.list() ?: emptyList(),
@@ -224,6 +233,32 @@ class FieldbookViewModel : ViewModel() {
             viewingCampaign = null, filter = null,
             note = "Campaign “${name.ifBlank { activa.displayName() }}” archived. " +
                    "Its entries are in Archived campaigns.")
+        refresh()
+    }
+
+    /**
+     * Borra una campana archivada Y sus entradas.
+     *
+     * POR QUE SE LLEVA LAS ENTRADAS. `CampaignStore.delete` por si solo quita el registro y
+     * deja las anotaciones sin campana, con lo que REAPARECEN en la lista principal. Para
+     * quien acaba de pulsar "borrar campana" eso es lo contrario de lo que pidio: creia
+     * estar limpiando y se encuentra cuarenta notas viejas mezcladas con las de hoy.
+     *
+     * Es destructivo y no se puede deshacer, por eso la pantalla pregunta antes y dice
+     * cuantas anotaciones se van a ir. Las fotos y los audios se borran con su entrada,
+     * salvo los que otra entrada siga usando -- de eso ya se encarga el almacen.
+     */
+    fun deleteCampaign(id: String) {
+        val cs = campaigns ?: return
+        val st = store ?: return
+        val nombre = cs.byId(id)?.displayName() ?: "campaign"
+        val suyas = st.list().filter { it.campaignId == id }
+        suyas.forEach { st.delete(it.id) }
+        cs.delete(id)
+        _state.value = _state.value.copy(
+            viewingCampaign = _state.value.viewingCampaign?.takeIf { it.id != id },
+            note = "Campaign “$nombre” deleted, with ${suyas.size} " +
+                   (if (suyas.size == 1) "entry" else "entries") + ".")
         refresh()
     }
 

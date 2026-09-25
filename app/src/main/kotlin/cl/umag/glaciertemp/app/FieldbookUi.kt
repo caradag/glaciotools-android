@@ -13,7 +13,12 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -114,6 +119,7 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
     // para cualquier archivada, y confundir cual se esta tocando es justo el fallo que se
     // esta arreglando aqui.
     var renombrando by remember { mutableStateOf<Campaign?>(null) }
+    var borrando by remember { mutableStateOf<Campaign?>(null) }
     val mirandoArchivada = s.viewingCampaign != null
 
     Column(Modifier.fillMaxSize().padding(16.dp),
@@ -194,8 +200,17 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
             s,
             onOpen = { verArchivadas = false; vm.viewCampaign(it) },
             onRename = { verArchivadas = false; renombrando = it },
+            onDelete = { verArchivadas = false; borrando = it },
             onReopen = { verArchivadas = false; vm.unarchiveCampaign(it.id) },
             onDismiss = { verArchivadas = false })
+    }
+
+    borrando?.let { c ->
+        DeleteCampaignDialog(c, s.campaignCounts[c.id] ?: 0,
+                             onDismiss = { borrando = null }) {
+            borrando = null
+            vm.deleteCampaign(c.id)
+        }
     }
 
     renombrando?.let { c ->
@@ -304,6 +319,47 @@ private fun shortLabel(t: EntryType): String = when (t) {
 }
 
 /**
+ * Confirmar antes de borrar una campana archivada.
+ *
+ * DICE EL NUMERO, y ese es el punto entero del cuadro. Lo que motivo esta pantalla fue
+ * borrar anotaciones creyendo que no pertenecian a nada; un aviso generico --"se borrara la
+ * campana, seguro?"-- no habria evitado nada, porque la pregunta que hacia falta responder
+ * no era "seguro" sino "cuanto hay ahi dentro".
+ *
+ * No se puede deshacer y se dice con esas palabras. En terreno no hay copia de seguridad.
+ */
+@Composable
+private fun DeleteCampaignDialog(
+    c: Campaign, entradas: Int, onDismiss: () -> Unit, onDelete: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("fb-delete-campaign-dialog"),
+        title = { Text("Delete this campaign?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(buildAnnotatedString {
+                    append("“${c.displayName()}” and its ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append("$entradas ${if (entradas == 1) "entry" else "entries"}")
+                    }
+                    append(" go with it, including their photos and audio.")
+                }, modifier = Modifier.testTag("fb-delete-campaign-count"))
+                Text("This cannot be undone. Export the notebook first if you want a copy.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.error)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDelete,
+                       colors = ButtonDefaults.textButtonColors(
+                           contentColor = MaterialTheme.colorScheme.error),
+                       modifier = Modifier.testTag("fb-delete-campaign-confirm")) { Text("Delete") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+/**
  * Ponerle nombre a una campana sin cerrarla, o cambiarselo a una ya archivada.
  *
  * Las dos cosas faltaban, y la segunda tenia una consecuencia peor que la molestia: la unica
@@ -397,6 +453,7 @@ private fun ArchivedCampaignsDialog(
     s: FieldbookUiState,
     onOpen: (Campaign) -> Unit,
     onRename: (Campaign) -> Unit,
+    onDelete: (Campaign) -> Unit,
     onReopen: (Campaign) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -408,23 +465,44 @@ private fun ArchivedCampaignsDialog(
             LazyColumn(Modifier.heightIn(max = 360.dp),
                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(s.archivedCampaigns, key = { it.id }) { c ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f).clickable { onOpen(c) }
-                                   .padding(vertical = 8.dp)
-                                   .testTag("fb-archived-${c.id}")) {
-                            Text(c.displayName(), style = MaterialTheme.typography.titleSmall)
-                            c.archivedEpochMillis?.let {
-                                Text("archived ${formatWhen(it)}",
-                                     style = MaterialTheme.typography.bodySmall,
-                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    // El nombre en su propia linea y los botones debajo. Con los tres en la
+                    // misma fila, el nombre quedaba comprimido en una columna de diez
+                    // caracteres y "Prueba borrado" se leia partido en cuatro lineas.
+                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Text(c.displayName(),
+                             style = MaterialTheme.typography.titleSmall,
+                             modifier = Modifier.fillMaxWidth().clickable { onOpen(c) }
+                                 .testTag("fb-archived-${c.id}"))
+                        // EL NUMERO DE ANOTACIONES, en la lista y no solo al borrar: una
+                        // campana que dice "0 entries" avisa de que algo no cuadra ANTES de
+                        // que nadie borre nada por creerla vacia.
+                        val n = s.campaignCounts[c.id] ?: 0
+                        Text("$n ${if (n == 1) "entry" else "entries"}" +
+                             (c.archivedEpochMillis?.let { "  ·  ${formatWhen(it)}" } ?: ""),
+                             style = MaterialTheme.typography.bodySmall,
+                             color = if (n == 0) MaterialTheme.colorScheme.error
+                                     else MaterialTheme.colorScheme.onSurfaceVariant,
+                             modifier = Modifier.testTag("fb-archived-count-${c.id}"))
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { onRename(c) },
+                                       contentPadding = PaddingValues(horizontal = 8.dp),
+                                       modifier = Modifier.testTag("fb-archived-rename-${c.id}")) {
+                                Text("Rename")
+                            }
+                            TextButton(onClick = { onReopen(c) },
+                                       contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                Text("Reopen")
+                            }
+                            TextButton(onClick = { onDelete(c) },
+                                       contentPadding = PaddingValues(horizontal = 8.dp),
+                                       colors = ButtonDefaults.textButtonColors(
+                                           contentColor = MaterialTheme.colorScheme.error),
+                                       modifier = Modifier.testTag("fb-archived-delete-${c.id}")) {
+                                Text("Delete")
                             }
                         }
-                        TextButton(onClick = { onRename(c) },
-                                   modifier = Modifier.testTag("fb-archived-rename-${c.id}")) {
-                            Text("Rename")
-                        }
-                        TextButton(onClick = { onReopen(c) }) { Text("Reopen") }
                     }
+                    HorizontalDivider()
                 }
             }
         },
