@@ -112,6 +112,24 @@ object AlbedoRun {
         }
     }
 
+    /**
+     * Aviso cuando media y mediana no coinciden.
+     *
+     * LAS DOS CIFRAS EXISTEN PARA COMPARARLAS. Que difieran no significa que una este mal:
+     * significa que la luz cambio durante los cinco segundos --una nube, un reflejo, una
+     * sombra que cruzo-- y entonces el albedo no corresponde a una iluminacion sino a la
+     * mezcla de dos. Es el aviso que dice "repite", y solo se puede dar teniendo las dos.
+     */
+    fun unstable(deMedias: Double?, deMedianas: Double?): String? {
+        if (deMedias == null || deMedianas == null) return null
+        val d = abs(deMedias - deMedianas)
+        // Cinco centesimas: por debajo, la diferencia no cambia ninguna lectura del dato.
+        return if (d >= 0.05)
+            "Mean and median disagree by %.2f — the light was not steady during the " .format(d) +
+            "measurement. Take it again."
+        else null
+    }
+
     /** Dos decimales para el albedo; los lux, enteros a partir de 10. */
     fun fmt(lux: Double): String =
         if (abs(lux) >= 10.0) lux.roundToInt().toString() else "%.1f".format(lux)
@@ -137,6 +155,32 @@ object SensorReport {
             append("Roll: ${g(roll)}")
         }
 
+    /**
+     * El resultado de una medida de cinco segundos de inclinacion.
+     *
+     * VAN LAS DOS CIFRAS, media y mediana. Si se parecen, el telefono estuvo quieto y
+     * cualquiera de las dos vale. Si no, algo se movio durante la medida --la mano, la nieve
+     * bajo el tripode-- y eso es justo lo que hay que saber antes de anotar el numero. Una
+     * sola cifra esconde esa diferencia.
+     */
+    fun tiltMeasured(
+        yawMean: Double?, yawMedian: Double?,
+        pitchMean: Double?, pitchMedian: Double?,
+        rollMean: Double?, rollMedian: Double?,
+        muestras: Int, segundos: Int, cuando: String,
+    ): String = buildString {
+        appendLine("GlacioTools — tilt (measured)  $cuando")
+        appendLine("Averaged over $segundos s, $muestras samples")
+        appendLine(par("Yaw (azimuth)", yawMean?.let { Compass.normalize(it) },
+                       yawMedian?.let { Compass.normalize(it) }) +
+                   (yawMedian?.let { "  (${Compass.cardinal(Compass.normalize(it))})" } ?: ""))
+        appendLine(par("Pitch", pitchMean, pitchMedian))
+        append(par("Roll", rollMean, rollMedian))
+    }
+
+    private fun par(rotulo: String, media: Double?, mediana: Double?): String =
+        "$rotulo: mean ${media?.let { g(it) } ?: "—"}, median ${mediana?.let { g(it) } ?: "—"}"
+
     fun compass(heading: Double, uT: Double?, cuando: String): String =
         buildString {
             appendLine("GlacioTools — compass  $cuando")
@@ -150,16 +194,24 @@ object SensorReport {
     fun light(lux: Double, cuando: String): String =
         "GlacioTools — light  $cuando\nIlluminance: ${AlbedoRun.fmt(lux)} lx"
 
-    fun albedo(incidente: Double, reflejada: Double, cuando: String): String =
-        buildString {
-            appendLine("GlacioTools — albedo  $cuando")
-            appendLine("Incident (facing up): ${AlbedoRun.fmt(incidente)} lx")
-            appendLine("Reflected (facing down): ${AlbedoRun.fmt(reflejada)} lx")
-            val a = AlbedoRun.albedo(incidente, reflejada)
-            appendLine("Albedo: " + (a?.let { AlbedoRun.fmtAlbedo(it) } ?: "—"))
-            AlbedoRun.warning(incidente, reflejada)?.let { appendLine("Note: $it") }
-            append("Phone light sensor, visible band, uncalibrated — comparative, not radiometric.")
-        }
+    fun albedo(
+        incidente: Double, incidenteMediana: Double,
+        reflejada: Double, reflejadaMediana: Double,
+        cuando: String,
+    ): String = buildString {
+        appendLine("GlacioTools — albedo  $cuando")
+        appendLine("Incident (facing up): mean ${AlbedoRun.fmt(incidente)} lx, " +
+                   "median ${AlbedoRun.fmt(incidenteMediana)} lx")
+        appendLine("Reflected (facing down): mean ${AlbedoRun.fmt(reflejada)} lx, " +
+                   "median ${AlbedoRun.fmt(reflejadaMediana)} lx")
+        val a = AlbedoRun.albedo(incidente, reflejada)
+        val am = AlbedoRun.albedo(incidenteMediana, reflejadaMediana)
+        appendLine("Albedo (from means): " + (a?.let { AlbedoRun.fmtAlbedo(it) } ?: "—"))
+        appendLine("Albedo (from medians): " + (am?.let { AlbedoRun.fmtAlbedo(it) } ?: "—"))
+        AlbedoRun.warning(incidente, reflejada)?.let { appendLine("Note: $it") }
+        AlbedoRun.unstable(a, am)?.let { appendLine("Note: $it") }
+        append("Phone light sensor, visible band, uncalibrated — comparative, not radiometric.")
+    }
 
     private fun g(deg: Double): String = "%.1f°".format(deg)
 }

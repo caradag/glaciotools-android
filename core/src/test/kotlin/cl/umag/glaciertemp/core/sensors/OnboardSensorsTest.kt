@@ -81,6 +81,50 @@ class AlbedoTest {
     }
 }
 
+class InestabilidadTest {
+
+    @Test fun `si media y mediana coinciden no se avisa de nada`() {
+        assertNull(AlbedoRun.unstable(0.80, 0.81))
+    }
+
+    @Test fun `si se separan se pide repetir la medida`() {
+        // Una nube durante los cinco segundos: la media coge las dos luces, la mediana una.
+        val w = AlbedoRun.unstable(0.80, 0.55)
+        assertTrue(w != null && w.contains("again"), "debe pedir repetir: $w")
+    }
+
+    @Test fun `sin albedo no hay nada que comparar`() {
+        assertNull(AlbedoRun.unstable(null, 0.5))
+        assertNull(AlbedoRun.unstable(0.5, null))
+    }
+}
+
+class TiltMeasuredTest {
+
+    @Test fun `el informe de inclinacion lleva media y mediana de los tres angulos`() {
+        val r = SensorReport.tiltMeasured(10.0, 10.5, -2.0, -2.1, 0.5, 0.4,
+                                          50, 5, "2026-09-26 10:00")
+        assertTrue(r.contains("50 samples"), r)
+        listOf("Yaw", "Pitch", "Roll").forEach {
+            assertTrue(r.contains(it), "falta $it: $r")
+        }
+        assertEquals(3, Regex("median").findAll(r).count(), "una mediana por angulo: $r")
+    }
+
+    @Test fun `un yaw medio negativo se informa como rumbo y no como negativo`() {
+        // La media circular vive en (-180,180]; un rumbo, en [0,360).
+        val r = SensorReport.tiltMeasured(-90.0, -90.0, 0.0, 0.0, 0.0, 0.0,
+                                          10, 5, "x")
+        assertTrue(r.contains("270.0°"), "el yaw debe salir como 270: $r")
+        assertTrue(r.contains("(W)"), "y con su punto cardinal: $r")
+    }
+
+    @Test fun `un angulo sin muestras se informa con raya`() {
+        val r = SensorReport.tiltMeasured(null, null, 1.0, 1.0, 1.0, 1.0, 0, 5, "x")
+        assertTrue(r.contains("mean —"), r)
+    }
+}
+
 class SensorReportTest {
 
     @Test fun `lo copiado dice que es, cuanto y cuando`() {
@@ -93,23 +137,24 @@ class SensorReportTest {
     }
 
     @Test fun `el informe de albedo lleva las dos medidas y el cociente`() {
-        val r = SensorReport.albedo(1000.0, 800.0, "2026-09-26 10:00")
+        val r = SensorReport.albedo(1000.0, 1000.0, 800.0, 800.0, "2026-09-26 10:00")
         assertTrue(r.contains("Incident"), r)
         assertTrue(r.contains("Reflected"), r)
         assertTrue(r.contains("0.80"), "debe llevar el albedo: $r")
+        assertTrue(r.contains("median"), "y las dos cifras: $r")
         // Y la advertencia sobre el instrumento SIEMPRE, no solo cuando algo va mal: quien
         // lea esto pegado en un correo no tiene la pantalla delante para saberlo.
         assertTrue(r.contains("not radiometric"), r)
     }
 
     @Test fun `un albedo imposible se copia con su aviso`() {
-        val r = SensorReport.albedo(500.0, 700.0, "x")
+        val r = SensorReport.albedo(500.0, 500.0, 700.0, 700.0, "x")
         assertTrue(r.contains("Note:"), r)
     }
 
     @Test fun `sin luz el albedo se copia como raya y no como cero`() {
-        val r = SensorReport.albedo(0.0, 0.0, "x")
-        assertTrue(r.contains("Albedo: —"), r)
-        assertFalse(r.contains("Albedo: 0.00"), r)
+        val r = SensorReport.albedo(0.0, 0.0, 0.0, 0.0, "x")
+        assertTrue(r.contains("Albedo (from means): —"), r)
+        assertFalse(r.contains("Albedo (from means): 0.00"), r)
     }
 }

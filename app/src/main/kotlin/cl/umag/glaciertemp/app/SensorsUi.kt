@@ -26,6 +26,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.core.sensors.AlbedoRun
+import cl.umag.glaciertemp.core.sensors.Angles
+import cl.umag.glaciertemp.core.sensors.Scalars
+import cl.umag.glaciertemp.core.sensors.Tilt
 import cl.umag.glaciertemp.core.sensors.Compass
 import cl.umag.glaciertemp.core.sensors.SensorReport
 import kotlinx.coroutines.delay
@@ -187,13 +190,81 @@ private fun anglesDe(v: FloatArray): Triple<Double, Double, Double> {
     return Triple(yaw, pitch, roll)
 }
 
+/**
+ * Cuenta atras, medida y pitidos. La MISMA para inclinacion y para albedo.
+ *
+ * POR QUE EXISTE ESTA FUNCION. Las dos medidas tienen el mismo problema: hay que apuntar el
+ * telefono a donde no se puede mirar la pantalla --al cielo, al suelo, a una pared de hielo
+ * por encima de la cabeza-- y entonces la unica guia posible es el oido. Sacarla aqui evita
+ * que las dos pestanas acaben con cuentas atras que suenan distinto, que seria justo lo que
+ * confunde a quien ya aprendio una de ellas.
+ *
+ * @param muestrear se llama diez veces por segundo durante la medida, y cada llamada anota
+ *        una muestra. Se promedia el tramo entero en vez de leer al final porque los
+ *        sensores dan saltos y la mano tiembla.
+ */
+private suspend fun secuenciaDeMedida(
+    beeper: GpsTimeBeeper,
+    onTick: (segundos: Int, midiendo: Boolean) -> Unit,
+    muestrear: () -> Unit,
+) {
+    for (s in AlbedoRun.PREP_SECONDS downTo 1) {
+        onTick(s, false)
+        AlbedoRun.beep(midiendo = false, ultimo = false).let { beeper.beep(it.hz, it.ms) }
+        delay(1000)
+    }
+    for (s in AlbedoRun.HOLD_SECONDS downTo 1) {
+        onTick(s, true)
+        AlbedoRun.beep(midiendo = true, ultimo = false).let { beeper.beep(it.hz, it.ms) }
+        repeat(10) { delay(100); muestrear() }
+    }
+    AlbedoRun.beep(midiendo = true, ultimo = true).let { beeper.beep(it.hz, it.ms) }
+    onTick(0, false)
+}
+
 // ------------------------------------ inclinometro ------------------------------------
+
+/** Lo que deja una medida de cinco segundos de inclinacion. */
+private data class Inclinacion(
+    val yawM: Double?, val yawMd: Double?,
+    val pitchM: Double?, val pitchMd: Double?,
+    val rollM: Double?, val rollMd: Double?,
+    val muestras: Int,
+)
 
 @Composable
 private fun TiltTab() {
     if (!hay(Sensor.TYPE_ROTATION_VECTOR)) return SinSensor("orientation sensor")
     val v by sensorValues(Sensor.TYPE_ROTATION_VECTOR)
     val a = v?.let { anglesDe(it) }
+    val ahoraRef = rememberUpdatedState(a)
+
+    val beeper = remember { GpsTimeBeeper() }
+    var corriendo by remember { mutableStateOf(false) }
+    var cuenta by remember { mutableIntStateOf(0) }
+    var midiendo by remember { mutableStateOf(false) }
+    var medida by remember { mutableStateOf<Inclinacion?>(null) }
+
+    LaunchedEffect(corriendo) {
+        if (!corriendo) return@LaunchedEffect
+        val yaws = ArrayList<Double>()
+        val pitches = ArrayList<Double>()
+        val rolls = ArrayList<Double>()
+        secuenciaDeMedida(
+            beeper,
+            onTick = { s, m -> cuenta = s; midiendo = m },
+            muestrear = {
+                ahoraRef.value?.let { (y, p, r) -> yaws += y; pitches += p; rolls += r }
+            })
+        medida = Inclinacion(
+            Angles.mean(yaws), Angles.median(yaws),
+            Angles.mean(pitches), Angles.median(pitches),
+            Angles.mean(rolls), Angles.median(rolls),
+            yaws.size)
+        midiendo = false
+        cuenta = 0
+        corriendo = false
+    }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -206,11 +277,74 @@ private fun TiltTab() {
         BotonCopiar({ a?.let { SensorReport.tilt(it.first, it.second, it.third, ahora()) }
                       ?: "" }, "sn-tilt-copy")
 
+        HorizontalDivider()
+
+        if (corriendo) {
+            Medicion(hacia = null, midiendo = midiendo, cuenta = cuenta,
+                     onCancel = { corriendo = false; cuenta = 0; midiendo = false })
+        } else {
+            Button(onClick = { medida = null; corriendo = true },
+                   modifier = Modifier.testTag("sn-tilt-measure")) {
+                Text("Measure for ${AlbedoRun.HOLD_SECONDS} s")
+            }
+            Text("For when the phone has to point where you cannot see the screen — flat on " +
+                 "a slope out of reach, or against an ice wall above your head. " +
+                 "${AlbedoRun.PREP_SECONDS} s to place it, then ${AlbedoRun.HOLD_SECONDS} s " +
+                 "of measurement, both counted out in beeps. A long beep means done.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        medida?.let { ResultadoInclinacion(it) }
+
         Text("Pitch is the tilt along the phone's long axis and roll across it. " +
              "Laid flat on a surface, both read its slope. " +
              "Yaw needs the magnetometer, so it drifts near metal.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun ResultadoInclinacion(m: Inclinacion) {
+    Card(Modifier.fillMaxWidth().testTag("sn-tilt-result")) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Measured over ${AlbedoRun.HOLD_SECONDS} s  ·  ${m.muestras} samples",
+                 style = MaterialTheme.typography.labelMedium,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilaMediaMediana("Yaw", m.yawM?.let { Compass.normalize(it) },
+                             m.yawMd?.let { Compass.normalize(it) }, "sn-tilt-yaw-r")
+            FilaMediaMediana("Pitch", m.pitchM, m.pitchMd, "sn-tilt-pitch-r")
+            FilaMediaMediana("Roll", m.rollM, m.rollMd, "sn-tilt-roll-r")
+            Tilt.warning(m.pitchMd ?: m.pitchM)?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.error,
+                     modifier = Modifier.testTag("sn-tilt-gimbal"))
+            }
+            // Las dos cifras estan para COMPARARLAS: si se separan, algo se movio.
+            Text("Mean and median together: close means the phone held still; far apart " +
+                 "means something moved during the measurement.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BotonCopiar({
+                SensorReport.tiltMeasured(m.yawM, m.yawMd, m.pitchM, m.pitchMd,
+                                          m.rollM, m.rollMd, m.muestras,
+                                          AlbedoRun.HOLD_SECONDS, ahora())
+            }, "sn-tilt-result-copy")
+        }
+    }
+}
+
+@Composable
+private fun FilaMediaMediana(rotulo: String, media: Double?, mediana: Double?, tag: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(rotulo, style = MaterialTheme.typography.bodyMedium,
+             modifier = Modifier.width(64.dp))
+        Text("mean " + (media?.let { "%.1f°".format(it) } ?: "—") +
+             "   median " + (mediana?.let { "%.1f°".format(it) } ?: "—"),
+             style = MaterialTheme.typography.bodyMedium,
+             fontFamily = FontFamily.Monospace,
+             modifier = Modifier.testTag(tag))
     }
 }
 
@@ -332,8 +466,8 @@ private fun LightTab() {
     var fase by remember { mutableStateOf(Albedo.PARADO) }
     var cuenta by remember { mutableIntStateOf(0) }
     var midiendo by remember { mutableStateOf(false) }
-    var incidente by remember { mutableStateOf<Double?>(null) }
-    var reflejada by remember { mutableStateOf<Double?>(null) }
+    var incidente by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var reflejada by remember { mutableStateOf<Pair<Double, Double>?>(null) }
 
     /**
      * Cuenta atras, medida y pitidos de una de las dos mitades.
@@ -346,31 +480,18 @@ private fun LightTab() {
     LaunchedEffect(fase) {
         if (fase != Albedo.ARRIBA && fase != Albedo.ABAJO) return@LaunchedEffect
 
-        midiendo = false
-        for (s in AlbedoRun.PREP_SECONDS downTo 1) {
-            cuenta = s
-            AlbedoRun.beep(midiendo = false, ultimo = false).let { beeper.beep(it.hz, it.ms) }
-            delay(1000)
-        }
+        val muestras = ArrayList<Double>()
+        secuenciaDeMedida(
+            beeper,
+            onTick = { s, m -> cuenta = s; midiendo = m },
+            muestrear = { luxAhora.value?.let { muestras += it } })
 
-        midiendo = true
-        var suma = 0.0
-        var n = 0
-        for (s in AlbedoRun.HOLD_SECONDS downTo 1) {
-            cuenta = s
-            AlbedoRun.beep(midiendo = true, ultimo = false).let { beeper.beep(it.hz, it.ms) }
-            repeat(10) {
-                delay(100)
-                luxAhora.value?.let { suma += it; n++ }
-            }
-        }
-        AlbedoRun.beep(midiendo = true, ultimo = true).let { beeper.beep(it.hz, it.ms) }
-
-        val media = if (n > 0) suma / n else (luxAhora.value ?: 0.0)
+        val media = Scalars.mean(muestras) ?: luxAhora.value ?: 0.0
+        val mediana = Scalars.median(muestras) ?: media
         midiendo = false
         cuenta = 0
-        if (fase == Albedo.ARRIBA) { incidente = media; fase = Albedo.AVISO_ABAJO }
-        else { reflejada = media; fase = Albedo.RESULTADO }
+        if (fase == Albedo.ARRIBA) { incidente = media to mediana; fase = Albedo.AVISO_ABAJO }
+        else { reflejada = media to mediana; fase = Albedo.RESULTADO }
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -395,9 +516,9 @@ private fun LightTab() {
             }
         }
 
-        if (fase == Albedo.RESULTADO && incidente != null && reflejada != null) {
-            Resultado(incidente!!, reflejada!!)
-        }
+        val inc = incidente
+        val ref = reflejada
+        if (fase == Albedo.RESULTADO && inc != null && ref != null) Resultado(inc, ref)
 
         Text("Albedo is the fraction of light the surface sends back. Fresh snow is around " +
              "0.8, old snow 0.5–0.7, bare ice 0.3–0.4, and dirty or debris-covered ice can " +
@@ -433,11 +554,12 @@ private fun LightTab() {
  * y para saber, al recoger el telefono, que no se cancelo a medias.
  */
 @Composable
-private fun Medicion(hacia: String, midiendo: Boolean, cuenta: Int, onCancel: () -> Unit) {
+private fun Medicion(hacia: String?, midiendo: Boolean, cuenta: Int, onCancel: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (midiendo) "Measuring — hold still (facing $hacia)"
-                 else "Get into position (facing $hacia)",
+            val donde = hacia?.let { " (facing $it)" } ?: ""
+            Text(if (midiendo) "Measuring — hold still$donde"
+                 else "Get into position$donde",
                  style = MaterialTheme.typography.titleMedium,
                  modifier = Modifier.testTag("sn-albedo-state"))
             Text("$cuenta", style = MaterialTheme.typography.displayMedium,
@@ -453,8 +575,9 @@ private fun Medicion(hacia: String, midiendo: Boolean, cuenta: Int, onCancel: ()
 }
 
 @Composable
-private fun Resultado(incidente: Double, reflejada: Double) {
-    val a = AlbedoRun.albedo(incidente, reflejada)
+private fun Resultado(incidente: Pair<Double, Double>, reflejada: Pair<Double, Double>) {
+    val a = AlbedoRun.albedo(incidente.first, reflejada.first)
+    val am = AlbedoRun.albedo(incidente.second, reflejada.second)
     Card(Modifier.fillMaxWidth().testTag("sn-albedo-result")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Albedo", style = MaterialTheme.typography.labelMedium,
@@ -463,21 +586,34 @@ private fun Resultado(incidente: Double, reflejada: Double) {
                  style = MaterialTheme.typography.displaySmall,
                  fontFamily = FontFamily.Monospace,
                  modifier = Modifier.testTag("sn-albedo-value"))
-            Text("Incident (up): ${AlbedoRun.fmt(incidente)} lx",
+            Text("from means  ·  from medians " +
+                 (am?.let { AlbedoRun.fmtAlbedo(it) } ?: "—"),
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                 modifier = Modifier.testTag("sn-albedo-median"))
+            Text("Incident (up): mean ${AlbedoRun.fmt(incidente.first)} lx, " +
+                 "median ${AlbedoRun.fmt(incidente.second)} lx",
                  style = MaterialTheme.typography.bodyMedium)
-            Text("Reflected (down): ${AlbedoRun.fmt(reflejada)} lx",
+            Text("Reflected (down): mean ${AlbedoRun.fmt(reflejada.first)} lx, " +
+                 "median ${AlbedoRun.fmt(reflejada.second)} lx",
                  style = MaterialTheme.typography.bodyMedium)
-            AlbedoRun.warning(incidente, reflejada)?.let {
+            AlbedoRun.warning(incidente.first, reflejada.first)?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.error,
                      modifier = Modifier.testTag("sn-albedo-warning"))
+            }
+            AlbedoRun.unstable(a, am)?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.error,
+                     modifier = Modifier.testTag("sn-albedo-unstable"))
             }
             Text("The phone's light sensor measures the visible band and is not calibrated " +
                  "like a pyranometer. Good for comparing surfaces under the same light; " +
                  "not a broadband albedo.",
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
-            BotonCopiar({ SensorReport.albedo(incidente, reflejada, ahora()) },
+            BotonCopiar({ SensorReport.albedo(incidente.first, incidente.second,
+                                              reflejada.first, reflejada.second, ahora()) },
                         "sn-albedo-copy")
         }
     }
