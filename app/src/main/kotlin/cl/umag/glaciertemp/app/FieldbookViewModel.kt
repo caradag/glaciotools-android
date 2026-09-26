@@ -392,6 +392,11 @@ class FieldbookViewModel : ViewModel() {
         }
         s.save(inicial)
         _state.value = _state.value.copy(open = inicial, error = null, filter = null)
+        // LA POSICION SE PIDE SOLA. Donde se anoto es un dato que no se puede reconstruir
+        // despues, y el arreglo tarda decenas de segundos: pedirlo al abrir la entrada
+        // aprovecha justo el rato que se pasa escribiendo. Pidiendolo a mano al final, la
+        // espera es tiempo muerto de pie en el hielo, y por eso se acababa omitiendo.
+        requestPhonePosition(automatica = true)
         // Recarga tambien las listas de nombres: un receptor escrito dentro de otra entrada
         // tiene que estar en el desplegable de esta.
         refresh()
@@ -543,10 +548,12 @@ class FieldbookViewModel : ViewModel() {
      * el arreglo puede no llegar nunca, y una espera de la que no se puede salir obliga a
      * matar la app -- que aqui significa perder lo que se estuviera anotando.
      */
-    fun requestPhonePosition() {
+    fun requestPhonePosition(automatica: Boolean = false) {
         val loc = location
         if (loc == null) {
-            _state.value = _state.value.copy(error = "No location source available")
+            // La automatica no protesta: nadie la pidio, y un aviso sobre cada nota creada
+            // seria ruido en la pantalla donde menos sitio hay.
+            if (!automatica) _state.value = _state.value.copy(error = "No location source available")
             return
         }
         requestLocationPermission?.invoke()
@@ -557,9 +564,13 @@ class FieldbookViewModel : ViewModel() {
                 withContext(Dispatchers.IO) { loc.freshFix(PHONE_FIX_TIMEOUT_MS) }
             }.getOrNull()
             if (fix == null) {
+                // Callado si nadie lo pidio: el campo de posicion ya dice "Not recorded" a la
+                // vista, que es mas claro que un aviso que hay que descartar, y sale sin
+                // falta cada vez que se anota bajo techo.
                 _state.value = _state.value.copy(
                     positionRequest = null,
-                    error = "No position arrived. Try again in the open, or pick a saved point.")
+                    error = if (automatica) _state.value.error
+                            else "No position arrived. Try again in the open, or pick a saved point.")
                 return@launch
             }
             update { it.copy(position = FieldPosition(

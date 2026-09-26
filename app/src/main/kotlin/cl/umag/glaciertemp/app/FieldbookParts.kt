@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -324,7 +325,7 @@ fun PositionField(
                 TextButton(onClick = onUsePhone, modifier = Modifier.testTag("fb-pos-phone")) {
                     Icon(Icons.Outlined.MyLocation, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Phone GPS")
+                    Text("Update position")
                 }
                 TextButton(onClick = { onNeedPoints(); elegir = true },
                            modifier = Modifier.testTag("fb-pos-saved")) {
@@ -478,19 +479,28 @@ fun rememberPhotoAdders(
 
 /** Los dos botones de anadir foto, con el mismo aspecto en las cuatro pantallas. */
 @Composable
-fun PhotoButtons(onTake: () -> Unit, onPick: () -> Unit, tag: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = onTake, modifier = Modifier.testTag("$tag-take")) {
+fun PhotoButtons(onTake: () -> Unit, onPick: () -> Unit, tag: String,
+                 compacto: Boolean = false) {
+    val relleno = if (compacto) PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                  else ButtonDefaults.TextButtonContentPadding
+    val botones = @Composable {
+        TextButton(onClick = onTake, contentPadding = relleno,
+                   modifier = Modifier.testTag("$tag-take")) {
             Icon(Icons.Outlined.Photo, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(if (compacto) 4.dp else 6.dp))
             Text("Camera")
         }
-        TextButton(onClick = onPick, modifier = Modifier.testTag("$tag-pick")) {
+        TextButton(onClick = onPick, contentPadding = relleno,
+                   modifier = Modifier.testTag("$tag-pick")) {
             Icon(Icons.Outlined.Image, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(if (compacto) 4.dp else 6.dp))
             Text("Gallery")
         }
     }
+    // Compacto: los botones se sueltan en la fila de quien llama, que es lo que permite
+    // juntar las cuatro acciones de una nota en una sola franja de pantalla.
+    if (compacto) botones()
+    else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { botones() }
 }
 
 /** Las miniaturas en fila, con su aspa para quitarlas y pulsacion para verlas grandes. */
@@ -590,7 +600,8 @@ fun AudioRow(
 /** El boton de grabar, con el tiempo corriendo mientras graba. */
 @Composable
 fun RecordButton(recorder: AudioNoteRecorder, onFinished: (File, Long) -> Unit,
-                 onError: (String) -> Unit, newFile: (String) -> File?) {
+                 onError: (String) -> Unit, newFile: (String) -> File?,
+                 compacto: Boolean = false) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var grabando by remember { mutableStateOf(false) }
     val ahora = rememberTicker(grabando)
@@ -600,8 +611,8 @@ fun RecordButton(recorder: AudioNoteRecorder, onFinished: (File, Long) -> Unit,
         if (!concedido) onError("Microphone permission denied: no audio notes.")
     }
 
-    Row(verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Sin Row propio en modo compacto: iria dentro de la fila de quien llama.
+    val contenido = @Composable {
         TextButton(onClick = {
             if (grabando) {
                 val f = recorder.stop()
@@ -621,11 +632,19 @@ fun RecordButton(recorder: AudioNoteRecorder, onFinished: (File, Long) -> Unit,
                     else grabando = true
                 }
             }
-        }, modifier = Modifier.testTag("fb-record")) {
+        },
+        contentPadding = if (compacto) PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                         else ButtonDefaults.TextButtonContentPadding,
+        modifier = Modifier.testTag("fb-record")) {
             Icon(if (grabando) Icons.Filled.Stop else Icons.Outlined.Mic, null,
                  Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(if (grabando) "Stop recording" else "Audio note")
+            Spacer(Modifier.width(if (compacto) 4.dp else 6.dp))
+            Text(when {
+                grabando && compacto -> "Stop"
+                grabando -> "Stop recording"
+                compacto -> "Audio"
+                else -> "Audio note"
+            })
         }
         if (grabando) {
             // `ahora` lo mueve el ticker una vez por segundo; el origen lo da el propio
@@ -637,4 +656,7 @@ fun RecordButton(recorder: AudioNoteRecorder, onFinished: (File, Long) -> Unit,
             TextButton(onClick = { recorder.cancel(); grabando = false }) { Text("Discard") }
         }
     }
+    if (compacto) contenido()
+    else Row(verticalAlignment = Alignment.CenterVertically,
+             horizontalArrangement = Arrangement.spacedBy(8.dp)) { contenido() }
 }

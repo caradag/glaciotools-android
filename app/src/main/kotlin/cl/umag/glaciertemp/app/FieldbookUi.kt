@@ -171,9 +171,14 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
 
         if (!mirandoArchivada) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { eligiendoTipo = true }, modifier = Modifier.testTag("fb-new")) {
-                    Text("New entry")
-                }
+                // QUICK NOTE VA PRIMERO Y RELLENO. La nota general es lo que mas se anota, y
+                // pasar por el cuadro de tipos para elegir el unico que se elige casi siempre
+                // es un toque de mas justo cuando hay prisa, que es lo que define a una nota
+                // rapida. "New entry" sigue ahi para los otros tres tipos.
+                Button(onClick = { vm.create(EntryType.NOTE) },
+                       modifier = Modifier.testTag("fb-quick")) { Text("Quick note") }
+                OutlinedButton(onClick = { eligiendoTipo = true },
+                               modifier = Modifier.testTag("fb-new")) { Text("New entry") }
                 // El diario NO sale del dialogo de New Entry: hay UNO por campana, asi que
                 // ofrecerlo entre los tipos de anotacion invitaria a crear varios. Boton
                 // propio, al lado, porque es lo otro que se abre a diario.
@@ -622,9 +627,13 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
     // mismo, y en un telefono eso es lo que empuja el primer campo fuera de la vista. El tipo
     // y la papelera viven ahora en la barra de arriba.
     Column(Modifier.fillMaxSize()) {
+        // APRETADO A PROPOSITO. La nota general es lo que mas se usa y muchas veces solo
+        // lleva un titulo: si el boton Done queda fuera de la pantalla, una anotacion de diez
+        // segundos exige ademas buscarlo desplazando. Cada franja que se ahorra aqui es lo
+        // que hace que quepa entera sin desplazar.
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)
                    .verticalScroll(rememberScrollState()),
-               verticalArrangement = Arrangement.spacedBy(12.dp)) {
+               verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
             FieldbookNotice(vm, s)
 
@@ -682,7 +691,7 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
         }
     }
 
@@ -806,6 +815,7 @@ private fun ExportDialog(vm: FieldbookViewModel, s: FieldbookUiState, onClose: (
  * campo esas dos anotaciones quedarian con la misma hora, que es falso.
  */
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun NoteEditor(vm: FieldbookViewModel, e: FieldEntry) {
     val reproductor = remember { AudioNotePlayer() }
     val grabador = remember { AudioNoteRecorder() }
@@ -829,11 +839,11 @@ private fun NoteEditor(vm: FieldbookViewModel, e: FieldEntry) {
         singleLine = true,
         modifier = Modifier.fillMaxWidth().testTag("fb-note-title"))
 
-    Text("Entries", style = MaterialTheme.typography.titleSmall)
-
+    // SIN ENCABEZADO "Entries". Lo que hay debajo son evidentemente las anotaciones, y ese
+    // renglon costaba una franja en la pantalla mas apretada de la app.
     e.items.forEachIndexed { i, item ->
         Card(Modifier.fillMaxWidth().testTag("fb-item-$i")) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 TimestampRow(
                     label = when (item.kind) {
                         NoteItemKind.TEXT -> "Text"
@@ -855,7 +865,7 @@ private fun NoteEditor(vm: FieldbookViewModel, e: FieldEntry) {
                         value = item.text,
                         onValueChange = { vm.setNoteItemText(i, it) },
                         label = { Text("Observation") },
-                        minLines = 3,
+                        minLines = 2,
                         modifier = Modifier.fillMaxWidth().testTag("fb-item-$i-text"))
 
                     NoteItemKind.PHOTO -> PhotoStrip(
@@ -876,18 +886,26 @@ private fun NoteEditor(vm: FieldbookViewModel, e: FieldEntry) {
         }
     }
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // LAS CUATRO ACCIONES EN UNA FILA. Estaban en tres --texto, las dos de foto, audio--
+    // gastando tres franjas para cuatro botones que caben en una. Es lo que mas altura
+    // devuelve de toda la pantalla, y es justo la que le faltaba al boton Done.
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.fillMaxWidth()) {
         TextButton(onClick = { vm.addNoteItem(NoteItemKind.TEXT) },
+                   contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                    modifier = Modifier.testTag("fb-add-text")) { Text("Add text") }
+        PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "fb-note-photo",
+                     compacto = true)
+        RecordButton(
+            recorder = grabador,
+            newFile = { vm.newMediaFile(it) },
+            onFinished = { f, ms ->
+                vm.addNoteItem(NoteItemKind.AUDIO, file = f.name, durationMillis = ms)
+            },
+            onError = { vm.report(it) },
+            compacto = true)
     }
-    PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "fb-note-photo")
-    RecordButton(
-        recorder = grabador,
-        newFile = { vm.newMediaFile(it) },
-        onFinished = { f, ms ->
-            vm.addNoteItem(NoteItemKind.AUDIO, file = f.name, durationMillis = ms)
-        },
-        onError = { vm.report(it) })
 }
 
 // ------------------------------------- la explicacion -------------------------------------
