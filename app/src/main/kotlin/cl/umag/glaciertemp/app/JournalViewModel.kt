@@ -62,6 +62,16 @@ class JournalViewModel : ViewModel() {
             _state.value = JournalUiState()
             return
         }
+        // BARRIDO DE ENTRADAS VACIAS. close() borra la que se abrio y no se escribio, pero
+        // un cierre forzado --o Android matando la app por memoria, que en terreno pasa-- se
+        // salta ese paso y deja una entrada en blanco que aparece como un dia con contenido.
+        // La que esta ABIERTA ahora mismo se respeta: acaba de nacer y todavia no se ha
+        // escrito en ella.
+        val abierta = _state.value.open?.id
+        st.list(activa.id).forEach { e ->
+            if (e.isEmpty() && e.id != abierta) st.delete(e.id)
+        }
+
         val entradas = st.list(activa.id)
         val dias = JournalDays.group(entradas, st.dayTitles(activa.id))
 

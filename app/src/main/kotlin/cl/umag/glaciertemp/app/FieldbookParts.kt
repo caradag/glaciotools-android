@@ -301,8 +301,16 @@ fun PositionField(
         Text("Position", style = MaterialTheme.typography.labelMedium,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (position != null) {
-            Text(position.describe(), style = MaterialTheme.typography.bodyMedium,
-                 modifier = Modifier.testTag("fb-position"))
+            // CLEAR VA AQUI, pegado a lo que borra. Al final de la fila de botones quedaba
+            // tan a la derecha que el texto se partia en dos lineas, y ademas se leia como
+            // una tercera forma de poner la posicion en vez de como lo contrario.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(position.describe(), style = MaterialTheme.typography.bodyMedium,
+                     modifier = Modifier.weight(1f).testTag("fb-position"))
+                TextButton(onClick = onClear,
+                           contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                           modifier = Modifier.testTag("fb-pos-clear")) { Text("Clear") }
+            }
             Text(position.detail(), style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant,
                  modifier = Modifier.testTag("fb-position-detail"))
@@ -332,10 +340,6 @@ fun PositionField(
                     Icon(Icons.Outlined.Place, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Saved point")
-                }
-                if (position != null) {
-                    TextButton(onClick = onClear,
-                               modifier = Modifier.testTag("fb-pos-clear")) { Text("Clear") }
                 }
             }
         }

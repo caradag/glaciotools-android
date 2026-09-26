@@ -1,6 +1,7 @@
 package cl.umag.glaciertemp.app
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
@@ -65,7 +66,12 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
             onDevice = { donde = Herramienta.PLACA },
             onGps = { donde = Herramienta.GPS },
             onFieldbook = { donde = Herramienta.LIBRETA },
-            onSensors = { donde = Herramienta.SENSORES })
+            onSensors = { donde = Herramienta.SENSORES },
+            onQuickNote = {
+                fieldbook.create(cl.umag.glaciertemp.core.fieldbook.EntryType.NOTE)
+                donde = Herramienta.LIBRETA
+            },
+            onJournal = { donde = Herramienta.DIARIO })
         Herramienta.PLACA -> Column(Modifier.fillMaxSize()) {
             GlacierTempApp(device, onBack = { donde = Herramienta.INICIO })
         }
@@ -166,7 +172,8 @@ fun ToolBar(titulo: String, onBack: () -> Unit,
 
 @Composable
 private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
-                       onFieldbook: () -> Unit, onSensors: () -> Unit) {
+                       onFieldbook: () -> Unit, onSensors: () -> Unit,
+                       onQuickNote: () -> Unit, onJournal: () -> Unit) {
     var info by rememberSaveable { mutableStateOf(false) }
     // SE DESPLAZA. Con cuatro herramientas la lista ya pasa del alto de un telefono, y una
     // tarjeta cortada por abajo se lee como que no hay nada mas.
@@ -203,6 +210,30 @@ private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
 
         Spacer(Modifier.height(8.dp))
 
+        // FIELDBOOK ARRIBA DEL TODO. Es lo que se abre varias veces al dia, mientras que el
+        // aparato se conecta una vez por campana. La primera posicion es la que se alcanza
+        // sin mirar, y tiene que ser la del uso frecuente y no la del orden en que se
+        // escribieron las herramientas.
+        ToolCard(
+            titulo = "Fieldbook",
+            detalle = "Field notes, stake readings with their ablation rate, GNSS points " +
+                      "with a timer, and dendro samples — with photos, audio and " +
+                      "coordinates. A campaign journal day by day, and search across " +
+                      "everything, archived campaigns included.",
+            tag = "tool-fieldbook", onClick = onFieldbook) {
+            // DOS ATAJOS EN LA PROPIA TARJETA. Anotar algo desde el bolsillo son cuatro
+            // toques --abrir, Fieldbook, Quick note, escribir-- y los dos primeros no
+            // aportan nada cuando ya se sabe lo que se va a hacer. Cortos a proposito: lo
+            // que importa es que el dedo los acierte, no que se lean de lejos.
+            Button(onClick = onQuickNote,
+                   contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                   modifier = Modifier.testTag("home-qn")) { Text("QN") }
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = onJournal,
+                   contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                   modifier = Modifier.testTag("home-journal")) { Text("J") }
+        }
+
         ToolCard(
             titulo = "Connect to a device",
             detalle = "Configure a GlacierTemp logger, download its data and watch its " +
@@ -216,14 +247,6 @@ private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
                       "setting other instruments. A planner showing satellites per " +
                       "constellation through the day.",
             tag = "tool-gps", onClick = onGps)
-
-        ToolCard(
-            titulo = "Fieldbook",
-            detalle = "Field notes, stake readings with their ablation rate, GNSS points " +
-                      "with a timer, and dendro samples — with photos, audio and " +
-                      "coordinates. A campaign journal day by day, and search across " +
-                      "everything, archived campaigns included.",
-            tag = "tool-fieldbook", onClick = onFieldbook)
 
         ToolCard(
             titulo = "Onboard sensors",
@@ -271,10 +294,17 @@ private fun InfoDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun ToolCard(titulo: String, detalle: String, tag: String, onClick: () -> Unit) {
+private fun ToolCard(titulo: String, detalle: String, tag: String, onClick: () -> Unit,
+                     acciones: @Composable (RowScope.() -> Unit)? = null) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag(tag)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(titulo, style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(titulo, style = MaterialTheme.typography.titleMedium,
+                     modifier = Modifier.weight(1f))
+                // Los atajos consumen su propio toque; la tarjeta sigue abriendo la
+                // herramienta al pulsar en cualquier otro sitio.
+                acciones?.invoke(this)
+            }
             Text(detalle, style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
