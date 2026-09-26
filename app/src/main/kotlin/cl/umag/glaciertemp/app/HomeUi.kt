@@ -1,6 +1,8 @@
 package cl.umag.glaciertemp.app
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -17,7 +19,7 @@ import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.BuildConfig
 
 /** Que herramienta esta abierta. */
-private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA, DIARIO }
+private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA, DIARIO, SENSORES }
 
 /**
  * La app entera: una pantalla de inicio que reparte, y las herramientas.
@@ -62,7 +64,8 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
         Herramienta.INICIO -> HomeScreen(
             onDevice = { donde = Herramienta.PLACA },
             onGps = { donde = Herramienta.GPS },
-            onFieldbook = { donde = Herramienta.LIBRETA })
+            onFieldbook = { donde = Herramienta.LIBRETA },
+            onSensors = { donde = Herramienta.SENSORES })
         Herramienta.PLACA -> Column(Modifier.fillMaxSize()) {
             GlacierTempApp(device, onBack = { donde = Herramienta.INICIO })
         }
@@ -79,6 +82,10 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
         Herramienta.DIARIO -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
             JournalScreen(journal, onBack = { donde = Herramienta.LIBRETA })
+        }
+        Herramienta.SENSORES -> Column(Modifier.fillMaxSize()
+            .statusBarsPadding().navigationBarsPadding().imePadding()) {
+            SensorsScreen(onBack = { donde = Herramienta.INICIO })
         }
     }
     }
@@ -159,10 +166,13 @@ fun ToolBar(titulo: String, onBack: () -> Unit,
 
 @Composable
 private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
-                       onFieldbook: () -> Unit) {
+                       onFieldbook: () -> Unit, onSensors: () -> Unit) {
     var info by rememberSaveable { mutableStateOf(false) }
+    // SE DESPLAZA. Con cuatro herramientas la lista ya pasa del alto de un telefono, y una
+    // tarjeta cortada por abajo se lee como que no hay nada mas.
     Column(
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -201,15 +211,25 @@ private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
 
         ToolCard(
             titulo = "GPS tools",
-            detalle = "Average GNSS fixes to pin down a position more precisely than a " +
-                      "single reading allows. Export as CSV or GPX.",
+            detalle = "Average GNSS fixes for a position better than a single reading. " +
+                      "GPS time against the phone clock, with an audible countdown for " +
+                      "setting other instruments. A planner showing satellites per " +
+                      "constellation through the day.",
             tag = "tool-gps", onClick = onGps)
 
         ToolCard(
             titulo = "Fieldbook",
             detalle = "Field notes, stake readings with their ablation rate, GNSS points " +
-                      "with a timer, and dendro samples. Photos, audio and coordinates.",
+                      "with a timer, and dendro samples — with photos, audio and " +
+                      "coordinates. A campaign journal day by day, and search across " +
+                      "everything, archived campaigns included.",
             tag = "tool-fieldbook", onClick = onFieldbook)
+
+        ToolCard(
+            titulo = "Onboard sensors",
+            detalle = "What the phone itself can measure: tilt, compass, pressure and " +
+                      "light — including an albedo measurement, facing up then down.",
+            tag = "tool-sensors", onClick = onSensors)
 
         // Abajo y discreto: se consulta una vez, no se usa. Pero tiene que estar, porque es
         // lo unico que dice a quien escribir cuando algo falla en terreno.

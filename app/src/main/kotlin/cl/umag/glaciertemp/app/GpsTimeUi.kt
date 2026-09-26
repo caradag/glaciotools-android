@@ -58,6 +58,10 @@ fun GpsTimeScreen() {
     var recibidaEn by remember { mutableStateOf(0L) }
     var satelites by remember { mutableStateOf<Int?>(null) }
     var sonar by rememberSaveable { mutableStateOf(false) }
+    // POR DEFECTO LA LOCAL. Es la que llevan el reloj de pulsera, la camara y la libreta de
+    // papel, o sea contra la que se compara sin tener que restar nada. UTC esta a un toque
+    // porque es la que se escribe en los ficheros y la que entienden todos los aparatos.
+    var utc by rememberSaveable { mutableStateOf(false) }
 
     // Reloj de pared a 10 Hz: con uno de 1 Hz el segundo mostrado puede ir hasta un segundo
     // atrasado respecto al real, que en una herramienta cuyo proposito es la sincronizacion
@@ -131,8 +135,22 @@ fun GpsTimeScreen() {
             return@Column
         }
 
-        Reloj("GPS time (UTC)", gpsAhora, "gpstime-gps")
-        Reloj("Phone time (UTC)", ahora, "gpstime-phone")
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !utc, onClick = { utc = false },
+                       label = { Text("Local") },
+                       modifier = Modifier.testTag("gpstime-local"))
+            FilterChip(selected = utc, onClick = { utc = true },
+                       label = { Text("UTC") },
+                       modifier = Modifier.testTag("gpstime-utc"))
+        }
+
+        // La zona va ESCRITA en el rotulo, no solo implicita en el conmutador: una hora sin
+        // zona al lado es justo el dato que se copia mal a la libreta y no hay forma de
+        // recuperar despues.
+        val zona = if (utc) "UTC" else "local, " + desplazamientoLocal()
+        Reloj("GPS time ($zona)", gpsAhora, utc, "gpstime-gps")
+        Reloj("Phone time ($zona)", ahora, utc, "gpstime-phone")
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -181,20 +199,31 @@ fun GpsTimeScreen() {
 }
 
 @Composable
-private fun Reloj(titulo: String, ms: Long?, tag: String) {
+private fun Reloj(titulo: String, ms: Long?, utc: Boolean, tag: String) {
     Column {
         Text(titulo, style = MaterialTheme.typography.labelMedium,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(ms?.let { relojUtc.format(Date(it)) } ?: "—",
+        Text(ms?.let { reloj(utc).format(Date(it)) } ?: "—",
              style = MaterialTheme.typography.displaySmall,
              fontFamily = FontFamily.Monospace,
              modifier = Modifier.testTag(tag))
     }
 }
 
-/** Monoespaciada y en UTC: los digitos no deben bailar al cambiar, y la referencia es UTC. */
-private val relojUtc: SimpleDateFormat =
-    SimpleDateFormat("HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+/** Monoespaciada: los digitos no deben bailar de anchura al cambiar cada decima. */
+private fun reloj(utc: Boolean): SimpleDateFormat =
+    SimpleDateFormat("HH:mm:ss", Locale.US).apply {
+        if (utc) timeZone = TimeZone.getTimeZone("UTC")
+    }
+
+/** "UTC-03" y no el nombre de la zona: el desplazamiento es lo que se necesita para restar. */
+private fun desplazamientoLocal(): String {
+    val min = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60000
+    val signo = if (min < 0) "−" else "+"
+    val a = abs(min)
+    return if (a % 60 == 0) "UTC$signo%02d".format(a / 60)
+           else "UTC$signo%02d:%02d".format(a / 60, a % 60)
+}
 
 private fun tienePermisoUbicacion(ctx: Context): Boolean =
     ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) ==
