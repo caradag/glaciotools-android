@@ -39,6 +39,7 @@ fun typeLabel(t: EntryType): String = when (t) {
     EntryType.STAKE -> "Stake measurement"
     EntryType.GNSS -> "GNSS measurement"
     EntryType.DENDRO -> "Dendro sample"
+    EntryType.COSMO -> "Cosmogenic isotopes sample"
 }
 
 private fun typeBlurb(t: EntryType): String = when (t) {
@@ -49,6 +50,8 @@ private fun typeBlurb(t: EntryType): String = when (t) {
                       "when the planned time is up."
     EntryType.DENDRO -> "A tree core or wedge: label, species, sampling height and trunk " +
                         "perimeter."
+    EntryType.COSMO -> "A boulder sampled for exposure dating: site and boulder " +
+                       "description, dimensions, and the topographic shielding."
 }
 
 /**
@@ -59,7 +62,8 @@ private fun typeBlurb(t: EntryType): String = when (t) {
  * algo a lo que ya se estaba haciendo mucho mas a menudo que para empezar de cero.
  */
 @Composable
-fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () -> Unit) {
+fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () -> Unit,
+                    onMapHorizon: () -> Unit = {}) {
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refresh() }
 
@@ -139,7 +143,9 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
             SearchScreen(vm, s, onClose = { buscar = false; vm.clearSearch() })
         abierta == null -> EntryListScreen(vm, s, onExport = { exportar = true },
                                            onJournal = onJournal)
-        else -> EntryScreen(vm, s, abierta, borrarEntrada) { borrarEntrada = it }
+        else -> EntryScreen(vm, s, abierta, borrarEntrada,
+                            onBorrar = { borrarEntrada = it },
+                            onMapHorizon = onMapHorizon)
     }
 
     if (exportar) ExportDialog(vm, s) { exportar = false }
@@ -408,6 +414,7 @@ private fun shortLabel(t: EntryType): String = when (t) {
     EntryType.STAKE -> "Stakes"
     EntryType.GNSS -> "GNSS"
     EntryType.DENDRO -> "Dendro"
+    EntryType.COSMO -> "Cosmo"
 }
 
 /**
@@ -609,7 +616,8 @@ fun FieldbookNotice(vm: FieldbookViewModel, s: FieldbookUiState) {
 
 @Composable
 private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
-                        borrar: Boolean, onBorrar: (Boolean) -> Unit) {
+                        borrar: Boolean, onBorrar: (Boolean) -> Unit,
+                        onMapHorizon: () -> Unit) {
     var falta by remember { mutableStateOf<List<String>?>(null) }
 
     /**
@@ -670,6 +678,7 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
                 EntryType.STAKE -> StakeEditor(vm, s, e, onGnssFinished = { revisar(it) })
                 EntryType.GNSS -> GnssEntryEditor(vm, s, e, onFinished = { revisar() })
                 EntryType.DENDRO -> DendroEditor(vm, s, e)
+                EntryType.COSMO -> CosmoEditor(vm, s, e, onMapHorizon)
             }
 
             HorizontalDivider()
@@ -785,8 +794,8 @@ private fun ExportDialog(vm: FieldbookViewModel, s: FieldbookUiState, onClose: (
                                label = { Text("Everything") },
                                modifier = Modifier.testTag("fb-export-scope-all"))
                 }
-                Text("One ZIP with three CSV files (GNSS measurements, stake readings with " +
-                     "their ablation rates, dendro samples), an ODT document with every note " +
+                Text("One ZIP with four CSV files (GNSS measurements, stake readings with " +
+                     "their ablation rates, dendro samples, cosmogenic samples), an ODT document with every note " +
                      "in chronological order, a second ODT with the journal day by day, and " +
                      "the photos and audio — those of the notes in folders named after each " +
                      "point, those of the journal together in one folder, each named by the " +
@@ -948,7 +957,7 @@ private fun FieldbookExplained(onClose: () -> Unit) {
                         "It is there to decide whether to stay longer or pack up early. " +
                         "Those are the phone's numbers, not the geodetic receiver's.")
                 Parrafo("Exporting",
-                        "One ZIP with three CSV files, an ODT document with every note in " +
+                        "One ZIP with four CSV files, an ODT document with every note in " +
                         "chronological order, another ODT with the journal day by day, and " +
                         "the photos and audio. The notes' media go in folders named after " +
                         "each point; the journal's go together in one folder, each file " +

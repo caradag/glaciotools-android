@@ -138,6 +138,43 @@ object FieldbookOdt {
                 if (e.notes.isNotBlank()) doc.multiline(e.notes)
                 e.photos.forEach { foto(doc, media, it, it) }
             }
+
+            EntryType.COSMO -> {
+                val c = e.cosmo
+                if (c != null) {
+                    // EN EL ORDEN EN QUE SE MIRA EN TERRENO: primero donde estamos, luego el
+                    // bloque, luego la superficie de la que sale la muestra, y al final el
+                    // cielo que la rodea. Quien lea esto meses despues reconstruye la visita.
+                    if (c.site.isNotBlank()) { doc.body("Site"); doc.multiline(c.site) }
+                    if (c.place.isNotBlank()) { doc.body("Place"); doc.multiline(c.place) }
+
+                    val medidas = ArrayList<String>()
+                    c.heightMaxM?.let { medidas += "max height ${FieldbookCsv.num(it)} m" }
+                    c.heightMinM?.let { medidas += "min height ${FieldbookCsv.num(it)} m" }
+                    c.longAxisM?.let { medidas += "long axis ${FieldbookCsv.num(it)} m" }
+                    c.shortAxisM?.let { medidas += "short axis ${FieldbookCsv.num(it)} m" }
+                    if (medidas.isNotEmpty()) doc.body("Boulder: " + medidas.joinToString(", "))
+                    if (c.boulder.isNotBlank()) doc.multiline(c.boulder)
+                    if (c.surface.isNotBlank()) {
+                        doc.body("Sampled surface"); doc.multiline(c.surface)
+                    }
+
+                    val apantalla = ArrayList<String>()
+                    c.strikeDeg?.let { apantalla += "strike ${FieldbookCsv.num(it)}°" }
+                    c.dipDeg?.let { apantalla += "dip ${FieldbookCsv.num(it)}°" }
+                    c.shieldingFactor?.let { apantalla += "shielding factor %.4f".format(it) }
+                    if (apantalla.isNotEmpty())
+                        doc.body("Shielding: " + apantalla.joinToString(", "))
+                    if (c.horizonDeg.isNotEmpty()) {
+                        // El perfil ENTERO va al documento: es la medida, y el factor solo
+                        // una cuenta hecha sobre ella que cualquiera puede querer rehacer.
+                        doc.meta("Horizon, elevation in degrees every ${c.horizonBinDeg}° " +
+                                 "of azimuth from north:")
+                        doc.meta(c.horizonDeg.joinToString(" ") { FieldbookCsv.num(it) })
+                    }
+                }
+                e.photos.forEach { foto(doc, media, it, it) }
+            }
         }
     }
 
@@ -175,5 +212,6 @@ object FieldbookOdt {
         EntryType.STAKE -> "Stake measurement"
         EntryType.GNSS -> "GNSS measurement"
         EntryType.DENDRO -> "Dendro sample"
+        EntryType.COSMO -> "Cosmogenic isotopes sample"
     }
 }

@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.BuildConfig
 
 /** Que herramienta esta abierta. */
-private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA, DIARIO, SENSORES }
+private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA, DIARIO, SENSORES, HORIZONTE }
 
 /**
  * La app entera: una pantalla de inicio que reparte, y las herramientas.
@@ -87,7 +87,21 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
             FieldbookScreen(fieldbook,
                             onJournal = { donde = Herramienta.DIARIO },
-                            onBack = { donde = Herramienta.INICIO })
+                            onBack = { donde = Herramienta.INICIO },
+                            onMapHorizon = { donde = Herramienta.HORIZONTE })
+        }
+        // EL MAPEADOR SE ABRE DESDE LA LIBRETA y vuelve a ella con el perfil puesto. Vive
+        // aqui arriba y no dentro de la libreta porque necesita la pantalla entera --la
+        // imagen de la camara no cabe bajo una cabecera-- y porque es la misma herramienta
+        // que ya usan los sensores: una sola implementacion, dos sitios desde donde entrar.
+        Herramienta.HORIZONTE -> Column(Modifier.fillMaxSize()
+            .statusBarsPadding().navigationBarsPadding()) {
+            HorizonMapperScreen(
+                onDone = { perfil, _, _ ->
+                    fieldbook.setCosmoHorizon(perfil.elevations.toList(), perfil.binDeg)
+                    donde = Herramienta.LIBRETA
+                },
+                onCancel = { donde = Herramienta.LIBRETA })
         }
         Herramienta.DIARIO -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {

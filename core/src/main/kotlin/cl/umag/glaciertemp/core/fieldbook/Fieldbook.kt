@@ -16,7 +16,7 @@ package cl.umag.glaciertemp.core.fieldbook
  */
 
 /** Que clase de entrada es. El nombre va tal cual al fichero, asi que no se renombra. */
-enum class EntryType { NOTE, STAKE, GNSS, DENDRO }
+enum class EntryType { NOTE, STAKE, GNSS, DENDRO, COSMO }
 
 /** De donde salio una coordenada. Cambia lo que significa su antiguedad. */
 enum class PositionSource {
@@ -150,6 +150,53 @@ data class NoteItem(
     val durationMillis: Long? = null,
 )
 
+/**
+ * Una muestra para dataciones con isotopos cosmogenicos.
+ *
+ * QUE SE ANOTA Y POR QUE. La edad de exposicion que saldra de esta roca depende de cosas que
+ * solo se pueden ver EN EL SITIO y que no se pueden reconstruir en el laboratorio: si el
+ * bloque pudo haberse movido o haber estado enterrado, si la superficie conserva el pulido
+ * glaciar o esta erosionada, y cuanto cielo tapa el relieve de alrededor. Un analisis
+ * impecable sobre una muestra mal descrita da una edad precisa y equivocada.
+ *
+ * El tamano del bloque se anota porque entra en la correccion por erosion y porque un bloque
+ * pequeno es mas sospechoso de haberse movido. Las alturas mayor y menor dan el relieve del
+ * bloque sobre la superficie; los ejes, su planta.
+ */
+data class CosmoSample(
+    /** El conjunto: la morrena, el cordon, el valle. */
+    val site: String = "",
+    /** El entorno inmediato del bloque, que es donde se ven los indicios de que se movio. */
+    val place: String = "",
+    val heightMaxM: Double? = null,
+    val heightMinM: Double? = null,
+    val longAxisM: Double? = null,
+    val shortAxisM: Double? = null,
+    val boulder: String = "",
+    val surface: String = "",
+
+    // --- apantallamiento ---
+    /** Rumbo de la superficie muestreada. El buzamiento cae a su derecha. */
+    val strikeDeg: Double? = null,
+    val dipDeg: Double? = null,
+    /**
+     * El horizonte medido, una elevacion por sector, o vacio si no se midio.
+     *
+     * SE GUARDA EL PERFIL ENTERO y no solo el factor. El factor se recalcula --cambia si se
+     * corrige el buzamiento, y cambiaria si manana se usara otro exponente-- pero el
+     * horizonte es la MEDIDA, y eso no se vuelve a tomar sin volver al sitio.
+     */
+    val horizonDeg: List<Double> = emptyList(),
+    val horizonBinDeg: Int = 5,
+    /** Lo que sale de los tres anteriores. Se guarda para no depender de recalcularlo. */
+    val shieldingFactor: Double? = null,
+) {
+    fun isEmpty(): Boolean =
+        site.isBlank() && place.isBlank() && boulder.isBlank() && surface.isBlank() &&
+        heightMaxM == null && heightMinM == null && longAxisM == null && shortAxisM == null &&
+        strikeDeg == null && dipDeg == null && horizonDeg.isEmpty()
+}
+
 /** Una medicion de altura de una baliza, con su posible medicion GNSS asociada. */
 data class StakeMeasurement(
     val atEpochMillis: Long,
@@ -212,6 +259,11 @@ data class FieldEntry(
     val trunkPerimeterCm: Double? = null,
     val notes: String = "",
 
+    // --- COSMO ---
+    /** Nombre de la muestra. Aparte de sampleLabel: un dendro y un cosmo pueden coincidir. */
+    val cosmoName: String = "",
+    val cosmo: CosmoSample? = null,
+
     /** Fotografias de la entrada. En STAKE cuelgan de cada medicion, no de aqui. */
     val photos: List<String> = emptyList(),
 ) {
@@ -234,6 +286,7 @@ data class FieldEntry(
         EntryType.STAKE -> stakeName.ifBlank { "(unnamed stake)" }
         EntryType.GNSS -> pointName.ifBlank { "(unnamed point)" }
         EntryType.DENDRO -> sampleLabel.ifBlank { "(unlabelled sample)" }
+        EntryType.COSMO -> cosmoName.ifBlank { "(unnamed cosmo sample)" }
     }
 
     /** Todos los ficheros de medios a los que apunta la entrada, del tipo que sea. */

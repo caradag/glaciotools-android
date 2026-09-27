@@ -182,6 +182,43 @@ object FieldbookCsv {
                 }
         }
 
+    /**
+     * Las muestras cosmogenicas.
+     *
+     * LAS DESCRIPCIONES VAN EN EL CSV, aunque sean parrafos. Esta tabla es lo que se abre
+     * junto a los resultados del laboratorio, y el sitio donde hay que mirar cuando una
+     * edad sale rara es "que decia la nota de esa muestra". Dejarlas solo en el documento
+     * obligaria a cruzar dos ficheros a mano, que es cuando se cruzan mal.
+     *
+     * El horizonte NO cabe aqui --son setenta y dos numeros por fila-- y va en el documento.
+     */
+    fun cosmo(entries: List<FieldEntry>, campaignName: (String?) -> String = { "" }): String =
+        buildString {
+            append(row("sample_name", "campaign", "collected_at", "collected_by",
+                       "latitude", "longitude", "altitude_m_wgs84", "position_source",
+                       "height_max_m", "height_min_m", "long_axis_m", "short_axis_m",
+                       "strike_deg", "dip_deg", "shielding_factor", "horizon_measured",
+                       "site", "place", "boulder", "surface",
+                       "associated_images", "entry_id"))
+            entries.filter { it.type == EntryType.COSMO }
+                .sortedBy { it.createdEpochMillis }
+                .forEach { e ->
+                    val c = e.cosmo
+                    append(row(
+                        e.cosmoName.ifBlank { "(unnamed cosmo sample)" },
+                        campaignName(e.campaignId),
+                        time(e.createdEpochMillis), e.person,
+                        e.position?.latitude, e.position?.longitude,
+                        e.position?.altitudeMetres,
+                        e.position?.source?.name ?: "",
+                        c?.heightMaxM, c?.heightMinM, c?.longAxisM, c?.shortAxisM,
+                        c?.strikeDeg, c?.dipDeg, c?.shieldingFactor,
+                        if (c?.horizonDeg?.isNotEmpty() == true) "yes" else "no",
+                        c?.site ?: "", c?.place ?: "", c?.boulder ?: "", c?.surface ?: "",
+                        e.photos.size, e.id))
+                }
+        }
+
     // --------------------------- nombres de carpeta de medios ---------------------------
 
     /**

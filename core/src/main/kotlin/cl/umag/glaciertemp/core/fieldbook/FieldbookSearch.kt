@@ -85,6 +85,15 @@ object FieldbookSearch {
                     campos += "Species" to e.species
                     campos += "Notes" to e.notes
                 }
+                EntryType.COSMO -> {
+                    campos += "Sample" to e.cosmoName
+                    e.cosmo?.let { c ->
+                        campos += "Site" to c.site
+                        campos += "Place" to c.place
+                        campos += "Boulder" to c.boulder
+                        campos += "Surface" to c.surface
+                    }
+                }
             }
             campos += "Person" to e.person
             val cae = campos.firstOrNull { (_, v) -> v.isNotBlank() && fold(v).contains(q) }

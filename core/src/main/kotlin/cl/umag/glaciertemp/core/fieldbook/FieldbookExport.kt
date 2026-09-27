@@ -43,6 +43,7 @@ object FieldbookExport {
     const val GNSS_CSV = "gnss_measurements.csv"
     const val STAKE_CSV = "stake_measurements.csv"
     const val DENDRO_CSV = "dendro_samples.csv"
+    const val COSMO_CSV = "cosmogenic_samples.csv"
     const val NOTEBOOK_ODT = "fieldbook.odt"
     const val JOURNAL_ODT = "journal.odt"
     const val PICTURES = "Pictures"
@@ -73,6 +74,7 @@ object FieldbookExport {
                 EntryType.STAKE -> e.stakeName.ifBlank { "unnamed stake" }
                 EntryType.GNSS -> e.pointName.ifBlank { "unnamed point" }
                 EntryType.DENDRO -> e.sampleLabel.ifBlank { "unlabelled sample" }
+                EntryType.COSMO -> e.cosmoName.ifBlank { "unnamed cosmo sample" }
                 EntryType.NOTE -> e.title().ifBlank { "note" }
             })
             var nombre = base
@@ -169,6 +171,7 @@ object FieldbookExport {
             texto(GNSS_CSV, FieldbookCsv.gnss(entries, nombreCampana))
             texto(STAKE_CSV, FieldbookCsv.stakes(entries, nombreCampana))
             texto(DENDRO_CSV, FieldbookCsv.dendro(entries, nombreCampana))
+            texto(COSMO_CSV, FieldbookCsv.cosmo(entries, nombreCampana))
 
             zip.putNextEntry(ZipEntry(NOTEBOOK_ODT))
             zip.write(FieldbookOdt.build(entries, media, campaigns, zone))

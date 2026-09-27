@@ -166,6 +166,31 @@ object FieldbookFile {
                 kv("notes", e.notes)
                 e.photos.forEach { kv("photo", it) }
             }
+
+            EntryType.COSMO -> {
+                append("[cosmo]\n")
+                kv("name", e.cosmoName)
+                e.cosmo?.let { c ->
+                    kv("site", c.site)
+                    kv("place", c.place)
+                    kvNum("h_max_m", c.heightMaxM)
+                    kvNum("h_min_m", c.heightMinM)
+                    kvNum("axis_long_m", c.longAxisM)
+                    kvNum("axis_short_m", c.shortAxisM)
+                    kv("boulder", c.boulder)
+                    kv("surface", c.surface)
+                    kvNum("strike", c.strikeDeg)
+                    kvNum("dip", c.dipDeg)
+                    kvNum("shielding", c.shieldingFactor)
+                    if (c.horizonDeg.isNotEmpty()) {
+                        kv("horizon_bin", c.horizonBinDeg.toString())
+                        // El perfil entero en UNA linea: son 72 numeros y partirlos en 72
+                        // claves haria el fichero ilegible para lo que aporta.
+                        kv("horizon", c.horizonDeg.joinToString(" ") { "%.2f".format(it) })
+                    }
+                }
+                e.photos.forEach { kv("photo", it) }
+            }
         }
     }
 
@@ -316,6 +341,31 @@ object FieldbookFile {
                     trunkPerimeterCm = d?.num("perimeter_cm"),
                     notes = d?.one("notes") ?: "",
                     photos = d?.all("photo") ?: emptyList(),
+                )
+            }
+
+            EntryType.COSMO -> {
+                val c = bloques.firstOrNull { it.name == "cosmo" }
+                val muestra = CosmoSample(
+                    site = c?.one("site") ?: "",
+                    place = c?.one("place") ?: "",
+                    heightMaxM = c?.num("h_max_m"),
+                    heightMinM = c?.num("h_min_m"),
+                    longAxisM = c?.num("axis_long_m"),
+                    shortAxisM = c?.num("axis_short_m"),
+                    boulder = c?.one("boulder") ?: "",
+                    surface = c?.one("surface") ?: "",
+                    strikeDeg = c?.num("strike"),
+                    dipDeg = c?.num("dip"),
+                    horizonBinDeg = c?.one("horizon_bin")?.toIntOrNull() ?: 5,
+                    horizonDeg = c?.one("horizon")?.split(" ")
+                        ?.mapNotNull { it.toDoubleOrNull() } ?: emptyList(),
+                    shieldingFactor = c?.num("shielding"),
+                )
+                base.copy(
+                    cosmoName = c?.one("name") ?: "",
+                    cosmo = muestra.takeIf { !it.isEmpty() },
+                    photos = c?.all("photo") ?: emptyList(),
                 )
             }
         }

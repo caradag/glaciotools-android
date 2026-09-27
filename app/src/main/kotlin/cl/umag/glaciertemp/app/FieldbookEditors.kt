@@ -17,6 +17,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.core.fieldbook.*
+import cl.umag.glaciertemp.core.sensors.HorizonProfile
+import cl.umag.glaciertemp.core.sensors.Shielding
 
 // ===================================== medicion GNSS =====================================
 
@@ -343,6 +345,7 @@ private fun tipoEnPalabras(t: EntryType): String = when (t) {
     EntryType.STAKE -> "stake"
     EntryType.GNSS -> "GNSS point"
     EntryType.DENDRO -> "sample"
+    EntryType.COSMO -> "cosmogenic sample"
     EntryType.NOTE -> "entry"
 }
 
@@ -635,4 +638,149 @@ fun DendroEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry) {
     PhotoStrip(e.photos, resolve = { vm.mediaFile(it) },
                onRemove = { vm.removePhoto(it) }, tag = "fb-dendro-photos")
     PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "fb-dendro-photo")
+}
+
+// =========================== muestra para isotopos cosmogenicos ===========================
+
+/**
+ * Una roca muestreada para datar su exposicion.
+ *
+ * TODO LO QUE AQUI SE ESCRIBE ES IRRECUPERABLE. La edad que saldra de esta muestra depende de
+ * cosas que solo se ven en el sitio --si el bloque pudo moverse o estar enterrado, si la
+ * superficie conserva el pulido glaciar, cuanto cielo tapa el relieve-- y ninguna se puede
+ * reconstruir en el laboratorio. Un analisis impecable sobre una muestra mal descrita da una
+ * edad precisa y equivocada. Por eso los campos son largos y no hay ninguno obligatorio: lo
+ * que hace falta es que sea comodo escribir, no que el formulario quede completo.
+ */
+@Composable
+fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
+                onMapHorizon: () -> Unit) {
+    val (tomarFoto, elegirFoto) = rememberPhotoAdders(
+        newFile = { vm.newMediaFile(it) }, onAdded = { vm.addPhotos(it) })
+    val c = e.cosmo ?: CosmoSample()
+
+    /** Cambia la ficha de la muestra sin tener que repetir el copy de la entrada entera. */
+    fun edita(inmediato: Boolean = false, f: (CosmoSample) -> CosmoSample) {
+        vm.update(immediate = inmediato) { it.copy(cosmo = f(it.cosmo ?: CosmoSample())) }
+    }
+
+    UniqueNameField(
+        vm = vm, e = e, type = EntryType.COSMO,
+        value = e.cosmoName, label = "Sample name", tag = "fb-cosmo-name",
+        help = "The same code that is written on the bag.",
+        onValue = { v -> vm.update(immediate = false) { it.copy(cosmoName = v) } })
+
+    OutlinedTextField(
+        value = c.site,
+        onValueChange = { v -> edita { it.copy(site = v) } },
+        label = { Text("Site") },
+        supportingText = { Text("The site and the moraine in general.") },
+        minLines = 2,
+        modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-site"))
+
+    OutlinedTextField(
+        value = c.place,
+        onValueChange = { v -> edita { it.copy(place = v) } },
+        label = { Text("Place") },
+        supportingText = { Text("The boulder's surroundings: anything suggesting it has " +
+                                "moved or been buried, erosion around it, and so on.") },
+        minLines = 3,
+        modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-place"))
+
+    HorizontalDivider()
+    Text("Boulder description", style = MaterialTheme.typography.titleSmall)
+
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NumberField("Max height", c.heightMaxM,
+                    onValue = { v -> edita { it.copy(heightMaxM = v) } },
+                    suffix = "m", modifier = Modifier.weight(1f), tag = "fb-cosmo-hmax")
+        NumberField("Min height", c.heightMinM,
+                    onValue = { v -> edita { it.copy(heightMinM = v) } },
+                    suffix = "m", modifier = Modifier.weight(1f), tag = "fb-cosmo-hmin")
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NumberField("Long axis", c.longAxisM,
+                    onValue = { v -> edita { it.copy(longAxisM = v) } },
+                    suffix = "m", modifier = Modifier.weight(1f), tag = "fb-cosmo-long")
+        NumberField("Short axis", c.shortAxisM,
+                    onValue = { v -> edita { it.copy(shortAxisM = v) } },
+                    suffix = "m", modifier = Modifier.weight(1f), tag = "fb-cosmo-short")
+    }
+
+    OutlinedTextField(
+        value = c.boulder,
+        onValueChange = { v -> edita { it.copy(boulder = v) } },
+        label = { Text("Boulder description") },
+        supportingText = { Text("The boulder itself, lithology, and so on.") },
+        minLines = 3,
+        modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-boulder"))
+
+    OutlinedTextField(
+        value = c.surface,
+        onValueChange = { v -> edita { it.copy(surface = v) } },
+        label = { Text("Surface description") },
+        supportingText = { Text("The surface the sample is taken from: erosion marks, " +
+                                "preserved glacial polish, cracks, lichen cover, " +
+                                "vegetation — anything that might be useful.") },
+        minLines = 4,
+        modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-surface"))
+
+    HorizontalDivider()
+    Text("Shielding", style = MaterialTheme.typography.titleSmall)
+
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NumberField("Strike", c.strikeDeg,
+                    onValue = { v -> edita(inmediato = true) { it.copy(strikeDeg = v) } },
+                    suffix = "°", modifier = Modifier.weight(1f), tag = "fb-cosmo-strike")
+        NumberField("Dip", c.dipDeg,
+                    onValue = { v -> edita(inmediato = true) { it.copy(dipDeg = v) } },
+                    suffix = "°", modifier = Modifier.weight(1f), tag = "fb-cosmo-dip")
+    }
+    Text("Dip is down to the right of the strike: strike 0, dip 45 falls 45° to the east.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    // EL FACTOR SE RECALCULA AQUI y no se lee del guardado: el rumbo y el buzamiento se
+    // pueden corregir despues de medir el horizonte, y un numero que no siguiera a sus
+    // propias entradas seria peor que no tenerlo.
+    val factor = remember(c.horizonDeg, c.horizonBinDeg, c.strikeDeg, c.dipDeg) {
+        if (c.horizonDeg.isEmpty() && c.dipDeg == null) null
+        else Shielding.compute(
+            c.horizonDeg.takeIf { it.isNotEmpty() }
+                ?.let { HorizonProfile(it.toDoubleArray(), c.horizonBinDeg) },
+            c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0).factor
+    }
+    LaunchedEffect(factor) {
+        if (factor != c.shieldingFactor) edita(inmediato = true) { it.copy(shieldingFactor = factor) }
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text("Shielding factor", style = MaterialTheme.typography.labelMedium,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(factor?.let { "%.4f".format(it) } ?: "—",
+                 style = MaterialTheme.typography.headlineSmall,
+                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                 modifier = Modifier.testTag("fb-cosmo-factor"))
+        }
+        Button(onClick = onMapHorizon, modifier = Modifier.testTag("fb-cosmo-map")) {
+            Text(if (c.horizonDeg.isEmpty()) "Map horizon" else "Re-map")
+        }
+    }
+    Text(if (c.horizonDeg.isEmpty())
+             "No horizon measured yet. Without it the factor only accounts for the dip of " +
+             "the surface itself, not for the terrain around it."
+         else "Horizon measured: ${c.horizonDeg.size} sectors of ${c.horizonBinDeg}°. " +
+              "Highest %.0f°.".format(c.horizonDeg.max()),
+         style = MaterialTheme.typography.bodySmall,
+         color = if (c.horizonDeg.isEmpty()) MaterialTheme.colorScheme.error
+                 else MaterialTheme.colorScheme.onSurfaceVariant,
+         modifier = Modifier.testTag("fb-cosmo-horizon-state"))
+
+    HorizontalDivider()
+    Text("Photos", style = MaterialTheme.typography.titleSmall)
+    PhotoStrip(e.photos, resolve = { vm.mediaFile(it) },
+               onRemove = { vm.removePhoto(it) }, tag = "fb-cosmo-photos")
+    PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "fb-cosmo-photo")
 }

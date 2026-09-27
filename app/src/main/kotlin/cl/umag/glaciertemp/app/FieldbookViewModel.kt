@@ -187,6 +187,7 @@ class FieldbookViewModel : ViewModel() {
         EntryType.STAKE -> e.stakeName
         EntryType.GNSS -> e.pointName
         EntryType.DENDRO -> e.sampleLabel
+        EntryType.COSMO -> e.cosmoName
         EntryType.NOTE -> ""
     }
 
@@ -389,6 +390,9 @@ class FieldbookViewModel : ViewModel() {
             EntryType.STAKE -> e
             EntryType.GNSS -> e.copy(gnss = GnssSession(receiver = receivers?.mostRecent() ?: ""))
             EntryType.DENDRO -> e.copy(species = species?.mostRecent() ?: "")
+            // Nace con su ficha ya puesta: asi el editor no tiene que distinguir entre "sin
+            // rellenar" y "sin crear", que son lo mismo para quien escribe.
+            EntryType.COSMO -> e.copy(cosmo = CosmoSample())
         }
         s.save(inicial)
         _state.value = _state.value.copy(open = inicial, error = null, filter = null)
@@ -589,6 +593,20 @@ class FieldbookViewModel : ViewModel() {
     fun cancelPositionRequest() {
         posJob?.cancel(); posJob = null
         _state.value = _state.value.copy(positionRequest = null)
+    }
+
+    /**
+     * Guarda en la muestra abierta el horizonte que acaba de medirse.
+     *
+     * SE GUARDA EL PERFIL, no solo el factor. El factor depende del rumbo y el buzamiento,
+     * que se pueden corregir despues; el horizonte es la MEDIDA, y esa no se vuelve a tomar
+     * sin regresar al sitio. El factor se recalcula en el editor a partir de los tres.
+     */
+    fun setCosmoHorizon(elevationsDeg: List<Double>, binDeg: Int) {
+        update(immediate = true) { e ->
+            val c = e.cosmo ?: CosmoSample()
+            e.copy(cosmo = c.copy(horizonDeg = elevationsDeg, horizonBinDeg = binDeg))
+        }
     }
 
     fun usePoint(solution: SavedPoint.Solution) {
