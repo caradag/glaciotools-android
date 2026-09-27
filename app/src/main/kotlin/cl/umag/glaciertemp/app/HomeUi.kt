@@ -71,7 +71,11 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
                 fieldbook.create(cl.umag.glaciertemp.core.fieldbook.EntryType.NOTE)
                 donde = Herramienta.LIBRETA
             },
-            onJournal = { donde = Herramienta.DIARIO })
+            onJournal = {
+                journal.refresh()
+                journal.create()
+                donde = Herramienta.DIARIO
+            })
         Herramienta.PLACA -> Column(Modifier.fillMaxSize()) {
             GlacierTempApp(device, onBack = { donde = Herramienta.INICIO })
         }

@@ -85,6 +85,20 @@ private fun DiasDelDiario(vm: JournalViewModel, s: JournalUiState) {
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp),
            verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
+        // SIN CAMPANA NO HAY DIARIO, y se dice. El diario pertenece a una campana, asi que
+        // sin ella "New journal entry" no puede hacer nada: un boton que no responde es
+        // indistinguible de un toque que no se registro. Y ahora se llega aqui directamente
+        // desde el atajo J de la portada, que es justo cuando no se sabe por que no pasa nada.
+        if (s.campaignId == null) {
+            Text("No campaign open yet.", style = MaterialTheme.typography.titleSmall)
+            Text("The journal belongs to a campaign. Write any note in the fieldbook and one " +
+                 "opens by itself; then the journal has somewhere to go.",
+                 style = MaterialTheme.typography.bodyMedium,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                 modifier = Modifier.testTag("jr-nocampaign"))
+            return@Column
+        }
+
         Text(s.campaignName, style = MaterialTheme.typography.titleSmall,
              modifier = Modifier.testTag("jr-campaign"))
 

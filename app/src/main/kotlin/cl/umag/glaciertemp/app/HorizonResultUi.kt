@@ -18,6 +18,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.core.sensors.HorizonProfile
+import androidx.compose.runtime.saveable.rememberSaveable
+import cl.umag.glaciertemp.core.sensors.Shielding
 import cl.umag.glaciertemp.core.sensors.Solar
 import cl.umag.glaciertemp.core.sensors.SolarPanel
 import java.time.LocalDate
@@ -119,6 +121,9 @@ fun HorizonResultScreen(
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+
+        HorizontalDivider()
+        Apantallamiento(profile)
 
         HorizontalDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -266,4 +271,185 @@ private fun GraficoDeHorizonte(profile: HorizonProfile, caminos: List<Camino>,
             }
         }
     }
+}
+
+
+/**
+ * El factor de apantallamiento para nucleidos cosmogenicos.
+ *
+ * VA DEBAJO DEL HORIZONTE porque es exactamente el mismo dato mirado de otra manera: lo que
+ * para un panel solar son horas de sol perdidas, para una muestra de roca son nucleidos que
+ * no se produjeron. Medir el horizonte una vez sirve para las dos cosas.
+ *
+ * El rumbo y el buzamiento de la superficie muestreada se piden aparte y pueden MEDIRSE con
+ * el propio telefono apoyandolo en la roca, que es la razon de que esta herramienta viva en
+ * la pestana del inclinometro.
+ */
+@Composable
+private fun Apantallamiento(profile: HorizonProfile) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var rumbo by rememberSaveable { mutableStateOf("") }
+    var buzamiento by rememberSaveable { mutableStateOf("") }
+    var midiendo by remember { mutableStateOf(false) }
+
+    val s = rumbo.toDoubleOrNull() ?: 0.0
+    val d = buzamiento.toDoubleOrNull() ?: 0.0
+    val r = remember(profile, s, d) { Shielding.compute(profile, s, d) }
+
+    Text("Topographic shielding", style = MaterialTheme.typography.titleMedium)
+    Text("For cosmogenic nuclide exposure dating. The fraction of the production of an " +
+         "unshielded, horizontal site that this spot receives.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    Cifra("Shielding factor", "%.4f".format(r.factor), "hz-shielding")
+
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = rumbo, onValueChange = { rumbo = it.filter { c -> c.isDigit() || c == '.' } },
+            label = { Text("Strike °") }, singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+            modifier = Modifier.weight(1f).testTag("hz-strike"))
+        OutlinedTextField(
+            value = buzamiento,
+            onValueChange = { buzamiento = it.filter { c -> c.isDigit() || c == '.' } },
+            label = { Text("Dip °") }, singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+            modifier = Modifier.weight(1f).testTag("hz-dip"))
+    }
+
+    // MEDIRLO ES MEJOR QUE ESTIMARLO: un buzamiento a ojo se equivoca en diez grados con
+    // facilidad, y entre 40 y 50 grados el factor cambia dos centesimas.
+    OutlinedButton(onClick = { midiendo = true },
+                   modifier = Modifier.testTag("hz-measure-dip")) {
+        Text("Measure with the phone")
+    }
+    Text("Dip is down to the right of the strike direction: strike 0, dip 45 is a surface " +
+         "falling 45° to the east. Leave both at zero for a horizontal surface.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Terrain alone: %.4f".format(r.fromTerrain),
+                 style = MaterialTheme.typography.bodyMedium,
+                 fontFamily = FontFamily.Monospace,
+                 modifier = Modifier.testTag("hz-shield-terrain"))
+            Text("Dipping surface alone: %.4f".format(r.fromDip),
+                 style = MaterialTheme.typography.bodyMedium,
+                 fontFamily = FontFamily.Monospace,
+                 modifier = Modifier.testTag("hz-shield-dip"))
+            // NO ES EL PRODUCTO, y decirlo evita que alguien "compruebe" la cuenta
+            // multiplicando y concluya que esta mal.
+            Text("The two are combined by taking the higher horizon in each direction, not " +
+                 "by multiplying: where the terrain already blocks more than the surface's " +
+                 "own dip, the dip takes nothing further away.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    Text("Balco's skyline.m, as used by the CRONUS-Earth and ICE-D calculators: the sky is " +
+         "integrated in 1° sectors with sin(h)^3.3, the exponent for m = 2.3. " +
+         "Note that method assumes a horizon surveyed as points joined by straight lines; " +
+         "this one is measured as 5° sector averages, which under-reads the shielding where " +
+         "the skyline is jagged within a sector.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant,
+         modifier = Modifier.testTag("hz-shield-caveat"))
+
+    BotonCopiarShielding(profile, s, d, r)
+
+    if (midiendo) MedirBuzamiento(
+        onDone = { rr, bb -> rumbo = "%.0f".format(rr); buzamiento = "%.0f".format(bb)
+                   midiendo = false },
+        onCancel = { midiendo = false })
+}
+
+@Composable
+private fun BotonCopiarShielding(profile: HorizonProfile, strike: Double, dip: Double,
+                                 r: Shielding.Result) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var copiado by remember { mutableStateOf(false) }
+    LaunchedEffect(copiado) { if (copiado) { kotlinx.coroutines.delay(1500); copiado = false } }
+    OutlinedButton(onClick = {
+        val texto = buildString {
+            appendLine("GlacioTools — topographic shielding")
+            appendLine("Shielding factor: %.4f".format(r.factor))
+            appendLine("  terrain alone: %.4f".format(r.fromTerrain))
+            appendLine("  dipping surface alone: %.4f".format(r.fromDip))
+            appendLine("Strike %.0f°, dip %.0f°".format(strike, dip))
+            appendLine("Sky visible: %.1f %%".format(profile.skyFraction() * 100))
+            appendLine("Horizon, elevation in degrees per %d° of azimuth from north:"
+                           .format(profile.binDeg))
+            appendLine(profile.elevations.joinToString(" ") { "%.1f".format(it) })
+            append("Balco skyline.m integration, sin(h)^3.3, 1° sectors. " +
+                   "Horizon measured as sector averages.")
+        }
+        val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager
+        cb?.setPrimaryClip(android.content.ClipData.newPlainText("GlacioTools", texto))
+        copiado = true
+    }, modifier = Modifier.testTag("hz-shield-copy")) {
+        Text(if (copiado) "Copied" else "Copy shielding + horizon")
+    }
+}
+
+/**
+ * Apoyar el telefono en la roca y leer rumbo y buzamiento.
+ *
+ * Se promedia un par de segundos por lo mismo que las otras medidas: la roca no es plana y
+ * la mano tiembla. No lleva cuenta atras sonora porque aqui SI se ve la pantalla -- el
+ * telefono esta tumbado delante, no apuntando al cielo.
+ */
+@Composable
+private fun MedirBuzamiento(onDone: (Double, Double) -> Unit, onCancel: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var rumbo by remember { mutableStateOf<Double?>(null) }
+    var buzamiento by remember { mutableStateOf<Double?>(null) }
+
+    DisposableEffect(Unit) {
+        val sm = ctx.getSystemService(android.content.Context.SENSOR_SERVICE)
+            as? android.hardware.SensorManager
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)
+        if (sm == null || sensor == null) return@DisposableEffect onDispose { }
+        val R = FloatArray(9)
+        val oyente = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                android.hardware.SensorManager.getRotationMatrixFromVector(R, e.values)
+                val (s, d) = Shielding.strikeDipFrom(R)
+                rumbo = s; buzamiento = d
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+        sm.registerListener(oyente, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+        onDispose { sm.unregisterListener(oyente) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        modifier = Modifier.testTag("hz-dip-dialog"),
+        title = { Text("Lay the phone on the surface") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Screen up, flat against the rock. Then read it without moving the phone.")
+                Text("Strike %s   Dip %s".format(
+                         rumbo?.let { "%.0f°".format(it) } ?: "—",
+                         buzamiento?.let { "%.0f°".format(it) } ?: "—"),
+                     style = MaterialTheme.typography.headlineSmall,
+                     fontFamily = FontFamily.Monospace,
+                     modifier = Modifier.testTag("hz-dip-live"))
+                Text("The strike needs the magnetometer, so keep hammers and the sled away.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onDone(rumbo ?: 0.0, buzamiento ?: 0.0) },
+                       enabled = buzamiento != null,
+                       modifier = Modifier.testTag("hz-dip-use")) { Text("Use these") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } })
 }
