@@ -1114,8 +1114,13 @@ private fun MedirRumboYBuzamiento(onDone: (Double, Double) -> Unit, onCancel: ()
     val p2 = segunda
     // El buzamiento NO cambia al girar el telefono sobre el plano --el plano es el mismo-- y
     // el rumbo si cambia media vuelta. Ver Reversal: cada uno se combina de su manera.
+    // LOS DOS SON MAGNITUDES DE LA SUPERFICIE. El plano no se mueve al girar el telefono
+    // sobre el, y el strike sale de su normal, que es justo el eje del giro: tampoco se
+    // entera. Usar Reversal.heading aqui --como se hizo primero-- resta 180 grados que no
+    // habia que restar y el "sesgo" sale de casi 90 siempre.
     val finalBuz = if (p1 != null && p2 != null) Reversal.surface(p1.second, p2.second) else null
-    val finalRumbo = if (p1 != null && p2 != null) Reversal.heading(p1.first, p2.first) else null
+    val finalRumbo = if (p1 != null && p2 != null)
+        Reversal.surfaceHeading(p1.first, p2.first) else null
 
     AlertDialog(
         onDismissRequest = onCancel,

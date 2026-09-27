@@ -69,3 +69,72 @@ class ReversalTest {
         assertNull(Reversal.warning(emptyList()))
     }
 }
+
+/**
+ * Los dos errores REALES que se cometieron al elegir la combinacion, con el sintoma que
+ * daban: un sesgo de casi 90 grados pasara lo que pasara. Van con su sintoma escrito para
+ * que la prueba falle de forma reconocible si alguien vuelve a cambiarlas.
+ */
+class ReversalClasificacionTest {
+
+    @Test fun `el rumbo de la SUPERFICIE no gira con el telefono`() {
+        // El strike sale de la normal del plano, que es el eje del giro: no se entera.
+        val r = Reversal.surfaceHeading(120.0, 120.0)
+        assertEquals(120.0, r.value, 1e-6)
+        assertEquals(0.0, r.bias, 1e-6)
+    }
+
+    @Test fun `combinar el strike como si girara da casi noventa grados de sesgo`() {
+        // EL SINTOMA que se vio en terreno, con dos lecturas reales de un mismo plano y
+        // cuatro grados de sesgo. Se deja escrito para reconocerlo si vuelve.
+        val malo = Reversal.heading(124.0, 116.0)
+        assertTrue(kotlin.math.abs(malo.bias) > 80.0,
+                   "usar heading para el strike da un sesgo enorme: ${malo.bias}")
+        // Y lo correcto son cuatro grados.
+        assertEquals(4.0, Reversal.surfaceHeading(124.0, 116.0).bias, 1e-6)
+    }
+
+    @Test fun `el strike cancela su sesgo promediando`() {
+        // Cuatro grados de sesgo que entran con signo contrario en las dos posiciones.
+        val r = Reversal.surfaceHeading(124.0, 116.0)
+        assertEquals(120.0, r.value, 1e-6)
+        assertEquals(4.0, r.bias, 1e-6)
+    }
+
+    @Test fun `el strike funciona cruzando el norte`() {
+        val r = Reversal.surfaceHeading(357.0, 3.0)
+        assertEquals(0.0, r.value, 1e-6)
+        // wrap(357-3) = -6, y la mitad es -3.
+        assertEquals(-3.0, r.bias, 1e-6)
+    }
+
+    @Test fun `la elevacion de vista se combina quitando el desplazamiento de 90`() {
+        // Pitch de Android -20, o sea elevacion de vista -70. Girado, el pitch cambia de
+        // signo y la elevacion pasa a -110. Sin sesgo, el valor tiene que ser -70.
+        val r = Reversal.viewElevation(-70.0, -110.0)
+        assertEquals(-70.0, r.value, 1e-9)
+        assertEquals(0.0, r.bias, 1e-9)
+    }
+
+    @Test fun `tratar la elevacion de vista como magnitud del aparato da menos noventa siempre`() {
+        // EL OTRO SINTOMA visto en terreno: el sesgo salia -90 con cualquier inclinacion.
+        listOf(-90.0 to -90.0, -70.0 to -110.0, -125.0 to -55.0).forEach { (a, b) ->
+            assertEquals(-90.0, Reversal.device(a, b).bias, 1e-9,
+                         "device sobre la elevacion de vista da -90 de sesgo para $a y $b")
+        }
+    }
+
+    @Test fun `la elevacion de vista plana sale plana`() {
+        // Telefono tumbado: -90 en las dos posiciones, y -90 es la respuesta.
+        val r = Reversal.viewElevation(-90.0, -90.0)
+        assertEquals(-90.0, r.value, 1e-9)
+        assertEquals(0.0, r.bias, 1e-9)
+    }
+
+    @Test fun `la elevacion de vista cancela su sesgo`() {
+        // Un grado de sesgo: las lecturas se apartan un grado de lo que tocaria.
+        val r = Reversal.viewElevation(-69.0, -109.0)
+        assertEquals(-70.0, r.value, 1e-9)
+        assertEquals(1.0, r.bias, 1e-9)
+    }
+}

@@ -13,7 +13,10 @@ object Compass {
     /** A [0, 360). Los sensores devuelven azimut en (-180, 180] y a veces algo fuera. */
     fun normalize(deg: Double): Double {
         val d = deg % 360.0
-        return if (d < 0) d + 360.0 else d
+        val r = if (d < 0) d + 360.0 else d
+        // Un negativo minusculo mas 360 REDONDEA A 360,0 exacto, que no es un rumbo. Pasa de
+        // verdad: la media circular de 357 y 3 deja un residuo de 1e-17 negativo.
+        return if (r >= 360.0) 0.0 else r
     }
 
     /**

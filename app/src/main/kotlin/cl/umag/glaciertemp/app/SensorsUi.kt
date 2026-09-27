@@ -779,8 +779,12 @@ private fun Instrucciones(titulo: String, cuerpo: String, onOk: () -> Unit) {
 private fun ResultadoEnDosPosiciones(a: Inclinacion, b: Inclinacion) {
     val yaw = if (a.yawMd != null && b.yawMd != null)
         Reversal.heading(a.yawMd, b.yawMd) else null
+    // El pitch que se enseña es la ELEVACION DE VISTA, medida desde la vertical: lleva un
+    // desplazamiento de 90 grados que hay que quitar antes de combinar. Tratarla como una
+    // magnitud del aparato --como se hizo primero-- da -90 de sesgo con cualquier
+    // inclinacion.
     val pitch = if (a.pitchMd != null && b.pitchMd != null)
-        Reversal.device(a.pitchMd, b.pitchMd) else null
+        Reversal.viewElevation(a.pitchMd, b.pitchMd) else null
     val roll = if (a.rollMd != null && b.rollMd != null)
         Reversal.device(a.rollMd, b.rollMd) else null
 

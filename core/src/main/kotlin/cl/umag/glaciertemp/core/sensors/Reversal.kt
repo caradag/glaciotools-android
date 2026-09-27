@@ -59,6 +59,43 @@ object Reversal {
         return Corrected(Compass.normalize(media), separacion / 2.0)
     }
 
+    /**
+     * Para un RUMBO que NO cambia al girar el telefono: el rumbo de la superficie.
+     *
+     * NO ES LO MISMO QUE [heading], y confundirlos fue un error real. El rumbo del aparato
+     * --hacia donde mira su borde superior-- si gira media vuelta con el. El rumbo de la
+     * SUPERFICIE no: sale de la normal del plano, que es el eje sobre el que se esta
+     * girando, asi que la normal no se entera del giro y el rumbo tampoco. Combinarlo con
+     * [heading] resta 180 grados que no habia que restar, y el "sesgo" sale de unos 90
+     * grados siempre.
+     *
+     * Lo que SI se invierte es el error: el sesgo del acelerometro va pegado al aparato y
+     * gira con el, asi que inclina la normal estimada hacia el otro lado. Por eso promediar
+     * los dos rumbos lo cancela igual.
+     */
+    fun surfaceHeading(first: Double, second: Double): Corrected {
+        val media = Angles.mean(listOf(first, second))
+            ?: return Corrected(Compass.normalize(first), 0.0)
+        return Corrected(Compass.normalize(media), Angles.wrap(first - second) / 2.0)
+    }
+
+    /**
+     * Para una ELEVACION DE VISTA, la que se mide desde la vertical (ver `Tilt.viewElevation`).
+     *
+     * NI [surface] NI [device], y esto tambien fue un error real. La elevacion de vista es
+     * `-pitchAndroid - 90`: ese desplazamiento de 90 grados rompe la simetria. El pitch de
+     * Android si cambia de signo al girar, pero al sumarle el desplazamiento las dos
+     * lecturas suman -180 CONSTANTE, asi que tratarla como una magnitud del aparato da -90
+     * de "sesgo" pase lo que pase, y un valor que no es ninguno de los dos.
+     *
+     * Se quita el desplazamiento, se combina como lo que es --una magnitud del aparato-- y
+     * se devuelve.
+     */
+    fun viewElevation(first: Double, second: Double): Corrected {
+        val c = device(first + 90.0, second + 90.0)
+        return Corrected(c.value - 90.0, c.bias)
+    }
+
     /** Cuanto hay que fiarse: un sesgo grande dice que algo mas pasa, no solo el sensor. */
     fun warning(biases: List<Double>): String? {
         val peor = biases.maxOfOrNull { kotlin.math.abs(it) } ?: return null

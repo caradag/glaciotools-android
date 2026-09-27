@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreVert
@@ -528,6 +529,13 @@ fun PhotoStrip(
 ) {
     if (files.isEmpty()) return
     var mirando by remember { mutableStateOf<String?>(null) }
+    // SELECCION Y CONFIRMACION, no un aspa que borra al tocarla. El aspa estaba a dos
+    // milimetros de la propia foto y borraba sin preguntar y sin deshacer: un roce con el
+    // guante y la foto del bloque se habia ido, con el bloque ya a media hora de camino.
+    var seleccion by remember { mutableStateOf(setOf<String>()) }
+    var confirmar by remember { mutableStateOf(false) }
+    // Lo que ya no esta no sigue seleccionado.
+    LaunchedEffect(files) { seleccion = seleccion.intersect(files.toSet()) }
 
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.testTag(tag)) {
@@ -551,13 +559,59 @@ fun PhotoStrip(
                         }
                     }
                 }
-                IconButton(onClick = { onRemove(nombre) },
-                           modifier = Modifier.align(Alignment.TopEnd).size(24.dp)) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Remove photo",
-                         modifier = Modifier.size(16.dp))
+                // La casilla lleva su propio fondo: sobre una foto clara, una casilla
+                // sola no se ve, y una casilla que no se ve es una que se pulsa sin querer.
+                Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.align(Alignment.TopEnd).padding(2.dp)) {
+                    Checkbox(
+                        checked = nombre in seleccion,
+                        onCheckedChange = { marcado ->
+                            seleccion = if (marcado) seleccion + nombre else seleccion - nombre
+                        },
+                        modifier = Modifier.size(28.dp).testTag("$tag-check"))
                 }
             }
         }
+    }
+
+    if (seleccion.isNotEmpty()) {
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${seleccion.size} selected", style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { confirmar = true },
+                       modifier = Modifier.testTag("$tag-delete")) {
+                Icon(Icons.Outlined.Delete, null, Modifier.size(18.dp),
+                     tint = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.width(4.dp))
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+            TextButton(onClick = { seleccion = emptySet() }) { Text("Clear") }
+        }
+    }
+
+    if (confirmar) {
+        val cuantas = seleccion.size
+        AlertDialog(
+            onDismissRequest = { confirmar = false },
+            modifier = Modifier.testTag("$tag-confirm"),
+            title = { Text(if (cuantas == 1) "Delete this photo?"
+                           else "Delete these $cuantas photos?") },
+            text = { Text("This cannot be undone. A photo taken in the field cannot be " +
+                          "taken again from here.") },
+            confirmButton = {
+                TextButton(onClick = {
+                               seleccion.forEach { onRemove(it) }
+                               seleccion = emptySet(); confirmar = false
+                           },
+                           modifier = Modifier.testTag("$tag-confirm-yes")) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmar = false }) { Text("Keep") }
+            })
     }
 
     mirando?.let { nombre ->

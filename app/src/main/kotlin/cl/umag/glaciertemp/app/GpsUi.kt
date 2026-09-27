@@ -688,15 +688,11 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
              color = MaterialTheme.colorScheme.onSurfaceVariant)
         Aviso(vm, s)
 
-        // Las fotos del sitio, que es lo que hace falta para volver a la misma marca.
-        val (tomarFoto, elegirFoto) = rememberPhotoAdders(
-            newFile = { vm.newMediaFile(it) }, onAdded = { vm.addPointPhotos(it) })
-        Text("Site photos", style = MaterialTheme.typography.titleSmall)
-        PhotoStrip(p.photos, resolve = { vm.mediaFile(it) },
-                   onRemove = { vm.removePointPhoto(it) }, tag = "gps-point-photos")
-        PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "gps-point-photo")
-
         val st = p.stats
+        // ARRIBA LO QUE SE VIENE A MIRAR. Al abrir un punto guardado la pregunta es "donde
+        // esta y con que precision", no como quedo la nube de puntos: eso se mira despues,
+        // si se mira. Las fotos van al final por lo mismo.
+        if (st != null) ResumenDelPunto(st)
         if (st == null) {
             Text("This point has no fixes yet.",
                  style = MaterialTheme.typography.bodyMedium)
@@ -741,6 +737,16 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
                modifier = Modifier.testTag("gps-export")) { Text("Export") }
 
         HorizontalDivider()
+        // Las fotos del sitio, al final: son para volver a la misma marca otro dia, no para
+        // responder "donde esta este punto".
+        val (tomarFoto, elegirFoto) = rememberPhotoAdders(
+            newFile = { vm.newMediaFile(it) }, onAdded = { vm.addPointPhotos(it) })
+        Text("Site photos", style = MaterialTheme.typography.titleSmall)
+        PhotoStrip(p.photos, resolve = { vm.mediaFile(it) },
+                   onRemove = { vm.removePointPhoto(it) }, tag = "gps-point-photos")
+        PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "gps-point-photo")
+
+        HorizontalDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { renombrar = true },
                            modifier = Modifier.testTag("gps-rename")) { Text("Rename") }
@@ -781,5 +787,46 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
                 }
             },
             dismissButton = { TextButton(onClick = { borrar = false }) { Text("Cancel") } })
+    }
+}
+
+
+/**
+ * Lo que se viene a mirar al abrir un punto: donde esta y con que precision.
+ *
+ * LATITUD Y LONGITUD ARRIBA Y GRANDES, y la UTM debajo. Las dos hacen falta y no sirven para
+ * lo mismo: la geografica es la que se escribe en un cuaderno, se dicta por radio y se pega
+ * en cualquier mapa; la UTM es la que se usa para medir distancias sobre el terreno. Tener
+ * solo una obliga a convertir justo cuando no hay como.
+ */
+@Composable
+private fun ResumenDelPunto(st: GpsPointStats) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Position", style = MaterialTheme.typography.labelMedium,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${f(st.estimateLatitude, 6)}, ${f(st.estimateLongitude, 6)}",
+                 style = MaterialTheme.typography.titleLarge,
+                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                 modifier = Modifier.testTag("gps-point-latlon"))
+            Text(st.estimateUtm.format(),
+                 style = MaterialTheme.typography.bodyMedium,
+                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                 modifier = Modifier.testTag("gps-point-utm"))
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                BigReading("Altitude",
+                           st.altitude?.estimate?.let { f(it, 1) } ?: "—", "m",
+                           Modifier.weight(1f))
+                BigReading("± horizontal", f(st.horizontalStandardError, 2), "m",
+                           Modifier.weight(1f))
+                BigReading("Fixes", st.samples.toString(), "", Modifier.weight(1f))
+            }
+            Text("Altitude is over the WGS84 ellipsoid, not over the sea. " +
+                 "± is the uncertainty of the estimate, not the scatter of the fixes.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
