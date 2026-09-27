@@ -353,9 +353,9 @@ private fun Apantallamiento(profile: HorizonProfile) {
 
     Text("Balco's skyline.m, as used by the CRONUS-Earth and ICE-D calculators: the sky is " +
          "integrated in 1° sectors with sin(h)^3.3, the exponent for m = 2.3. " +
-         "Note that method assumes a horizon surveyed as points joined by straight lines; " +
-         "this one is measured as 5° sector averages, which under-reads the shielding where " +
-         "the skyline is jagged within a sector.",
+         "That method takes the horizon as points joined by straight lines, which is what " +
+         "the 72 sector means amount to here — a field survey by compass and inclinometer " +
+         "typically has eight to sixteen points, so this is an order of magnitude denser.",
          style = MaterialTheme.typography.bodySmall,
          color = MaterialTheme.colorScheme.onSurfaceVariant,
          modifier = Modifier.testTag("hz-shield-caveat"))
@@ -386,7 +386,7 @@ private fun BotonCopiarShielding(profile: HorizonProfile, strike: Double, dip: D
                            .format(profile.binDeg))
             appendLine(profile.elevations.joinToString(" ") { "%.1f".format(it) })
             append("Balco skyline.m integration, sin(h)^3.3, 1° sectors. " +
-                   "Horizon measured as sector averages.")
+                   "Horizon from 72 points at 5° spacing.")
         }
         val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
             as? android.content.ClipboardManager

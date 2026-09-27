@@ -13,6 +13,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -91,6 +92,13 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
     var sectorActual by remember { mutableIntStateOf(-1) }
     val enCurso = remember { ArrayList<Pair<Double, Double>>() }
 
+    // NO SE REGISTRA HASTA QUE SE DICE. Antes empezaba a acumular al abrir la pantalla, asi
+    // que los primeros sectores se llenaban con el telefono todavia en la mano, a la altura
+    // del pecho y apuntando a cualquier sitio -- y esos sectores ya no se podian distinguir
+    // de los buenos. Los numeros y la cruz se ven igual antes de empezar, que es lo que
+    // permite encuadrar y comprobar que el telefono esta derecho.
+    var registrando by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(v) {
         val vec = v ?: return@LaunchedEffect
         android.hardware.SensorManager.getRotationMatrixFromVector(R, vec)
@@ -98,6 +106,8 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
         azimut = az
         elevacion = el
         ladeo = ViewDirection.roll(R)
+
+        if (!registrando) return@LaunchedEffect
 
         val b = bins.binOf(az)
         if (b != sectorActual) {
@@ -115,31 +125,45 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             VistaDeCamara(Modifier.fillMaxSize())
-            Cruz(diferencia = referencia?.let { it - elevacion },
+            Cruz(diferencia = if (registrando) referencia?.let { it - elevacion } else null,
                  modifier = Modifier.fillMaxSize())
-            Lectura(azimut, elevacion, ladeo, cubiertos, bins.total(),
+            Lectura(azimut, elevacion, ladeo, cubiertos, bins.total(), registrando,
                     Modifier.align(Alignment.TopStart).padding(12.dp))
         }
 
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            LinearProgressIndicator(progress = { cubiertos.toFloat() / bins.total() },
-                                    modifier = Modifier.fillMaxWidth())
-            Text(if (abs(ladeo) > 10)
-                     "Hold the phone upright — it is tilted ${"%.0f".format(abs(ladeo))}°"
-                 else "Turn slowly, keeping the crosshair on the skyline.",
+            if (registrando) {
+                LinearProgressIndicator(progress = { cubiertos.toFloat() / bins.total() },
+                                        modifier = Modifier.fillMaxWidth())
+            }
+            Text(when {
+                     abs(ladeo) > 10 ->
+                         "Hold the phone upright — it is tilted ${"%.0f".format(abs(ladeo))}°"
+                     !registrando ->
+                         "Aim the crosshair at the skyline, then press Start. " +
+                         "Nothing is recorded until you do."
+                     else -> "Turn slowly, keeping the crosshair on the skyline."
+                 },
                  style = MaterialTheme.typography.bodySmall,
                  color = if (abs(ladeo) > 10) MaterialTheme.colorScheme.error
                          else MaterialTheme.colorScheme.onSurfaceVariant,
                  modifier = Modifier.testTag("hz-hint"))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                           enCurso.forEach { (a, e) -> bins.add(a, e) }
-                           enCurso.clear()
-                           bins.profile()?.let { onDone(it, bins.covered(), muestras) }
-                       },
-                       enabled = cubiertos > 0,
-                       modifier = Modifier.weight(1f).height(56.dp).testTag("hz-finish")) {
-                    Text("Finish", style = MaterialTheme.typography.titleMedium)
+                if (!registrando) {
+                    Button(onClick = { registrando = true },
+                           modifier = Modifier.weight(1f).height(56.dp).testTag("hz-start")) {
+                        Text("Start", style = MaterialTheme.typography.titleMedium)
+                    }
+                } else {
+                    Button(onClick = {
+                               enCurso.forEach { (a, e) -> bins.add(a, e) }
+                               enCurso.clear()
+                               bins.profile()?.let { onDone(it, bins.covered(), muestras) }
+                           },
+                           enabled = cubiertos > 0,
+                           modifier = Modifier.weight(1f).height(56.dp).testTag("hz-finish")) {
+                        Text("Finish", style = MaterialTheme.typography.titleMedium)
+                    }
                 }
                 OutlinedButton(onClick = onCancel,
                                modifier = Modifier.height(56.dp).testTag("hz-cancel")) {
@@ -270,7 +294,8 @@ private fun DrawScope.flecha(centro: Offset, arriba: Boolean, largo: Float, colo
 /** Los numeros, arriba a la izquierda y con sombra: el fondo es la imagen de la camara. */
 @Composable
 private fun Lectura(azimut: Double?, elevacion: Double, ladeo: Double,
-                    cubiertos: Int, total: Int, modifier: Modifier = Modifier) {
+                    cubiertos: Int, total: Int, registrando: Boolean,
+                    modifier: Modifier = Modifier) {
     Surface(color = Color.Black.copy(alpha = 0.45f),
             shape = MaterialTheme.shapes.small,
             modifier = modifier) {
@@ -286,8 +311,9 @@ private fun Lectura(azimut: Double?, elevacion: Double, ladeo: Double,
                  color = Color.White, fontFamily = FontFamily.Monospace,
                  style = MaterialTheme.typography.bodyMedium,
                  modifier = Modifier.testTag("hz-elevation"))
-            Text("$cubiertos/$total sectors",
-                 color = Color.White.copy(alpha = 0.8f),
+            Text(if (registrando) "$cubiertos/$total sectors" else "not recording",
+                 color = if (registrando) Color.White.copy(alpha = 0.8f)
+                         else Color(0xFFFFC107),
                  style = MaterialTheme.typography.bodySmall,
                  modifier = Modifier.testTag("hz-progress"))
         }
