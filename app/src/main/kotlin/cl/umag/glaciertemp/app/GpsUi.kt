@@ -416,12 +416,32 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
             }
         }
 
+        // CUANTOS SATELITES ENTRAN EN EL ARREGLO. Es lo que explica por que el promedio no
+        // mejora: con cuatro, mas tiempo no compensa, y lo que hay que hacer es moverse a un
+        // sitio con mas cielo, no esperar. Son los del telefono, no los del receptor
+        // geodesico.
+        val sats = satelitesEnUso()
+        Text(sats?.let { (usados, vistos) -> "$usados of $vistos satellites in the fix" }
+                 ?: "Satellite count not available",
+             style = MaterialTheme.typography.bodySmall,
+             color = when {
+                 sats == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                 sats.first < 5 -> MaterialTheme.colorScheme.error
+                 else -> MaterialTheme.colorScheme.onSurfaceVariant
+             },
+             modifier = Modifier.testTag("gps-sats"))
+
         if (s.gpsUnavailable) {
             Text("No GNSS fixes. Check that location is on, that GlacioTools has " +
                  "permission, and that you are outdoors.",
                  color = MaterialTheme.colorScheme.error,
                  style = MaterialTheme.typography.bodySmall,
                  modifier = Modifier.testTag("gps-unavailable"))
+        } else if (!a.started && a.samples.isEmpty()) {
+            Text("Nothing is being recorded yet. Place the phone where it will sit, then " +
+                 "press Start.",
+                 style = MaterialTheme.typography.bodyMedium,
+                 modifier = Modifier.testTag("gps-notstarted"))
         } else if (a.waiting && a.running) {
             Text("Waiting for the first fix...",
                  style = MaterialTheme.typography.bodySmall,
@@ -444,6 +464,17 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
         }
 
         HorizontalDivider()
+        // FOTOS DEL SITIO. Un promedio se mejora volviendo otro dia, y "vuelve a donde
+        // estaba el tripode" no lo resuelve una coordenada: a un metro de error, la foto es
+        // lo que dice si se esta sobre la misma marca o un paso al lado.
+        val (tomarFoto, elegirFoto) = rememberPhotoAdders(
+            newFile = { vm.newMediaFile(it) }, onAdded = { vm.addAveragingPhotos(it) })
+        Text("Site photos", style = MaterialTheme.typography.titleSmall)
+        PhotoStrip(a.photos, resolve = { vm.mediaFile(it) },
+                   onRemove = { vm.removeAveragingPhoto(it) }, tag = "gps-photos")
+        PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "gps-photo")
+
+        HorizontalDivider()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // Guardar es ademas terminar: no hay un "Done" aparte, porque tenerlo obligaba a
             // pulsar dos botones para lo unico que uno quiere hacer al acabar.
@@ -453,6 +484,10 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
             if (a.running) {
                 OutlinedButton(onClick = { vm.pauseAveraging() },
                                modifier = Modifier.testTag("gps-pause")) { Text("Pause") }
+            } else if (!a.started) {
+                // Aun no se ha empezado: el boton es Start y es el que manda en la pantalla.
+                Button(onClick = { vm.resumeAveraging() },
+                       modifier = Modifier.testTag("gps-start")) { Text("Start") }
             } else {
                 // Reanudar CONSERVA lo medido: abre un tramo nuevo sobre la misma nube.
                 OutlinedButton(onClick = { vm.resumeAveraging() },
@@ -489,6 +524,33 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
                 TextButton(onClick = { confirmarSalida = false }) { Text("Keep measuring") }
             })
     }
+}
+
+/**
+ * Cuantos satelites usa el arreglo y cuantos se ven, o null si no se puede saber.
+ *
+ * Se lee del propio sistema con un callback de GnssStatus y no del proveedor de posicion:
+ * una posicion no trae consigo de cuantos satelites salio, y ese es precisamente el numero
+ * que dice si esperar mas va a servir de algo.
+ */
+@Composable
+private fun satelitesEnUso(): Pair<Int, Int>? {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val estado = remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    DisposableEffect(Unit) {
+        val lm = ctx.getSystemService(android.content.Context.LOCATION_SERVICE)
+            as? android.location.LocationManager
+        if (lm == null) return@DisposableEffect onDispose { }
+        val cb = object : android.location.GnssStatus.Callback() {
+            override fun onSatelliteStatusChanged(st: android.location.GnssStatus) {
+                estado.value = (0 until st.satelliteCount).count { st.usedInFix(it) } to
+                               st.satelliteCount
+            }
+        }
+        val ok = runCatching { lm.registerGnssStatusCallback(cb, null) }.getOrDefault(false)
+        onDispose { if (ok) runCatching { lm.unregisterGnssStatusCallback(cb) } }
+    }
+    return estado.value
 }
 
 /** Mantiene la pantalla encendida mientras [activo], y la suelta al salir. */

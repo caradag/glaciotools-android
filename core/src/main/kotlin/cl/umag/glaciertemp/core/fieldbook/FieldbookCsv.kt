@@ -198,6 +198,7 @@ object FieldbookCsv {
                        "latitude", "longitude", "altitude_m_wgs84", "position_source",
                        "height_max_m", "height_min_m", "long_axis_m", "short_axis_m",
                        "strike_deg", "dip_deg", "shielding_factor", "horizon_measured",
+                       "horizon_points_manual",
                        "site", "place", "boulder", "surface",
                        "associated_images", "entry_id"))
             entries.filter { it.type == EntryType.COSMO }
@@ -214,6 +215,7 @@ object FieldbookCsv {
                         c?.heightMaxM, c?.heightMinM, c?.longAxisM, c?.shortAxisM,
                         c?.strikeDeg, c?.dipDeg, c?.shieldingFactor,
                         if (c?.horizonDeg?.isNotEmpty() == true) "yes" else "no",
+                        c?.manualAzimuths?.size ?: 0,
                         c?.site ?: "", c?.place ?: "", c?.boulder ?: "", c?.surface ?: "",
                         e.photos.size, e.id))
                 }

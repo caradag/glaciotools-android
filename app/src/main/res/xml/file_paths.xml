@@ -2,11 +2,16 @@
 <!--
     Lo unico que el FileProvider deja salir: las carpetas de medios.
 
-    UNA LINEA POR ALMACEN, y hay que anadirla al crear uno nuevo. El diario guarda sus fotos
-    aparte de las de la libreta (si compartieran carpeta, el barrido de huerfanos de la
-    libreta las borraria) y esta lista se quedo sin esa segunda linea: el boton de camara del
-    diario no hacia NADA, en silencio, porque getUriForFile lanza al no encontrar una raiz
-    declarada que contenga el fichero.
+    UNA LINEA POR ALMACEN, Y ES UNA TRAMPA QUE YA HA MORDIDO TRES VECES. Cada almacen guarda
+    sus fotos en su propia carpeta (a proposito: el barrido de huerfanos de la libreta
+    considera en uso solo lo que citan sus notas, y borraria las de los demas), asi que al
+    crear un almacen nuevo hay que acordarse de anadir aqui su renglon. Si falta,
+    getUriForFile lanza "Failed to find configured root" y el boton de camara no hace NADA.
+
+    La lista completa de carpetas de medios, que tiene que coincidir con esta:
+      fieldbook/media   notas de la libreta
+      journal/media     diario de campana
+      gps-points/media  fotos del sitio de un punto promediado
 
     Acotado a las carpetas de medios y no a la carpeta privada entera. La URI que se le
     entrega a la camara da permiso de escritura sobre lo que este dentro del camino
@@ -15,4 +20,5 @@
 <paths>
     <files-path name="fieldbook-media" path="fieldbook/media/" />
     <files-path name="journal-media" path="journal/media/" />
+    <files-path name="gps-media" path="gps-points/media/" />
 </paths>

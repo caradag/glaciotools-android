@@ -17,6 +17,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.core.fieldbook.*
+import androidx.compose.ui.text.drawText
+import cl.umag.glaciertemp.core.sensors.HorizonPoints
 import cl.umag.glaciertemp.core.sensors.HorizonProfile
 import cl.umag.glaciertemp.core.sensors.Shielding
 
@@ -728,6 +730,7 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
     HorizontalDivider()
     Text("Shielding", style = MaterialTheme.typography.titleSmall)
 
+    var midiendoBuzamiento by remember { mutableStateOf(false) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         NumberField("Strike", c.strikeDeg,
                     onValue = { v -> edita(inmediato = true) { it.copy(strikeDeg = v) } },
@@ -736,19 +739,42 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                     onValue = { v -> edita(inmediato = true) { it.copy(dipDeg = v) } },
                     suffix = "°", modifier = Modifier.weight(1f), tag = "fb-cosmo-dip")
     }
+    // MEDIRLO ES MEJOR QUE ESTIMARLO: a ojo se falla diez grados con facilidad, y entre 40 y
+    // 50 el factor cambia dos centesimas.
+    OutlinedButton(onClick = { midiendoBuzamiento = true },
+                   modifier = Modifier.testTag("fb-cosmo-measure-dip")) {
+        Text("Measure with the phone")
+    }
     Text("Dip is down to the right of the strike: strike 0, dip 45 falls 45° to the east.",
          style = MaterialTheme.typography.bodySmall,
          color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-    // EL FACTOR SE RECALCULA AQUI y no se lee del guardado: el rumbo y el buzamiento se
-    // pueden corregir despues de medir el horizonte, y un numero que no siguiera a sus
-    // propias entradas seria peor que no tenerlo.
-    val factor = remember(c.horizonDeg, c.horizonBinDeg, c.strikeDeg, c.dipDeg) {
-        if (c.horizonDeg.isEmpty() && c.dipDeg == null) null
-        else Shielding.compute(
-            c.horizonDeg.takeIf { it.isNotEmpty() }
-                ?.let { HorizonProfile(it.toDoubleArray(), c.horizonBinDeg) },
-            c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0).factor
+    // El horizonte que MANDA en la cuenta: el levantado a mano si lo hay, porque es el mas
+    // preciso por punto; si no, el que barrio el telefono.
+    val puntosManuales = remember(c.manualAzimuths, c.manualElevations) {
+        c.manualAzimuths.indices
+            .mapNotNull { k ->
+                c.manualElevations.getOrNull(k)?.let { HorizonPoints.Point(c.manualAzimuths[k], it) }
+            }
+    }
+    val perfilTelefono = remember(c.horizonDeg, c.horizonBinDeg) {
+        c.horizonDeg.takeIf { it.isNotEmpty() }
+            ?.let { HorizonProfile(it.toDoubleArray(), c.horizonBinDeg) }
+    }
+
+    val factor = remember(puntosManuales, perfilTelefono, c.strikeDeg, c.dipDeg) {
+        when {
+            puntosManuales.isNotEmpty() -> {
+                val porRelieve = HorizonPoints.toShieldingHorizon(puntosManuales)
+                val porBuz = Shielding.dippingHorizon(c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0)
+                Shielding.factorOf(DoubleArray(Shielding.SECTORS) {
+                    maxOf(porRelieve[it], porBuz[it])
+                })
+            }
+            perfilTelefono != null || c.dipDeg != null ->
+                Shielding.compute(perfilTelefono, c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0).factor
+            else -> null
+        }
     }
     LaunchedEffect(factor) {
         if (factor != c.shieldingFactor) edita(inmediato = true) { it.copy(shieldingFactor = factor) }
@@ -765,22 +791,287 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                  modifier = Modifier.testTag("fb-cosmo-factor"))
         }
         Button(onClick = onMapHorizon, modifier = Modifier.testTag("fb-cosmo-map")) {
-            Text(if (c.horizonDeg.isEmpty()) "Map horizon" else "Re-map")
+            Text(if (perfilTelefono == null) "Map horizon" else "Re-map")
         }
     }
-    Text(if (c.horizonDeg.isEmpty())
-             "No horizon measured yet. Without it the factor only accounts for the dip of " +
-             "the surface itself, not for the terrain around it."
-         else "Horizon measured: ${c.horizonDeg.size} sectors of ${c.horizonBinDeg}°. " +
-              "Highest %.0f°.".format(c.horizonDeg.max()),
-         style = MaterialTheme.typography.bodySmall,
-         color = if (c.horizonDeg.isEmpty()) MaterialTheme.colorScheme.error
-                 else MaterialTheme.colorScheme.onSurfaceVariant,
-         modifier = Modifier.testTag("fb-cosmo-horizon-state"))
+
+    // LOS DOS FACTORES, CUANDO HAY DOS MEDIDAS. Es la razon de poder meterlas a mano: que
+    // coincidan dice que las dos valen; que difieran dice que una se equivoco, y eso hay que
+    // saberlo antes de mandar la muestra al laboratorio.
+    if (puntosManuales.isNotEmpty() && perfilTelefono != null) {
+        val delTelefono = Shielding.compute(perfilTelefono, c.strikeDeg ?: 0.0,
+                                            c.dipDeg ?: 0.0).factor
+        Text("Phone sweep gives %.4f, hand survey %.4f. The hand survey is the one used."
+                 .format(delTelefono, factor ?: 0.0),
+             style = MaterialTheme.typography.bodySmall,
+             color = if (kotlin.math.abs(delTelefono - (factor ?: 0.0)) > 0.01)
+                         MaterialTheme.colorScheme.error
+                     else MaterialTheme.colorScheme.onSurfaceVariant,
+             modifier = Modifier.testTag("fb-cosmo-compare"))
+    }
+
+    val paraDibujar = puntosManuales.ifEmpty {
+        perfilTelefono?.let { HorizonPoints.fromProfile(it) } ?: emptyList()
+    }
+    if (paraDibujar.isEmpty()) {
+        Text("No horizon yet. Without it the factor only accounts for the dip of the " +
+             "surface itself, not for the terrain around it.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.error,
+             modifier = Modifier.testTag("fb-cosmo-horizon-state"))
+    } else {
+        // EL GRAFICO VIVE EN LA NOTA. Un horizonte como lista de setenta numeros no se puede
+        // revisar; dibujado se ve de un vistazo si falta un trozo o si hay un pico absurdo,
+        // que es justo lo que conviene notar estando todavia en el sitio.
+        PerfilDeHorizonte(paraDibujar,
+                          Modifier.fillMaxWidth().height(160.dp).testTag("fb-cosmo-chart"))
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (puntosManuales.isNotEmpty())
+                     "${puntosManuales.size} points, surveyed by hand"
+                 else "${paraDibujar.size} sectors of ${c.horizonBinDeg}°, phone sweep",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                 modifier = Modifier.weight(1f).testTag("fb-cosmo-horizon-state"))
+            CopiarHorizonte(paraDibujar)
+        }
+    }
+
+    var editandoPuntos by remember { mutableStateOf(false) }
+    TextButton(onClick = { editandoPuntos = true },
+               modifier = Modifier.testTag("fb-cosmo-manual")) {
+        Text(if (puntosManuales.isEmpty()) "Enter horizon by hand"
+             else "Edit the hand survey")
+    }
+
+    if (midiendoBuzamiento) MedirRumboYBuzamiento(
+        onDone = { r, b ->
+            edita(inmediato = true) { it.copy(strikeDeg = r, dipDeg = b) }
+            midiendoBuzamiento = false
+        },
+        onCancel = { midiendoBuzamiento = false })
+
+    if (editandoPuntos) HorizonteAMano(
+        azimutes = c.manualAzimuths, elevaciones = c.manualElevations,
+        onDone = { az, el ->
+            edita(inmediato = true) { it.copy(manualAzimuths = az, manualElevations = el) }
+            editandoPuntos = false
+        },
+        onCancel = { editandoPuntos = false })
 
     HorizontalDivider()
     Text("Photos", style = MaterialTheme.typography.titleSmall)
     PhotoStrip(e.photos, resolve = { vm.mediaFile(it) },
                onRemove = { vm.removePhoto(it) }, tag = "fb-cosmo-photos")
     PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "fb-cosmo-photo")
+}
+
+// ----------------------- piezas del apantallamiento de una muestra -----------------------
+
+/**
+ * El horizonte dibujado, relleno hacia abajo.
+ *
+ * Lo de abajo es roca y lo de arriba cielo: con una linea suelta habria que pararse a pensar
+ * cual es cual. Es el mismo dibujo que el del Horizon mapper, en pequeno y sin el sol: aqui
+ * lo que se revisa es la MEDIDA --que no falte un trozo, que no haya un pico imposible-- y
+ * eso conviene verlo estando todavia junto al bloque.
+ */
+@Composable
+fun PerfilDeHorizonte(puntos: List<HorizonPoints.Point>, modifier: Modifier = Modifier) {
+    val ejes = MaterialTheme.colorScheme.onSurfaceVariant
+    val relleno = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+    val borde = MaterialTheme.colorScheme.onSurface
+    val fondo = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+    val medidor = androidx.compose.ui.text.rememberTextMeasurer()
+    val estilo = MaterialTheme.typography.labelSmall.copy(color = ejes)
+
+    val orden = remember(puntos) { puntos.sortedBy { it.azimuth } }
+    val maxEl = remember(orden) {
+        ((orden.maxOfOrNull { it.elevation } ?: 10.0).coerceAtLeast(10.0) / 10).toInt() * 10 + 10
+    }
+
+    androidx.compose.foundation.Canvas(modifier) {
+        val izq = 34f * density
+        val abajo = 18f * density
+        val w = size.width - izq
+        val h = size.height - abajo
+
+        fun x(az: Double) = izq + (az / 360.0).toFloat() * w
+        fun y(el: Double) = ((maxEl - el.coerceAtLeast(0.0)) / maxEl).toFloat() * h
+
+        drawRect(fondo, androidx.compose.ui.geometry.Offset(izq, 0f),
+                 androidx.compose.ui.geometry.Size(w, h))
+
+        listOf(0, maxEl / 2, maxEl).forEach { g ->
+            val yy = y(g.toDouble())
+            drawLine(ejes.copy(alpha = if (g == 0) 0.7f else 0.25f),
+                     androidx.compose.ui.geometry.Offset(izq, yy),
+                     androidx.compose.ui.geometry.Offset(size.width, yy), 1.5f)
+            val r = medidor.measure("$g°", estilo)
+            drawText(r, topLeft = androidx.compose.ui.geometry.Offset(
+                0f, yy - r.size.height / 2f))
+        }
+
+        listOf(0 to "N", 90 to "E", 180 to "S", 270 to "W").forEach { (az, n) ->
+            val xx = x(az.toDouble())
+            drawLine(ejes.copy(alpha = 0.4f),
+                     androidx.compose.ui.geometry.Offset(xx, 0f),
+                     androidx.compose.ui.geometry.Offset(xx, h), 1f)
+            val r = medidor.measure(n, estilo)
+            drawText(r, topLeft = androidx.compose.ui.geometry.Offset(
+                xx - r.size.width / 2f, h + 1f))
+        }
+
+        if (orden.isEmpty()) return@Canvas
+        // Se cierra el contorno dando la vuelta: el ultimo punto conecta con el primero por
+        // el norte, que es lo que hace un horizonte y no una linea suelta.
+        val cerrado = orden + HorizonPoints.Point(orden.first().azimuth + 360.0,
+                                                  orden.first().elevation)
+        val p = androidx.compose.ui.graphics.Path()
+        p.moveTo(x(0.0), y(orden.last().elevation))
+        cerrado.forEach { q -> p.lineTo(x(q.azimuth.coerceAtMost(360.0)), y(q.elevation)) }
+        val relleno2 = androidx.compose.ui.graphics.Path().apply {
+            addPath(p); lineTo(x(360.0), h); lineTo(x(0.0), h); close()
+        }
+        drawPath(relleno2, relleno)
+        drawPath(p, borde, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.5f))
+        // Los puntos, para distinguir ocho medidos a mano de setenta y dos barridos.
+        if (orden.size <= 40) orden.forEach { q ->
+            drawCircle(borde, radius = 3.5f,
+                       center = androidx.compose.ui.geometry.Offset(x(q.azimuth), y(q.elevation)))
+        }
+    }
+}
+
+/** Copia el horizonte en el formato de la calculadora de ICE-D: dos lineas de numeros. */
+@Composable
+private fun CopiarHorizonte(puntos: List<HorizonPoints.Point>) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var copiado by remember { mutableStateOf(false) }
+    LaunchedEffect(copiado) { if (copiado) { kotlinx.coroutines.delay(1500); copiado = false } }
+    OutlinedButton(
+        onClick = {
+            val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as? android.content.ClipboardManager
+            cb?.setPrimaryClip(android.content.ClipData.newPlainText(
+                "GlacioTools", HorizonPoints.toClipboard(puntos)))
+            copiado = true
+        },
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        modifier = Modifier.testTag("fb-cosmo-copy")) {
+        Text(if (copiado) "Copied" else "Copy")
+    }
+}
+
+/**
+ * Rumbo y buzamiento apoyando el telefono en la roca.
+ *
+ * Sin cuenta atras sonora: aqui SI se ve la pantalla, porque el telefono esta tumbado
+ * delante y no apuntando al cielo.
+ */
+@Composable
+private fun MedirRumboYBuzamiento(onDone: (Double, Double) -> Unit, onCancel: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var rumbo by remember { mutableStateOf<Double?>(null) }
+    var buzamiento by remember { mutableStateOf<Double?>(null) }
+
+    DisposableEffect(Unit) {
+        val sm = ctx.getSystemService(android.content.Context.SENSOR_SERVICE)
+            as? android.hardware.SensorManager
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)
+        if (sm == null || sensor == null) return@DisposableEffect onDispose { }
+        val R = FloatArray(9)
+        val oyente = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(ev: android.hardware.SensorEvent) {
+                android.hardware.SensorManager.getRotationMatrixFromVector(R, ev.values)
+                val (r, b) = Shielding.strikeDipFrom(R)
+                rumbo = r; buzamiento = b
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+        sm.registerListener(oyente, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+        onDispose { sm.unregisterListener(oyente) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        modifier = Modifier.testTag("fb-cosmo-dip-dialog"),
+        title = { Text("Lay the phone on the surface") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Screen up, flat against the rock, then read it without moving it.")
+                Text("Strike %s   Dip %s".format(
+                         rumbo?.let { "%.0f°".format(it) } ?: "—",
+                         buzamiento?.let { "%.0f°".format(it) } ?: "—"),
+                     style = MaterialTheme.typography.headlineSmall,
+                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                     modifier = Modifier.testTag("fb-cosmo-dip-live"))
+                Text("The strike needs the magnetometer, so keep the hammer and the sled away.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onDone(rumbo ?: 0.0, buzamiento ?: 0.0) },
+                       enabled = buzamiento != null,
+                       modifier = Modifier.testTag("fb-cosmo-dip-use")) { Text("Use these") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } })
+}
+
+/**
+ * El horizonte tecleado a mano, en el formato de la calculadora.
+ *
+ * DOS CAMPOS Y NO UNA TABLA DE PARES. Lo que se trae de terreno es una columna de azimuts y
+ * otra de elevaciones, y lo que se quiere despues es pegarlas en la pagina de ICE-D, que
+ * tambien son dos campos. Una tabla de filas obligaria a teclear alternando entre dos
+ * numeros que en el cuaderno estan en columnas separadas.
+ */
+@Composable
+private fun HorizonteAMano(
+    azimutes: List<Double>, elevaciones: List<Double>,
+    onDone: (List<Double>, List<Double>) -> Unit, onCancel: () -> Unit,
+) {
+    var az by remember { mutableStateOf(azimutes.joinToString(" ") { "%.0f".format(it) }) }
+    var el by remember { mutableStateOf(elevaciones.joinToString(" ") { "%.0f".format(it) }) }
+    val leido = remember(az, el) { HorizonPoints.parse(az, el) }
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        modifier = Modifier.testTag("fb-cosmo-manual-dialog"),
+        title = { Text("Horizon by hand") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Compass and inclinometer: one line of azimuths, one of elevations, " +
+                     "in the same order. Same format as the ICE-D calculator.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = az, onValueChange = { az = it },
+                    label = { Text("Azimuths") }, placeholder = { Text("0 55 115 235 310") },
+                    modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-manual-az"))
+                OutlinedTextField(
+                    value = el, onValueChange = { el = it },
+                    label = { Text("Elevations") }, placeholder = { Text("3 0 5 0 0") },
+                    modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-manual-el"))
+                leido.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error,
+                         style = MaterialTheme.typography.bodySmall,
+                         modifier = Modifier.testTag("fb-cosmo-manual-error"))
+                }
+                if (leido.error == null && leido.points.isNotEmpty()) {
+                    Text("${leido.points.size} points.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onDone(leido.points.map { it.azimuth },
+                                   leido.points.map { it.elevation }) },
+                enabled = leido.error == null,
+                modifier = Modifier.testTag("fb-cosmo-manual-save")) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } })
 }

@@ -23,6 +23,10 @@ data class AveragingState(
     /** Cuantas se anadieron en ESTA sesion y aun no estan en disco. */
     val unsaved: Int = 0,
     val waiting: Boolean = true,
+    /** Fotos del sitio, para poder volver al mismo punto otro dia. */
+    val photos: List<String> = emptyList(),
+    /** Si ya se pulso Start alguna vez en esta visita. */
+    val started: Boolean = false,
 )
 
 data class GpsUiState(
@@ -173,7 +177,13 @@ class GpsViewModel : ViewModel() {
             averaging = AveragingState(
                 pointId = pointId,
                 name = name.ifBlank { pointId?.let { store?.load(it)?.header?.name } ?: "" },
-                running = true,
+                // NO SE EMPIEZA SOLO. A veces el telefono hay que dejarlo sobre la
+                // marca, o encajado donde no se llega comodamente al boton, y unos minutos
+                // de muestras tomadas mientras se coloca ensucian justo el promedio que se
+                // venia a mejorar. Se empieza con Start.
+                running = false,
+                started = false,
+                photos = pointId?.let { store?.photos(it) } ?: emptyList(),
                 samples = averager.samples(),
                 projected = averager.projected(),
                 stats = averager.stats(),
@@ -182,7 +192,6 @@ class GpsViewModel : ViewModel() {
                 // viejas ya estan en pantalla y decir "esperando la primera" seria mentir.
                 waiting = previas.isEmpty(),
             ))
-        escuchar(loc)
     }
 
     /**
@@ -203,7 +212,7 @@ class GpsViewModel : ViewModel() {
         averager.startSession()
         _state.value = _state.value.copy(
             error = null, gpsUnavailable = false,
-            averaging = _state.value.averaging?.copy(running = true))
+            averaging = _state.value.averaging?.copy(running = true, started = true))
         escuchar(loc)
     }
 
@@ -247,6 +256,41 @@ class GpsViewModel : ViewModel() {
     }
 
     /** Deja de escuchar el receptor, sin tirar lo acumulado. */
+    // ------------------------------- fotos del sitio -------------------------------
+
+    /**
+     * Las fotos se guardan EN CUANTO se toman, sin esperar a "Save and finish".
+     *
+     * Una foto del sitio y un promedio de veinte minutos no corren la misma suerte: el
+     * promedio se puede repetir volviendo, pero la foto se hizo desde donde se estaba en ese
+     * momento. Si el punto todavia no existe en disco, se crea ahora.
+     */
+    fun addAveragingPhotos(names: List<String>) {
+        val a = _state.value.averaging ?: return
+        val st = store ?: return
+        val id = a.pointId ?: st.create(a.name).also { nuevo ->
+            _state.value = _state.value.copy(averaging = a.copy(pointId = nuevo))
+        }
+        val todas = _state.value.averaging?.photos.orEmpty() + names
+        st.setPhotos(id, todas)
+        _state.value = _state.value.copy(
+            averaging = _state.value.averaging?.copy(photos = todas))
+        refresh()
+    }
+
+    fun removeAveragingPhoto(name: String) {
+        val a = _state.value.averaging ?: return
+        val st = store ?: return
+        val quedan = a.photos - name
+        a.pointId?.let { st.setPhotos(it, quedan) }
+        runCatching { st.media(name).delete() }
+        _state.value = _state.value.copy(averaging = a.copy(photos = quedan))
+    }
+
+    fun newMediaFile(extension: String): java.io.File? = store?.newMediaFile(extension)
+
+    fun mediaFile(name: String): java.io.File? = store?.media(name)
+
     fun pauseAveraging() {
         recogida?.cancel(); recogida = null
         _state.value = _state.value.copy(

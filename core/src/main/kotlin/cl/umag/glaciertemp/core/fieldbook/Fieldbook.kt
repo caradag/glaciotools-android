@@ -188,13 +188,25 @@ data class CosmoSample(
      */
     val horizonDeg: List<Double> = emptyList(),
     val horizonBinDeg: Int = 5,
-    /** Lo que sale de los tres anteriores. Se guarda para no depender de recalcularlo. */
+    /**
+     * El horizonte levantado A MANO, con brujula y clinometro, como pares azimut-elevacion.
+     *
+     * SE GUARDA APARTE del que barre el telefono, no en su lugar. No son la misma medida con
+     * distinta suerte: la de mano es mas precisa por punto y la del telefono cubre mucho
+     * mas, y teniendo las dos se pueden comparar. Guardar una encima de la otra perderia
+     * justo lo que hace util haber medido dos veces.
+     */
+    val manualAzimuths: List<Double> = emptyList(),
+    val manualElevations: List<Double> = emptyList(),
+
+    /** Lo que sale de los anteriores. Se guarda para no depender de recalcularlo. */
     val shieldingFactor: Double? = null,
 ) {
     fun isEmpty(): Boolean =
         site.isBlank() && place.isBlank() && boulder.isBlank() && surface.isBlank() &&
         heightMaxM == null && heightMinM == null && longAxisM == null && shortAxisM == null &&
-        strikeDeg == null && dipDeg == null && horizonDeg.isEmpty()
+        strikeDeg == null && dipDeg == null && horizonDeg.isEmpty() &&
+        manualAzimuths.isEmpty()
 }
 
 /** Una medicion de altura de una baliza, con su posible medicion GNSS asociada. */

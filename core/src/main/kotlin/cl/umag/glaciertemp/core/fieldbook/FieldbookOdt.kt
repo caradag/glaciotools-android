@@ -165,6 +165,11 @@ object FieldbookOdt {
                     c.shieldingFactor?.let { apantalla += "shielding factor %.4f".format(it) }
                     if (apantalla.isNotEmpty())
                         doc.body("Shielding: " + apantalla.joinToString(", "))
+                    if (c.manualAzimuths.isNotEmpty()) {
+                        doc.meta("Horizon surveyed by hand, azimuth then elevation in degrees:")
+                        doc.meta(c.manualAzimuths.joinToString(" ") { FieldbookCsv.num(it) })
+                        doc.meta(c.manualElevations.joinToString(" ") { FieldbookCsv.num(it) })
+                    }
                     if (c.horizonDeg.isNotEmpty()) {
                         // El perfil ENTERO va al documento: es la medida, y el factor solo
                         // una cuenta hecha sobre ella que cualquiera puede querer rehacer.

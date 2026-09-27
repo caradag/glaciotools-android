@@ -25,7 +25,28 @@ data class GpsPointSummary(
  */
 class GpsPointStore(private val dir: File) {
 
-    init { dir.mkdirs() }
+    /**
+     * Fotos del sitio, en carpeta propia.
+     *
+     * Aparte de las de la libreta a proposito: el barrido de huerfanos de la libreta
+     * considera en uso solo lo que citan sus notas, y una foto de un punto guardada alli se
+     * borraria sola a los diez minutos.
+     */
+    val mediaDir: File = File(dir, "media")
+
+    init { dir.mkdirs(); mediaDir.mkdirs() }
+
+    fun newMediaFile(extension: String): File {
+        var f = File(mediaDir, "g" + System.currentTimeMillis() + "-" +
+                               (100000..999999).random() + "." + extension.trimStart('.'))
+        while (f.exists()) {
+            f = File(mediaDir, "g" + System.currentTimeMillis() + "-" +
+                               (100000..999999).random() + "." + extension.trimStart('.'))
+        }
+        return f
+    }
+
+    fun media(name: String): File = File(mediaDir, name)
 
     private fun file(id: String) = File(dir, "$id.gpspoint")
 
@@ -72,7 +93,25 @@ class GpsPointStore(private val dir: File) {
         return ok
     }
 
-    fun delete(id: String): Boolean = file(id).delete()
+    /** Cambia la lista de fotos de un punto. Reescribe la cabecera, como el renombrado. */
+    fun setPhotos(id: String, photos: List<String>): Boolean {
+        val p = load(id) ?: return false
+        val tmp = File(dir, "$id.tmp")
+        tmp.writeText(GpsPointFile.header(p.header.copy(photos = photos)) +
+                      GpsPointFile.appendBlock(p.samples))
+        val ok = tmp.renameTo(file(id))
+        if (!ok) tmp.delete()
+        return ok
+    }
+
+    fun photos(id: String): List<String> = load(id)?.header?.photos ?: emptyList()
+
+    fun delete(id: String): Boolean {
+        // Las fotos se van con el punto: si no, quedarian en la carpeta sin nada que las
+        // nombre y nadie sabria de donde salieron.
+        load(id)?.header?.photos?.forEach { media(it).delete() }
+        return file(id).delete()
+    }
 
     /**
      * Todos los puntos, el mas reciente primero.

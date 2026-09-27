@@ -40,6 +40,15 @@ object GpsPointFile {
         val id: String,
         val name: String,
         val createdEpochMillis: Long,
+        /**
+         * Fotos del sitio.
+         *
+         * PARA VOLVER AL MISMO PUNTO. Un promedio de veinte minutos se mejora regresando otro
+         * dia, y "vuelve a donde estaba el tripode" no se resuelve con una coordenada: a un
+         * metro de error, la foto del sitio es lo que dice si se esta sobre la misma marca o
+         * un paso al lado.
+         */
+        val photos: List<String> = emptyList(),
     )
 
     fun header(h: Header): String = buildString {
@@ -49,6 +58,7 @@ object GpsPointFile {
         // sitio. Se aplanan aqui: uno solo partiria el fichero en dos.
         append("name=").append(h.name.replace('\n', ' ').replace('\r', ' ')).append('\n')
         append("created=").append(h.createdEpochMillis).append('\n')
+        h.photos.forEach { append("photo=").append(it).append('\n') }
         append(SEPARATOR).append('\n')
         append(COLUMNS).append('\n')
     }
@@ -114,6 +124,7 @@ object GpsPointFile {
         var id: String? = null
         var name = ""
         var created = 0L
+        val fotos = ArrayList<String>()
         for (l in lineas.take(corte)) {
             val t = l.trim()
             if (t.isEmpty() || t.startsWith("#")) continue
@@ -123,6 +134,7 @@ object GpsPointFile {
                 "id" -> id = t.substring(i + 1)
                 "name" -> name = t.substring(i + 1)
                 "created" -> created = t.substring(i + 1).toLongOrNull() ?: 0L
+                "photo" -> t.substring(i + 1).takeIf { it.isNotBlank() }?.let { fotos += it }
             }
         }
         if (id.isNullOrBlank()) return null
@@ -160,6 +172,6 @@ object GpsPointFile {
         // visitas, horas o dias. Suponerlo es mejor que tratar dos visitas como una sola, que
         // es lo que haria creer que hay mucha mas informacion independiente de la que hay.
         val finales = if (huboMarcas) muestras else inferirTramos(muestras)
-        return Parsed(Header(id, name, created), finales, saltadas)
+        return Parsed(Header(id, name, created, fotos), finales, saltadas)
     }
 }

@@ -182,6 +182,10 @@ object FieldbookFile {
                     kvNum("strike", c.strikeDeg)
                     kvNum("dip", c.dipDeg)
                     kvNum("shielding", c.shieldingFactor)
+                    if (c.manualAzimuths.isNotEmpty()) {
+                        kv("manual_az", c.manualAzimuths.joinToString(" ") { "%.1f".format(it) })
+                        kv("manual_el", c.manualElevations.joinToString(" ") { "%.1f".format(it) })
+                    }
                     if (c.horizonDeg.isNotEmpty()) {
                         kv("horizon_bin", c.horizonBinDeg.toString())
                         // El perfil entero en UNA linea: son 72 numeros y partirlos en 72
@@ -359,6 +363,10 @@ object FieldbookFile {
                     dipDeg = c?.num("dip"),
                     horizonBinDeg = c?.one("horizon_bin")?.toIntOrNull() ?: 5,
                     horizonDeg = c?.one("horizon")?.split(" ")
+                        ?.mapNotNull { it.toDoubleOrNull() } ?: emptyList(),
+                    manualAzimuths = c?.one("manual_az")?.split(" ")
+                        ?.mapNotNull { it.toDoubleOrNull() } ?: emptyList(),
+                    manualElevations = c?.one("manual_el")?.split(" ")
                         ?.mapNotNull { it.toDoubleOrNull() } ?: emptyList(),
                     shieldingFactor = c?.num("shielding"),
                 )
