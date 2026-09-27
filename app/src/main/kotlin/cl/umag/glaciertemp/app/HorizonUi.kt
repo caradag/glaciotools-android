@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import cl.umag.glaciertemp.core.sensors.HorizonFeedback
 import cl.umag.glaciertemp.core.sensors.HorizonBins
 import cl.umag.glaciertemp.core.sensors.HorizonProfile
 import cl.umag.glaciertemp.core.sensors.ViewDirection
@@ -76,50 +77,92 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
     }
 
     val bins = remember { HorizonBins() }
-    val R = remember { FloatArray(9) }
-    val v by sensorRotation()
 
     var azimut by remember { mutableStateOf<Double?>(null) }
     var elevacion by remember { mutableStateOf(0.0) }
     var ladeo by remember { mutableStateOf(0.0) }
     var cubiertos by remember { mutableIntStateOf(0) }
     var muestras by remember { mutableIntStateOf(0) }
-    // La media del sector ANTES de esta visita: es contra lo que se compara al volver a pasar.
     var referencia by remember { mutableStateOf<Double?>(null) }
+    var deprisa by remember { mutableStateOf(false) }
+    var hz by remember { mutableDoubleStateOf(0.0) }
 
-    // El sector en el que se esta y lo que se lleva acumulado en ESTA visita. Se vuelca al
-    // salir del sector: mientras se esta dentro, comparar contra uno mismo no diria nada.
-    var sectorActual by remember { mutableIntStateOf(-1) }
-    val enCurso = remember { ArrayList<Pair<Double, Double>>() }
-
-    // NO SE REGISTRA HASTA QUE SE DICE. Antes empezaba a acumular al abrir la pantalla, asi
+    // NO SE REGISTRA HASTA QUE SE DICE. Antes acumulaba desde que se abria la pantalla, asi
     // que los primeros sectores se llenaban con el telefono todavia en la mano, a la altura
-    // del pecho y apuntando a cualquier sitio -- y esos sectores ya no se podian distinguir
-    // de los buenos. Los numeros y la cruz se ven igual antes de empezar, que es lo que
-    // permite encuadrar y comprobar que el telefono esta derecho.
+    // del pecho y apuntando a cualquier sitio. Los numeros y la cruz se ven igual antes de
+    // empezar, que es lo que permite encuadrar y comprobar que el telefono esta derecho.
     var registrando by rememberSaveable { mutableStateOf(false) }
+    var huecos by remember { mutableStateOf(false) }
+    val registrandoRef = rememberUpdatedState(registrando)
 
-    LaunchedEffect(v) {
-        val vec = v ?: return@LaunchedEffect
-        android.hardware.SensorManager.getRotationMatrixFromVector(R, vec)
-        val (az, el) = ViewDirection.of(R)
-        azimut = az
-        elevacion = el
-        ladeo = ViewDirection.roll(R)
+    // EL MUESTREO VIVE EN EL OYENTE DEL SENSOR, no en un LaunchedEffect.
+    //
+    // Estaba en un LaunchedEffect que dependia del vector de rotacion, o sea que se ejecutaba
+    // al RECOMPONER. Compose agrupa los cambios de estado al ritmo de los fotogramas, y con
+    // la vista de camara encima ese ritmo baja: entre dos fotogramas el azimut podia saltar
+    // mas de cinco grados y un sector entero se quedaba SIN UNA SOLA MUESTRA. En la segunda
+    // vuelta esos sectores no tenian con que comparar y no salia flecha, que es justo lo que
+    // se vio en terreno. Aqui el oyente corre a la frecuencia del sensor, decenas de veces
+    // por segundo, independiente de lo que tarde en dibujarse la camara.
+    DisposableEffect(Unit) {
+        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
+        val sensor = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)
+        if (sm == null || sensor == null) return@DisposableEffect onDispose { }
 
-        if (!registrando) return@LaunchedEffect
+        val R = FloatArray(9)
+        var sectorActual = -1
+        var azAnterior = Double.NaN
+        var tAnterior = 0L
+        var velocidad = 0.0
+        var contadas = 0
+        var desde = 0L
 
-        val b = bins.binOf(az)
-        if (b != sectorActual) {
-            // Se cambio de sector: lo acumulado se vuelca y el nuevo estrena referencia.
-            enCurso.forEach { (a, e) -> bins.add(a, e) }
-            enCurso.clear()
-            sectorActual = b
-            referencia = bins.mean(b)
-            cubiertos = bins.covered()
+        val oyente = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                android.hardware.SensorManager.getRotationMatrixFromVector(R, e.values)
+                val (az, el) = ViewDirection.of(R)
+                azimut = az
+                elevacion = el
+                ladeo = ViewDirection.roll(R)
+
+                val ahora = android.os.SystemClock.elapsedRealtime()
+                // Frecuencia real de muestreo, medida y no supuesta: es la mitad de la cuenta
+                // que decide si se esta girando demasiado rapido.
+                contadas++
+                if (desde == 0L) desde = ahora
+                else if (ahora - desde >= 1000) {
+                    hz = contadas * 1000.0 / (ahora - desde); contadas = 0; desde = ahora
+                }
+
+                if (!azAnterior.isNaN() && tAnterior > 0 && ahora > tAnterior) {
+                    val giro = abs(cl.umag.glaciertemp.core.sensors.Angles.wrap(az - azAnterior))
+                    // Suavizado: un solo salto de ruido no debe encender el aviso.
+                    velocidad = 0.7 * velocidad + 0.3 * (giro * 1000.0 / (ahora - tAnterior))
+                }
+                azAnterior = az
+                tAnterior = ahora
+
+                if (!registrandoRef.value) return
+
+                deprisa = HorizonFeedback.tooFast(velocidad, bins.binDeg,
+                                                  if (hz > 0) hz else 50.0)
+
+                val b = bins.binOf(az)
+                if (b != sectorActual) {
+                    // La referencia se congela AL ENTRAR en el sector: es la media de las
+                    // pasadas anteriores, antes de que esta la mueva.
+                    sectorActual = b
+                    referencia = bins.mean(b)
+                }
+                bins.add(az, el)
+                cubiertos = bins.covered()
+                muestras++
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
         }
-        enCurso += az to el
-        muestras++
+        sm.registerListener(oyente, sensor,
+                            android.hardware.SensorManager.SENSOR_DELAY_FASTEST)
+        onDispose { sm.unregisterListener(oyente) }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -136,7 +179,9 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
                 LinearProgressIndicator(progress = { cubiertos.toFloat() / bins.total() },
                                         modifier = Modifier.fillMaxWidth())
             }
+            val problema = deprisa || abs(ladeo) > 10
             Text(when {
+                     deprisa -> "Slower — at this speed whole sectors get no samples at all."
                      abs(ladeo) > 10 ->
                          "Hold the phone upright — it is tilted ${"%.0f".format(abs(ladeo))}°"
                      !registrando ->
@@ -145,7 +190,7 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
                      else -> "Turn slowly, keeping the crosshair on the skyline."
                  },
                  style = MaterialTheme.typography.bodySmall,
-                 color = if (abs(ladeo) > 10) MaterialTheme.colorScheme.error
+                 color = if (problema) MaterialTheme.colorScheme.error
                          else MaterialTheme.colorScheme.onSurfaceVariant,
                  modifier = Modifier.testTag("hz-hint"))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -156,9 +201,13 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
                     }
                 } else {
                     Button(onClick = {
-                               enCurso.forEach { (a, e) -> bins.add(a, e) }
-                               enCurso.clear()
-                               bins.profile()?.let { onDone(it, bins.covered(), muestras) }
+                               // UN PERFIL INCOMPLETO NO SE ENTREGA. Un sector sin medir no
+                               // es un sector a cero grados, y rellenarlo interpolando daria
+                               // un grafico de aspecto impecable con un trozo inventado
+                               // dentro que nadie podria distinguir despues. Se dice que
+                               // falta y donde, para ir a rellenarlo.
+                               if (cubiertos < bins.total()) huecos = true
+                               else bins.profile()?.let { onDone(it, bins.covered(), muestras) }
                            },
                            enabled = cubiertos > 0,
                            modifier = Modifier.weight(1f).height(56.dp).testTag("hz-finish")) {
@@ -172,32 +221,44 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
             }
         }
     }
+
+    if (huecos) {
+        val faltan = BooleanArray(bins.total()) { bins.samples(it) > 0 }
+        val tramos = HorizonFeedback.gaps(faltan, bins.binDeg)
+        AlertDialog(
+            onDismissRequest = { huecos = false },
+            modifier = Modifier.testTag("hz-gaps-dialog"),
+            title = { Text("Incomplete profile") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${bins.total() - cubiertos} of ${bins.total()} sectors were never " +
+                         "measured, so there is no horizon to draw. A sector with no data is " +
+                         "not a sector at zero degrees.")
+                    Text("Missing: ${HorizonFeedback.describeGaps(tramos)}",
+                         style = MaterialTheme.typography.bodyMedium,
+                         fontFamily = FontFamily.Monospace,
+                         modifier = Modifier.testTag("hz-gaps-list"))
+                    Text("Turn back over those bearings, more slowly. What you have already " +
+                         "measured is kept.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { huecos = false },
+                           modifier = Modifier.testTag("hz-gaps-continue")) {
+                    Text("Keep measuring")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { huecos = false; onCancel() }) { Text("Discard") }
+            })
+    }
 }
 
 private fun tienePermisoCamara(ctx: Context): Boolean =
     ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) ==
         PackageManager.PERMISSION_GRANTED
-
-/** El vector de rotacion, a la frecuencia mas alta: se esta girando y la vista lo sigue. */
-@Composable
-private fun sensorRotation(): State<FloatArray?> {
-    val ctx = LocalContext.current
-    val valores = remember { mutableStateOf<FloatArray?>(null) }
-    DisposableEffect(Unit) {
-        val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
-        val s = sm?.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR)
-        if (sm == null || s == null) return@DisposableEffect onDispose { }
-        val oyente = object : android.hardware.SensorEventListener {
-            override fun onSensorChanged(e: android.hardware.SensorEvent) {
-                valores.value = e.values.copyOf()
-            }
-            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
-        }
-        sm.registerListener(oyente, s, android.hardware.SensorManager.SENSOR_DELAY_GAME)
-        onDispose { sm.unregisterListener(oyente) }
-    }
-    return valores
-}
 
 /** La imagen en vivo de la camara trasera. Solo se mira: no se guarda ni se graba nada. */
 @Composable
@@ -236,7 +297,15 @@ private fun VistaDeCamara(modifier: Modifier = Modifier) {
 private fun Cruz(diferencia: Double?, modifier: Modifier = Modifier) {
     val blanco = Color.White
     val sombra = Color.Black.copy(alpha = 0.55f)
-    val aviso = Color(0xFFFFC107)
+    // COLOR POR BANDA Y LARGO PROPORCIONAL. Girando con el telefono a un brazo, lo que se
+    // distingue de un vistazo es el color; el largo afina dentro de la banda, para que 6
+    // grados y 25 no se vean iguales aunque los dos sean rojos.
+    val color = when (diferencia?.let { HorizonFeedback.band(it) }) {
+        HorizonFeedback.Band.FINE -> Color(0xFF4CAF50)
+        HorizonFeedback.Band.OFF -> Color(0xFFFF9800)
+        HorizonFeedback.Band.WAY_OFF -> Color(0xFFF44336)
+        null -> Color.Transparent
+    }
     androidx.compose.foundation.layout.Box(modifier) {
         Canvas(Modifier.fillMaxSize().testTag("hz-cross")) {
             val c = Offset(size.width / 2, size.height / 2)
@@ -260,16 +329,20 @@ private fun Cruz(diferencia: Double?, modifier: Modifier = Modifier) {
             val d = diferencia ?: return@Canvas
             if (abs(d) < 0.3) return@Canvas
             // Positivo: el horizonte medido estaba MAS ARRIBA que donde se apunta ahora.
-            flecha(c, arriba = d > 0, largo = brazo * 1.5f, color = aviso)
+            flecha(c, arriba = d > 0,
+                   largo = brazo * HorizonFeedback.lengthFactor(d).toFloat(),
+                   color = color)
         }
         diferencia?.takeIf { abs(it) >= 0.3 }?.let { d ->
             Text("%+.1f°".format(d),
-                 color = aviso,
+                 color = color,
                  fontWeight = FontWeight.Bold,
                  fontFamily = FontFamily.Monospace,
                  fontSize = 22.sp,
                  modifier = Modifier.align(Alignment.Center)
-                     .offset(x = 56.dp, y = if (d > 0) (-44).dp else 44.dp)
+                     .offset(x = 62.dp,
+                             y = ((if (d > 0) -1.0 else 1.0) *
+                                  (24.0 + 26.0 * HorizonFeedback.lengthFactor(d))).dp)
                      .testTag("hz-delta"))
         }
     }
