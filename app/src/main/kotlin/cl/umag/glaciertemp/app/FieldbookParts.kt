@@ -455,8 +455,19 @@ fun rememberPhotoAdders(
         if (nuevos.isNotEmpty()) onAdded(nuevos)
     }
 
+    // La app DECLARA el permiso de camara (lo necesita el Horizon mapper), y eso cambia las
+    // reglas de ACTION_IMAGE_CAPTURE: declararlo sin tenerlo concedido hace que el sistema
+    // rechace el intent. Antes no hacia falta pedirlo; ahora si, o las fotos de la libreta
+    // dejarian de funcionar por un renglon anadido en otra herramienta.
+    val permisoCamara = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()) { }
+
     val tomar = {
-        val f = newFile("jpg")
+        val concedida = androidx.core.content.ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.CAMERA) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!concedida) permisoCamara.launch(android.Manifest.permission.CAMERA)
+        val f = if (concedida) newFile("jpg") else null
         if (f != null) {
             pendiente = f.absolutePath
             runCatching { camara.launch(MediaVault.uriFor(ctx, f)) }

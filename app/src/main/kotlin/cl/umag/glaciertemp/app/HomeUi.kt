@@ -91,7 +91,10 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
         }
         Herramienta.SENSORES -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
-            SensorsScreen(onBack = { donde = Herramienta.INICIO })
+            // El proveedor de posicion se comparte con la libreta: el recorrido del sol
+            // depende de la latitud, y sin ella el grafico sale sin sus curvas.
+            SensorsScreen(onBack = { donde = Herramienta.INICIO },
+                          location = fieldbook.location)
         }
     }
     }

@@ -88,13 +88,42 @@ object Tilt {
      * contra una pared de hielo para medir su inclinacion. El PITCH sigue siendo bueno --que
      * es el dato que se buscaba-- pero apuntar el yaw de esa medida seria anotar ruido.
      */
-    const val LIMITE_GRADOS = 80.0
+    const val LIMITE_GRADOS = 10.0
 
-    fun gimbalLock(pitch: Double?): Boolean =
-        pitch != null && kotlin.math.abs(Angles.wrap(pitch)) >= LIMITE_GRADOS
+    /**
+     * El pitch que se ENSEÑA, a partir del que da Android.
+     *
+     * CERO ES EL TELEFONO VERTICAL, y -90 con el mirando al suelo. Android cuenta desde el
+     * telefono tumbado boca arriba, que no es ninguna postura de trabajo: para medir la
+     * inclinacion de una pared o apuntar al horizonte, la referencia natural es la vertical,
+     * y asi el numero que se lee es directamente la ELEVACION de aquello a lo que apunta la
+     * camara. Un -12 dice "doce grados por debajo de la horizontal" sin restar nada.
+     */
+    fun viewElevation(androidPitch: Double): Double = Angles.wrap(-androidPitch - 90.0)
 
-    fun warning(pitch: Double?): String? =
-        if (!gimbalLock(pitch)) null
+    /**
+     * Cerca de la vertical, yaw y roll dejan de estar determinados.
+     *
+     * EL PROBLEMA SE LLAMA GIMBAL LOCK y no es un fallo del telefono: con el aparato de pie,
+     * girar sobre el eje del yaw y girar sobre el del roll son el MISMO giro, asi que hay
+     * infinitas parejas de valores que describen la misma orientacion. Los sensores entregan
+     * una cualquiera, y salta de una a otra con el mas minimo temblor.
+     *
+     * IMPORTA porque de pie es justo la postura de trabajo: apoyar el telefono contra una
+     * pared de hielo, o apuntar al horizonte. El PITCH sigue siendo bueno --que es el dato
+     * que se buscaba-- pero apuntar el yaw de esa medida seria anotar ruido.
+     *
+     * RECIBE LA ELEVACION QUE SE ENSEÑA, no el pitch de Android: con la convencion nueva la
+     * singularidad esta en el cero y en +-180, no en +-90.
+     */
+    fun gimbalLock(viewElevation: Double?): Boolean {
+        if (viewElevation == null) return false
+        val e = kotlin.math.abs(Angles.wrap(viewElevation))
+        return e <= LIMITE_GRADOS || e >= 180.0 - LIMITE_GRADOS
+    }
+
+    fun warning(viewElevation: Double?): String? =
+        if (!gimbalLock(viewElevation)) null
         else "Near vertical: pitch is good, but yaw and roll are not separable at this " +
              "attitude and will jump with the slightest movement. Use the pitch only."
 }

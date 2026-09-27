@@ -52,8 +52,44 @@ import kotlin.math.sqrt
  * que transcribir a mano tres cifras con guantes, y ahi es donde se cambian los digitos.
  */
 @Composable
-fun SensorsScreen(onBack: () -> Unit) {
+fun SensorsScreen(onBack: () -> Unit, location: LocationSource? = null) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    // El mapeo de horizonte se lleva la pantalla entera: la imagen de la camara no cabe
+    // debajo de una fila de pestanas, y ademas se esta girando sobre uno mismo.
+    var horizonte by remember { mutableStateOf<Horizonte?>(null) }
+    var mapeando by remember { mutableStateOf(false) }
+
+    androidx.activity.compose.BackHandler(enabled = mapeando || horizonte != null) {
+        if (mapeando) mapeando = false else horizonte = null
+    }
+
+    if (mapeando) {
+        HorizonMapperScreen(
+            onDone = { perfil, sectores, muestras ->
+                horizonte = Horizonte(perfil, sectores, muestras); mapeando = false
+            },
+            onCancel = { mapeando = false })
+        return
+    }
+
+    val h = horizonte
+    if (h != null) {
+        Column(Modifier.fillMaxSize()) {
+            ToolBar("Horizon", atras = "Sensors", onBack = { horizonte = null })
+            // La posicion se busca al entrar, sin bloquear: el sol depende de la latitud, y
+            // sin ella el grafico se dibuja igual pero sin sus curvas, diciendolo.
+            var pos by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+            LaunchedEffect(Unit) {
+                pos = runCatching { location?.lastKnownFix() }.getOrNull()
+                    ?.let { it.latitude to it.longitude }
+            }
+            HorizonResultScreen(h.perfil, h.sectores, h.muestras,
+                                pos?.first, pos?.second,
+                                onRedo = { horizonte = null; mapeando = true },
+                                onBack = { horizonte = null })
+        }
+        return
+    }
 
     Column(Modifier.fillMaxSize()) {
         ToolBar("Onboard sensors", onBack = onBack)
@@ -73,7 +109,7 @@ fun SensorsScreen(onBack: () -> Unit) {
 
         Box(Modifier.weight(1f)) {
             when (tab) {
-                0 -> TiltTab()
+                0 -> TiltTab(onMapHorizon = { mapeando = true })
                 1 -> CompassTab()
                 2 -> PressureTab()
                 else -> LightTab()
@@ -185,7 +221,10 @@ private fun anglesDe(v: FloatArray): Triple<Double, Double, Double> {
     val o = FloatArray(3)
     SensorManager.getOrientation(m, o)
     val yaw = Compass.normalize(Math.toDegrees(o[0].toDouble()))
-    val pitch = Math.toDegrees(o[1].toDouble())
+    // El pitch se pasa a ELEVACION DE LA VISTA: cero con el telefono vertical. Ver
+    // Tilt.viewElevation -- la referencia de Android es el aparato tumbado, que no es
+    // ninguna postura de trabajo.
+    val pitch = Tilt.viewElevation(Math.toDegrees(o[1].toDouble()))
     val roll = Math.toDegrees(o[2].toDouble())
     return Triple(yaw, pitch, roll)
 }
@@ -232,8 +271,15 @@ private data class Inclinacion(
     val muestras: Int,
 )
 
+/** Lo que deja un mapeo de horizonte terminado. */
+private data class Horizonte(
+    val perfil: cl.umag.glaciertemp.core.sensors.HorizonProfile,
+    val sectores: Int,
+    val muestras: Int,
+)
+
 @Composable
-private fun TiltTab() {
+private fun TiltTab(onMapHorizon: () -> Unit) {
     if (!hay(Sensor.TYPE_ROTATION_VECTOR)) return SinSensor("orientation sensor")
     val v by sensorValues(Sensor.TYPE_ROTATION_VECTOR)
     val a = v?.let { anglesDe(it) }
@@ -297,8 +343,24 @@ private fun TiltTab() {
 
         medida?.let { ResultadoInclinacion(it) }
 
+        HorizontalDivider()
+
+        // EL MAPEADOR DE HORIZONTE VIVE AQUI porque es el mismo sensor: apuntar la camara a
+        // un sitio y quedarse con su elevacion. La diferencia es que en vez de una direccion
+        // se recorren las trescientas sesenta.
+        OutlinedButton(onClick = onMapHorizon,
+                       modifier = Modifier.fillMaxWidth().testTag("sn-horizon")) {
+            Text("Horizon mapper")
+        }
+        Text("Turn once on the spot with the camera on the skyline and it records the " +
+             "elevation of the terrain all around. Then it draws the sun's path over it, " +
+             "and works out where a solar panel should point.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+
         Text("Pitch is the tilt along the phone's long axis and roll across it. " +
-             "Laid flat on a surface, both read its slope. " +
+             "Pitch is 0 with the phone upright and −90 with it face up, so it reads " +
+             "directly as the elevation of whatever the camera points at. " +
              "Yaw needs the magnetometer, so it drifts near metal.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)

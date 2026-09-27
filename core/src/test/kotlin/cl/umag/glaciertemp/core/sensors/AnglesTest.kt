@@ -60,17 +60,29 @@ class AnglesTest {
 
 class TiltTest {
 
-    @Test fun `tumbado sobre una pendiente no hay aviso`() {
-        assertNull(Tilt.warning(0.0))
-        assertNull(Tilt.warning(-25.0))
-        assertNull(Tilt.warning(79.0))
+    @Test fun `cero es el telefono vertical y menos noventa mirando al suelo`() {
+        // Android cuenta desde el telefono tumbado boca arriba; aqui desde la vertical, que
+        // es la postura de trabajo. El numero pasa a ser la ELEVACION de lo que se apunta.
+        assertEquals(0.0, Tilt.viewElevation(-90.0), 1e-9)    // de pie
+        assertEquals(-90.0, Tilt.viewElevation(0.0), 1e-9)    // tumbado, camara al suelo
+        assertEquals(90.0, Tilt.viewElevation(180.0), 1e-9)   // boca abajo, camara al cielo
+        // Inclinado 30 grados hacia atras desde la vertical: se apunta 30 grados abajo.
+        assertEquals(-30.0, Tilt.viewElevation(-60.0), 1e-9)
     }
 
-    @Test fun `de pie contra una pared si lo hay`() {
+    @Test fun `tumbado sobre una pendiente no hay aviso`() {
+        // En la convencion nueva, tumbado es -90: lejos de la singularidad.
+        assertNull(Tilt.warning(-90.0))
+        assertNull(Tilt.warning(-65.0))
+        assertNull(Tilt.warning(45.0))
+    }
+
+    @Test fun `de pie si lo hay`() {
         // Es la postura que la propia herramienta sugiere, asi que el aviso tiene que salir.
-        assertTrue(Tilt.gimbalLock(-90.0))
-        assertTrue(Tilt.gimbalLock(89.0))
-        val w = Tilt.warning(-90.0)
+        assertTrue(Tilt.gimbalLock(0.0))
+        assertTrue(Tilt.gimbalLock(-8.0))
+        assertTrue(Tilt.gimbalLock(179.0))
+        val w = Tilt.warning(0.0)
         assertTrue(w != null && w.contains("pitch only"), "debe decir que sirve el pitch: $w")
     }
 

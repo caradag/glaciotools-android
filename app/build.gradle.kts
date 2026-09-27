@@ -14,8 +14,8 @@ android {
         targetSdk = 36
         // Primera version que se distribuye para instalar. El versionCode tiene que subir
         // en cada APK que se publique, o Android se niega a instalarlo encima del anterior.
-        versionCode = 33
-        versionName = "2.12"
+        versionCode = 34
+        versionName = "2.13"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -73,6 +73,17 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+
+    // CameraX, solo para el Horizon mapper: hace falta la imagen EN VIVO dentro de la app
+    // para poder apuntar la cruz al horizonte. Las fotos de la libreta siguen saliendo de la
+    // app de camara del sistema por intent, que no necesita nada de esto.
+    // 1.4.x en adelante: las librerias nativas de CameraX 1.3 no estan alineadas a 16 KB y
+    // Android 15 saca un aviso al arrancar sobre modo de compatibilidad.
+    val camerax = "1.5.0"
+    implementation("androidx.camera:camera-core:$camerax")
+    implementation("androidx.camera:camera-camera2:$camerax")
+    implementation("androidx.camera:camera-lifecycle:$camerax")
+    implementation("androidx.camera:camera-view:$camerax")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // Espresso < 3.7 usa reflexion sobre InputManager.getInstance(), que ya no existe en

@@ -21,6 +21,18 @@
     <!-- Notas de audio de la libreta. Se pide al pulsar grabar, no al arrancar. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!--
+        CAMARA: la necesita el Horizon mapper, que muestra la imagen en vivo dentro de la app.
+
+        OJO CON EL EFECTO SECUNDARIO. Declarar este permiso CAMBIA el comportamiento de
+        ACTION_IMAGE_CAPTURE: una app que lo declara y no lo tiene concedido recibe una
+        SecurityException al lanzar la app de camara. Antes de declararlo, las fotos de la
+        libreta funcionaban sin pedir nada. Por eso rememberPhotoAdders lo pide ahora antes
+        de lanzar el intent: sin esa pieza, anadir esta linea habria roto en silencio las
+        fotos de todas las notas.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- El cronometro de una medicion GNSS: dura horas con la pantalla apagada, asi que la
          cuenta atras y su alarma viven en un servicio en primer plano y no en la app.
 
@@ -42,6 +54,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
