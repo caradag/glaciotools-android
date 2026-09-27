@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
@@ -95,6 +96,8 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
     // anotacion fuera de la vista.
 
     var borrarEntrada by rememberSaveable { mutableStateOf(false) }
+    // Lo que falta en una medicion GNSS, cuando se intenta cerrar desde la barra de arriba.
+    var faltaEnBarra by remember { mutableStateOf<List<String>?>(null) }
 
     ToolBar(
         titulo = when {
@@ -116,10 +119,22 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
         // explicacion general no viene a cuento, y un icono que no toca es un icono que
         // alguien toca.
         if (abierta != null) {
-            IconButton(onClick = { borrarEntrada = true },
-                       modifier = Modifier.testTag("fb-delete")) {
-                Icon(Icons.Outlined.Delete, contentDescription = "Delete entry",
-                     tint = MaterialTheme.colorScheme.error)
+            // GUARDAR ARRIBA Y SIEMPRE A LA VISTA. El boton Done vive al final de la nota, y
+            // con el teclado abierto --que es cuando se esta escribiendo-- queda tapado: hay
+            // que cerrar el teclado, desplazar y buscarlo. Este hace lo mismo y esta siempre
+            // en el mismo sitio. El de borrar se fue abajo: es lo que menos se pulsa y lo
+            // que peor sienta pulsar sin querer, y arriba estaba junto al pulgar.
+            Button(
+                onClick = {
+                    if (abierta.type == EntryType.GNSS) {
+                        val pendiente = vm.missingInGnss()
+                        if (pendiente.isNotEmpty()) { faltaEnBarra = pendiente; return@Button }
+                    }
+                    vm.close()
+                },
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                modifier = Modifier.testTag("fb-save-top")) {
+                Icon(Icons.Outlined.Check, contentDescription = "Save and close")
             }
         }
         if (abierta == null && !buscar) {
@@ -146,6 +161,23 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
         else -> EntryScreen(vm, s, abierta, borrarEntrada,
                             onBorrar = { borrarEntrada = it },
                             onMapHorizon = onMapHorizon)
+    }
+
+    faltaEnBarra?.let { pendiente ->
+        AlertDialog(
+            onDismissRequest = { faltaEnBarra = null },
+            title = { Text("Before you pack up") },
+            text = {
+                Text("This GNSS measurement is missing " + pendiente.joinToString(" and ") +
+                     ". Neither can be reconstructed afterwards, and the receiver is still " +
+                     "on the point right now. The measurement is already saved either way.")
+            },
+            confirmButton = {
+                TextButton(onClick = { faltaEnBarra = null; vm.close() }) { Text("Close anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = { faltaEnBarra = null }) { Text("Go back") }
+            })
     }
 
     if (exportar) ExportDialog(vm, s) { exportar = false }
@@ -687,15 +719,27 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
             // NO dice que lo anotado quedo guardado, y en terreno esa duda hace volver a
             // entrar a comprobarlo. El boton lo afirma, y ademas es el sitio donde uno mira
             // cuando ha terminado, que es abajo del todo.
-            Button(
-                onClick = {
-                    if (e.type == EntryType.GNSS) {
-                        val pendiente = vm.missingInGnss()
-                        if (pendiente.isNotEmpty()) { falta = pendiente; return@Button }
-                    }
-                    vm.close()
-                },
-                modifier = Modifier.fillMaxWidth().testTag("fb-done")) { Text("Done") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = {
+                        if (e.type == EntryType.GNSS) {
+                            val pendiente = vm.missingInGnss()
+                            if (pendiente.isNotEmpty()) { falta = pendiente; return@Button }
+                        }
+                        vm.close()
+                    },
+                    modifier = Modifier.weight(1f).testTag("fb-done")) { Text("Done") }
+                // BORRAR, AL FINAL. Es lo que menos se pulsa y lo que peor sienta pulsar sin
+                // querer; arriba, junto al pulgar, estaba en el peor sitio posible.
+                TextButton(onClick = { onBorrar(true) },
+                           modifier = Modifier.testTag("fb-delete")) {
+                    Icon(Icons.Outlined.Delete, contentDescription = null, Modifier.size(18.dp),
+                         tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            }
             Text("Everything is saved as you type.",
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)

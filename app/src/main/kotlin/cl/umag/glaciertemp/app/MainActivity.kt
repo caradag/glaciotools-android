@@ -97,6 +97,9 @@ class MainActivity : ComponentActivity() {
         fieldbook.sky = AndroidSkySource(applicationContext)
         fieldbook.gpsPoints = puntos
         fieldbook.location = vm.location
+        // El diario usa el MISMO proveedor: sus entradas tambien nacen con coordenada.
+        journal.location = vm.location
+        journal.requestLocationPermission = { askLocation() }
         fieldbook.requestLocationPermission = { askLocation() }
         // La descarga tambien puede tomar su posicion de un punto ya promediado, asi que el
         // ViewModel de la placa necesita el mismo almacen.

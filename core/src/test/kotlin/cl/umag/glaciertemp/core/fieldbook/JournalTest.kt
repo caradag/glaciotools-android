@@ -189,3 +189,59 @@ class JournalStoreTest {
         assertEquals(listOf("buena"), store.list("C1").map { it.title })
     }
 }
+
+/** La posicion que se pide sola al crear una entrada del diario. */
+class JournalPositionTest {
+
+    private val dir = File(System.getProperty("java.io.tmpdir"),
+                           "journalpos-" + System.nanoTime())
+    private val store = JournalStore(dir)
+
+    @AfterTest fun limpia() { dir.deleteRecursively() }
+
+    private fun conPosicion() = JournalEntry(
+        id = store.newId(), campaignId = "c1", epochMillis = 1790262000000L,
+        title = "Dia", text = "algo",
+        position = FieldPosition(
+            latitude = -51.5, longitude = -73.25, altitudeMetres = 412.0,
+            accuracyMetres = 4.5, source = PositionSource.PHONE,
+            atEpochMillis = 1790262000000L))
+
+    @Test fun `la posicion sobrevive al ida y vuelta`() {
+        val e = conPosicion()
+        store.save(e)
+        val p = store.load(e.id)!!.position!!
+        assertEquals(-51.5, p.latitude, 1e-9)
+        assertEquals(-73.25, p.longitude, 1e-9)
+        assertEquals(412.0, p.altitudeMetres!!, 1e-9)
+        assertEquals(4.5, p.accuracyMetres!!, 1e-9)
+        assertEquals(PositionSource.PHONE, p.source)
+    }
+
+    @Test fun `una entrada sin posicion no se inventa una`() {
+        // Escribir bajo techo es normal; un cero cero seria una coordenada en el Atlantico.
+        val e = JournalEntry(store.newId(), "c1", 1790262000000L, title = "Sin GPS")
+        store.save(e)
+        assertNull(store.load(e.id)!!.position)
+    }
+
+    @Test fun `una entrada de una version anterior se lee sin posicion`() {
+        // Compatibilidad: las entradas ya escritas no tienen las claves pos.*
+        val id = store.newId()
+        File(dir, "$id.journal").writeText(
+            "# GlacioTools journal entry\nid=$id\ncampaign=c1\nat=1790262000000\n" +
+            "title=Vieja\ntext=algo\n")
+        val e = store.load(id)
+        assertNotNull(e)
+        assertEquals("Vieja", e.title)
+        assertNull(e.position)
+    }
+
+    @Test fun `una entrada con posicion no cuenta como vacia`() {
+        // Y por tanto el barrido de entradas en blanco no se la lleva... salvo que solo
+        // tenga posicion: eso SI es una entrada que se abrio y no se escribio.
+        assertTrue(JournalEntry(store.newId(), "c1", 1L,
+                                position = conPosicion().position).isEmpty(),
+                   "solo con coordenada sigue estando vacia: se abrio y no se escribio")
+    }
+}

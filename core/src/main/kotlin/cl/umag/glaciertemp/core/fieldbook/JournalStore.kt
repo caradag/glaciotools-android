@@ -135,6 +135,16 @@ class JournalStore(private val dir: File) {
         append("at=${e.epochMillis}\n")
         append("title=${FieldbookFile.esc(e.title)}\n")
         append("text=${FieldbookFile.esc(e.text)}\n")
+        e.position?.let { p ->
+            append("pos.lat=").append(p.latitude).append('\n')
+            append("pos.lon=").append(p.longitude).append('\n')
+            p.altitudeMetres?.let { append("pos.alt=").append(it).append('\n') }
+            p.accuracyMetres?.let { append("pos.acc=").append(it).append('\n') }
+            append("pos.source=").append(p.source.name).append('\n')
+            p.pointName?.let { append("pos.point_name=").append(FieldbookFile.esc(it)).append('\n') }
+            p.pointId?.let { append("pos.point_id=").append(it).append('\n') }
+            append("pos.at=").append(p.atEpochMillis).append('\n')
+        }
         e.photos.forEach { append("photo=${FieldbookFile.esc(it)}\n") }
         e.audio.forEach { append("audio=${FieldbookFile.esc(it.file)}|${it.durationMillis ?: ""}\n") }
     }
@@ -144,6 +154,7 @@ class JournalStore(private val dir: File) {
         var titulo = ""; var cuerpo = ""
         val fotos = mutableListOf<String>()
         val audios = mutableListOf<JournalAudio>()
+        val pos = HashMap<String, String>()
         for (l in texto.lineSequence()) {
             if (l.isBlank() || l.startsWith("#")) continue
             val k = l.substringBefore('=', ""); val v = l.substringAfter('=', "")
@@ -159,9 +170,25 @@ class JournalStore(private val dir: File) {
                     audios += JournalAudio(FieldbookFile.unesc(p[0]),
                                            p.getOrNull(1)?.trim()?.toLongOrNull())
                 }
+                else -> if (k.startsWith("pos.")) pos[k] = v.trim()
             }
         }
         if (id == null || campana == null || at == null) return null
-        return JournalEntry(id, campana, at, titulo, cuerpo, fotos, audios)
+        // Sin latitud y longitud no hay posicion: lo demas son detalles de una que existe.
+        val posicion = pos["pos.lat"]?.toDoubleOrNull()?.let { lat ->
+            pos["pos.lon"]?.toDoubleOrNull()?.let { lon ->
+                FieldPosition(
+                    latitude = lat, longitude = lon,
+                    altitudeMetres = pos["pos.alt"]?.toDoubleOrNull(),
+                    accuracyMetres = pos["pos.acc"]?.toDoubleOrNull(),
+                    source = runCatching {
+                        PositionSource.valueOf(pos["pos.source"] ?: "")
+                    }.getOrDefault(PositionSource.PHONE),
+                    pointName = pos["pos.point_name"]?.let { FieldbookFile.unesc(it) },
+                    pointId = pos["pos.point_id"],
+                    atEpochMillis = pos["pos.at"]?.toLongOrNull() ?: 0L)
+            }
+        }
+        return JournalEntry(id, campana, at, titulo, cuerpo, fotos, audios, posicion)
     }
 }

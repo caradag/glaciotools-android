@@ -10,6 +10,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.MyLocation
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -67,7 +70,17 @@ fun JournalScreen(vm: JournalViewModel, onBack: () -> Unit) {
         // el boton no cumple.
         atras = if (abierta == null) "Fieldbook" else "Journal",
         onBack = { if (abierta != null) vm.close() else onBack() },
-    )
+    ) {
+        // El mismo boton que arriba en la libreta y por lo mismo: con el teclado abierto,
+        // que es cuando se escribe, el Done del final queda tapado.
+        if (abierta != null) {
+            Button(onClick = { vm.close() },
+                   contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                   modifier = Modifier.testTag("jr-save-top")) {
+                Icon(Icons.Outlined.Check, contentDescription = "Save and close")
+            }
+        }
+    }
 
     if (abierta == null) DiasDelDiario(vm, s) else EditorDeEntrada(vm, abierta)
 
@@ -235,6 +248,48 @@ private fun EditorDeEntrada(vm: JournalViewModel, e: JournalEntry) {
         TimestampRow("Date and time", e.epochMillis,
                      onChange = { ms -> vm.update(immediate = true) { it.copy(epochMillis = ms) } },
                      tag = "jr-when")
+
+        // DONDE SE ESTABA. Se pide sola al crear la entrada: un diario cuenta lo que paso, y
+        // que ademas diga donde convierte "aqui el hielo estaba limpio" en algo que se puede
+        // volver a encontrar. "Update position" es para cuando se escribe de noche en la
+        // tienda lo que paso en otro sitio.
+        val sPos by vm.state.collectAsStateWithLifecycle()
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Position", style = MaterialTheme.typography.labelMedium,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val p = e.position
+            if (p != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(p.describe(), style = MaterialTheme.typography.bodyMedium,
+                         modifier = Modifier.weight(1f).testTag("jr-position"))
+                    TextButton(onClick = { vm.update(immediate = true) { it.copy(position = null) } },
+                               contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                               modifier = Modifier.testTag("jr-pos-clear")) { Text("Clear") }
+                }
+                Text(p.detail(), style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (!sPos.waitingForFix) {
+                Text("Not recorded", style = MaterialTheme.typography.bodyMedium,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                     modifier = Modifier.testTag("jr-position"))
+            }
+            if (sPos.waitingForFix) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Waiting for a fix…", style = MaterialTheme.typography.bodySmall,
+                         modifier = Modifier.weight(1f))
+                    TextButton(onClick = { vm.cancelPositionRequest() }) { Text("Cancel") }
+                }
+            } else {
+                TextButton(onClick = { vm.requestPosition() },
+                           contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                           modifier = Modifier.testTag("jr-pos-update")) {
+                    Icon(Icons.Outlined.MyLocation, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Update position")
+                }
+            }
+        }
 
         OutlinedTextField(
             value = e.title,

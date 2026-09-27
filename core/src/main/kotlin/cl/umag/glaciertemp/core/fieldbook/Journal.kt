@@ -33,6 +33,14 @@ data class JournalEntry(
     val text: String = "",
     val photos: List<String> = emptyList(),
     val audio: List<JournalAudio> = emptyList(),
+    /**
+     * Donde se estaba.
+     *
+     * SE PIDE SOLA AL CREAR LA ENTRADA, como en las notas. Un diario dice lo que paso; que
+     * ademas diga donde convierte una frase como "aqui el hielo estaba limpio" en un dato
+     * que se puede volver a encontrar. Y donde se escribio no se reconstruye despues.
+     */
+    val position: FieldPosition? = null,
 ) {
     fun mediaFiles(): List<String> = photos + audio.map { it.file }
 

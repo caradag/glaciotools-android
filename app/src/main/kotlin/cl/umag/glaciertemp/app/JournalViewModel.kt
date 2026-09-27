@@ -2,10 +2,14 @@ package cl.umag.glaciertemp.app
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import cl.umag.glaciertemp.core.fieldbook.CampaignStore
 import cl.umag.glaciertemp.core.fieldbook.JournalAudio
 import cl.umag.glaciertemp.core.fieldbook.JournalDay
 import cl.umag.glaciertemp.core.fieldbook.JournalDays
+import cl.umag.glaciertemp.core.fieldbook.FieldPosition
+import cl.umag.glaciertemp.core.fieldbook.PositionSource
 import cl.umag.glaciertemp.core.fieldbook.JournalEntry
 import cl.umag.glaciertemp.core.fieldbook.JournalReminder
 import cl.umag.glaciertemp.core.fieldbook.JournalStore
@@ -29,6 +33,8 @@ data class JournalUiState(
     /** La fecha que el recordatorio senala, o null si no hay nada que recordar. */
     val reminderDay: String? = null,
     val note: String? = null,
+    /** Cuando se esta esperando un arreglo del GPS para la entrada abierta. */
+    val waitingForFix: Boolean = false,
 )
 
 /**
@@ -127,6 +133,51 @@ class JournalViewModel : ViewModel() {
      * @param atMillis para que dia. Por defecto ahora; el recordatorio la crea con la fecha
      *        del dia que falta, para que aparezca donde el aviso dijo que faltaba.
      */
+    /** De donde sale la posicion. Lo pone MainActivity, el mismo que usa la libreta. */
+    var location: LocationSource? = null
+    var requestLocationPermission: (() -> Unit)? = null
+    private var posJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Pide una posicion y la pone en la entrada abierta.
+     *
+     * AUTOMATICA AL CREAR. Donde se escribio no se reconstruye despues, y el arreglo tarda
+     * decenas de segundos: pedirlo al abrir aprovecha el rato que se pasa escribiendo. Si no
+     * llega, no protesta: nadie lo pidio, y la pantalla ya dice "Not recorded".
+     */
+    fun requestPosition(automatica: Boolean = false) {
+        val loc = location ?: return
+        val abierta = _state.value.open?.id ?: return
+        requestLocationPermission?.invoke()
+        posJob?.cancel()
+        _state.value = _state.value.copy(waitingForFix = true)
+        posJob = viewModelScope.launch {
+            val fix = runCatching {
+                withContext(Dispatchers.IO) { loc.freshFix(FIX_TIMEOUT_MS) }
+            }.getOrNull()
+            _state.value = _state.value.copy(
+                waitingForFix = false,
+                note = if (fix == null && !automatica)
+                           "No position arrived. Try again in the open." else _state.value.note)
+            if (fix == null) return@launch
+            // La entrada pudo cerrarse mientras se esperaba: no se escribe sobre otra.
+            if (_state.value.open?.id != abierta) return@launch
+            update(immediate = true) {
+                it.copy(position = FieldPosition(
+                    latitude = fix.latitude, longitude = fix.longitude,
+                    altitudeMetres = fix.altitudeMetres,
+                    accuracyMetres = fix.accuracyMetres,
+                    source = PositionSource.PHONE,
+                    atEpochMillis = System.currentTimeMillis() - fix.ageSeconds * 1000))
+            }
+        }
+    }
+
+    fun cancelPositionRequest() {
+        posJob?.cancel(); posJob = null
+        _state.value = _state.value.copy(waitingForFix = false)
+    }
+
     fun create(atMillis: Long = System.currentTimeMillis()) {
         val st = store ?: return
         val id = _state.value.campaignId ?: return
@@ -135,6 +186,7 @@ class JournalViewModel : ViewModel() {
         _state.value = _state.value.copy(open = e)
         refresh()
         _state.value = _state.value.copy(open = e)
+        requestPosition(automatica = true)
     }
 
     fun open(id: String) {
@@ -149,7 +201,13 @@ class JournalViewModel : ViewModel() {
      * entrada en blanco en medio del diario no dice nada salvo que alguien se equivoco de
      * boton. Se borra sola en vez de dejar basura que haya que limpiar a mano.
      */
+    companion object {
+        /** El mismo plazo que la libreta: al aire libre llega en segundos, bajo dosel nunca. */
+        const val FIX_TIMEOUT_MS = 60_000L
+    }
+
     fun close() {
+        cancelPositionRequest()
         flush()
         _state.value.open?.let { if (it.isEmpty()) store?.delete(it.id) }
         _state.value = _state.value.copy(open = null)
