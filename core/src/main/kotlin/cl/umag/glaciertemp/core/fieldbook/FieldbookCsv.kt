@@ -197,7 +197,8 @@ object FieldbookCsv {
             append(row("sample_name", "campaign", "collected_at", "collected_by",
                        "latitude", "longitude", "altitude_m_wgs84", "position_source",
                        "height_max_m", "height_min_m", "long_axis_m", "short_axis_m",
-                       "strike_deg", "dip_deg", "shielding_factor", "horizon_measured",
+                       "strike_deg", "dip_deg", "shielding_factor",
+                       "shielding_from_phone", "shielding_from_hand", "horizon_measured",
                        "horizon_points_manual",
                        "site", "place", "boulder", "surface",
                        "associated_images", "entry_id"))
@@ -214,6 +215,7 @@ object FieldbookCsv {
                         e.position?.source?.name ?: "",
                         c?.heightMaxM, c?.heightMinM, c?.longAxisM, c?.shortAxisM,
                         c?.strikeDeg, c?.dipDeg, c?.shieldingFactor,
+                        c?.shieldingFromPhone, c?.shieldingFromManual,
                         if (c?.horizonDeg?.isNotEmpty() == true) "yes" else "no",
                         c?.manualAzimuths?.size ?: 0,
                         c?.site ?: "", c?.place ?: "", c?.boulder ?: "", c?.surface ?: "",

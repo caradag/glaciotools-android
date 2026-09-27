@@ -688,6 +688,14 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
              color = MaterialTheme.colorScheme.onSurfaceVariant)
         Aviso(vm, s)
 
+        // Las fotos del sitio, que es lo que hace falta para volver a la misma marca.
+        val (tomarFoto, elegirFoto) = rememberPhotoAdders(
+            newFile = { vm.newMediaFile(it) }, onAdded = { vm.addPointPhotos(it) })
+        Text("Site photos", style = MaterialTheme.typography.titleSmall)
+        PhotoStrip(p.photos, resolve = { vm.mediaFile(it) },
+                   onRemove = { vm.removePointPhoto(it) }, tag = "gps-point-photos")
+        PhotoButtons(onTake = tomarFoto, onPick = elegirFoto, tag = "gps-point-photo")
+
         val st = p.stats
         if (st == null) {
             Text("This point has no fixes yet.",

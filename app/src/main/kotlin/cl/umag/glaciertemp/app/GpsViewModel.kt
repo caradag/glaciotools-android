@@ -46,6 +46,8 @@ data class OpenPoint(
     val samples: List<GpsSample>,
     val projected: List<Pair<Double, Double>>,
     val stats: GpsPointStats?,
+    /** Las fotos del sitio. Se ven Y se anaden tambien desde el punto ya guardado. */
+    val photos: List<String> = emptyList(),
 )
 
 /**
@@ -289,6 +291,30 @@ class GpsViewModel : ViewModel() {
 
     fun newMediaFile(extension: String): java.io.File? = store?.newMediaFile(extension)
 
+    /**
+     * Anade fotos a un punto YA GUARDADO.
+     *
+     * Faltaba: se podian tomar mientras se promediaba y desaparecian al cerrar. Y es al
+     * volver a un punto viejo cuando mas falta hace mirar la foto del sitio, que es
+     * justamente el momento en que no habia forma de verla.
+     */
+    fun addPointPhotos(names: List<String>) {
+        val abierto = _state.value.openPoint ?: return
+        val st = store ?: return
+        val todas = abierto.photos + names
+        st.setPhotos(abierto.summary.id, todas)
+        _state.value = _state.value.copy(openPoint = abierto.copy(photos = todas))
+    }
+
+    fun removePointPhoto(name: String) {
+        val abierto = _state.value.openPoint ?: return
+        val st = store ?: return
+        val quedan = abierto.photos - name
+        st.setPhotos(abierto.summary.id, quedan)
+        runCatching { st.media(name).delete() }
+        _state.value = _state.value.copy(openPoint = abierto.copy(photos = quedan))
+    }
+
     fun mediaFile(name: String): java.io.File? = store?.media(name)
 
     fun pauseAveraging() {
@@ -342,6 +368,7 @@ class GpsViewModel : ViewModel() {
         }
         val a = GpsAverager().apply { addAll(p.samples) }
         _state.value = _state.value.copy(openPoint = OpenPoint(
+            photos = p.header.photos,
             summary = GpsPointSummary(
                 id = p.header.id, name = p.header.name,
                 createdEpochMillis = p.header.createdEpochMillis,

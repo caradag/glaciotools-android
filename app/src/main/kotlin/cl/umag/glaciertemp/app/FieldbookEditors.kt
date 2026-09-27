@@ -17,7 +17,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.core.fieldbook.*
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.drawText
+import cl.umag.glaciertemp.core.sensors.Angles
+import cl.umag.glaciertemp.core.sensors.AlbedoRun
+import cl.umag.glaciertemp.core.sensors.Compass
+import cl.umag.glaciertemp.core.sensors.Reversal
 import cl.umag.glaciertemp.core.sensors.HorizonPoints
 import cl.umag.glaciertemp.core.sensors.HorizonProfile
 import cl.umag.glaciertemp.core.sensors.Shielding
@@ -762,22 +769,33 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
             ?.let { HorizonProfile(it.toDoubleArray(), c.horizonBinDeg) }
     }
 
-    val factor = remember(puntosManuales, perfilTelefono, c.strikeDeg, c.dipDeg) {
-        when {
-            puntosManuales.isNotEmpty() -> {
-                val porRelieve = HorizonPoints.toShieldingHorizon(puntosManuales)
-                val porBuz = Shielding.dippingHorizon(c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0)
-                Shielding.factorOf(DoubleArray(Shielding.SECTORS) {
-                    maxOf(porRelieve[it], porBuz[it])
-                })
-            }
-            perfilTelefono != null || c.dipDeg != null ->
-                Shielding.compute(perfilTelefono, c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0).factor
-            else -> null
+    // LOS DOS FACTORES, calculados por separado. Haber medido el horizonte dos veces solo
+    // sirve si se pueden comparar; quedarse con uno tiraria la razon de haber medido dos.
+    val deTelefono = remember(perfilTelefono, c.strikeDeg, c.dipDeg) {
+        if (perfilTelefono == null) null
+        else Shielding.compute(perfilTelefono, c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0).factor
+    }
+    val deMano = remember(puntosManuales, c.strikeDeg, c.dipDeg) {
+        if (puntosManuales.isEmpty()) null
+        else {
+            val porRelieve = HorizonPoints.toShieldingHorizon(puntosManuales)
+            val porBuz = Shielding.dippingHorizon(c.strikeDeg ?: 0.0, c.dipDeg ?: 0.0)
+            Shielding.factorOf(DoubleArray(Shielding.SECTORS) {
+                maxOf(porRelieve[it], porBuz[it])
+            })
         }
     }
-    LaunchedEffect(factor) {
-        if (factor != c.shieldingFactor) edita(inmediato = true) { it.copy(shieldingFactor = factor) }
+    // Manda el levantamiento a mano cuando lo hay: es mas preciso por punto.
+    val factor = deMano ?: deTelefono
+        ?: c.dipDeg?.let { Shielding.compute(null, c.strikeDeg ?: 0.0, it).factor }
+    LaunchedEffect(factor, deTelefono, deMano) {
+        if (factor != c.shieldingFactor || deTelefono != c.shieldingFromPhone ||
+            deMano != c.shieldingFromManual) {
+            edita(inmediato = true) {
+                it.copy(shieldingFactor = factor, shieldingFromPhone = deTelefono,
+                        shieldingFromManual = deMano)
+            }
+        }
     }
 
     Row(verticalAlignment = Alignment.CenterVertically,
@@ -798,21 +816,24 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
     // LOS DOS FACTORES, CUANDO HAY DOS MEDIDAS. Es la razon de poder meterlas a mano: que
     // coincidan dice que las dos valen; que difieran dice que una se equivoco, y eso hay que
     // saberlo antes de mandar la muestra al laboratorio.
-    if (puntosManuales.isNotEmpty() && perfilTelefono != null) {
-        val delTelefono = Shielding.compute(perfilTelefono, c.strikeDeg ?: 0.0,
-                                            c.dipDeg ?: 0.0).factor
-        Text("Phone sweep gives %.4f, hand survey %.4f. The hand survey is the one used."
-                 .format(delTelefono, factor ?: 0.0),
+    if (deMano != null && deTelefono != null) {
+        Text("Phone sweep %.4f · hand survey %.4f. The hand survey is the one used."
+                 .format(deTelefono, deMano),
              style = MaterialTheme.typography.bodySmall,
-             color = if (kotlin.math.abs(delTelefono - (factor ?: 0.0)) > 0.01)
+             color = if (kotlin.math.abs(deTelefono - deMano) > 0.01)
                          MaterialTheme.colorScheme.error
                      else MaterialTheme.colorScheme.onSurfaceVariant,
              modifier = Modifier.testTag("fb-cosmo-compare"))
     }
 
-    val paraDibujar = puntosManuales.ifEmpty {
-        perfilTelefono?.let { HorizonPoints.fromProfile(it) } ?: emptyList()
-    }
+    // LOS DOS HORIZONTES EN EL MISMO GRAFICO. Antes se dibujaba solo el que mandaba, asi que
+    // volver a barrer con el telefono no cambiaba nada en pantalla y parecia que el "Re-map"
+    // no habia hecho nada. Superpuestos, ademas, se ve DONDE discrepan, que es mucho mas util
+    // que saber que discrepan.
+    val delTelefono = perfilTelefono?.let { HorizonPoints.fromProfile(it) } ?: emptyList()
+    val paraDibujar = delTelefono.ifEmpty { puntosManuales }
+    val segunda = if (delTelefono.isNotEmpty()) puntosManuales else emptyList()
+    val colorMano = MaterialTheme.colorScheme.tertiary
     if (paraDibujar.isEmpty()) {
         Text("No horizon yet. Without it the factor only accounts for the dip of the " +
              "surface itself, not for the terrain around it.",
@@ -824,16 +845,24 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
         // revisar; dibujado se ve de un vistazo si falta un trozo o si hay un pico absurdo,
         // que es justo lo que conviene notar estando todavia en el sitio.
         PerfilDeHorizonte(paraDibujar,
-                          Modifier.fillMaxWidth().height(160.dp).testTag("fb-cosmo-chart"))
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (puntosManuales.isNotEmpty())
-                     "${puntosManuales.size} points, surveyed by hand"
-                 else "${paraDibujar.size} sectors of ${c.horizonBinDeg}°, phone sweep",
-                 style = MaterialTheme.typography.bodySmall,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                 modifier = Modifier.weight(1f).testTag("fb-cosmo-horizon-state"))
-            CopiarHorizonte(paraDibujar)
+                          Modifier.fillMaxWidth().height(180.dp).testTag("fb-cosmo-chart"),
+                          segunda = segunda, colorSegunda = colorMano)
+        Text(buildString {
+                 if (delTelefono.isNotEmpty())
+                     append("${delTelefono.size} sectors of ${c.horizonBinDeg}°, phone sweep")
+                 if (delTelefono.isNotEmpty() && puntosManuales.isNotEmpty()) append("   ·   ")
+                 if (puntosManuales.isNotEmpty())
+                     append("${puntosManuales.size} points by hand")
+             },
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant,
+             modifier = Modifier.testTag("fb-cosmo-horizon-state"))
+        Text("Drag across the chart to read the azimuth.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (delTelefono.isNotEmpty()) CopiarHorizonte(delTelefono, "phone")
+            if (puntosManuales.isNotEmpty()) CopiarHorizonte(puntosManuales, "hand")
         }
     }
 
@@ -877,20 +906,40 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
  * eso conviene verlo estando todavia junto al bloque.
  */
 @Composable
-fun PerfilDeHorizonte(puntos: List<HorizonPoints.Point>, modifier: Modifier = Modifier) {
+fun PerfilDeHorizonte(
+    puntos: List<HorizonPoints.Point>,
+    modifier: Modifier = Modifier,
+    segunda: List<HorizonPoints.Point> = emptyList(),
+    colorSegunda: Color = Color.Unspecified,
+) {
     val ejes = MaterialTheme.colorScheme.onSurfaceVariant
     val relleno = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
     val borde = MaterialTheme.colorScheme.onSurface
     val fondo = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+    val fondoCursor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
     val medidor = androidx.compose.ui.text.rememberTextMeasurer()
     val estilo = MaterialTheme.typography.labelSmall.copy(color = ejes)
 
     val orden = remember(puntos) { puntos.sortedBy { it.azimuth } }
-    val maxEl = remember(orden) {
-        ((orden.maxOfOrNull { it.elevation } ?: 10.0).coerceAtLeast(10.0) / 10).toInt() * 10 + 10
+    val orden2 = remember(segunda) { segunda.sortedBy { it.azimuth } }
+    val maxEl = remember(orden, orden2) {
+        (((orden + orden2).maxOfOrNull { it.elevation } ?: 10.0)
+            .coerceAtLeast(10.0) / 10).toInt() * 10 + 10
     }
 
-    androidx.compose.foundation.Canvas(modifier) {
+    // EL CURSOR DE ARRASTRE. Un perfil dibujado dice la forma; para leer "el cerro del
+    // noreste sube a 33 grados" hace falta poner el dedo encima. Null cuando no se toca.
+    var cursorX by remember { mutableStateOf<Float?>(null) }
+
+    androidx.compose.foundation.Canvas(
+        modifier.pointerInput(Unit) {
+            detectDragGestures(
+                onDragStart = { cursorX = it.x },
+                onDragEnd = { cursorX = null },
+                onDragCancel = { cursorX = null },
+                onDrag = { cambio, _ -> cursorX = cambio.position.x })
+        }
+    ) {
         val izq = 34f * density
         val abajo = 18f * density
         val w = size.width - izq
@@ -940,12 +989,46 @@ fun PerfilDeHorizonte(puntos: List<HorizonPoints.Point>, modifier: Modifier = Mo
             drawCircle(borde, radius = 3.5f,
                        center = androidx.compose.ui.geometry.Offset(x(q.azimuth), y(q.elevation)))
         }
+
+        // La segunda serie, si la hay: la otra forma de medir el mismo horizonte.
+        if (orden2.isNotEmpty()) {
+            val cerrado2 = orden2 + HorizonPoints.Point(orden2.first().azimuth + 360.0,
+                                                        orden2.first().elevation)
+            val p2 = androidx.compose.ui.graphics.Path()
+            p2.moveTo(x(0.0), y(orden2.last().elevation))
+            cerrado2.forEach { q -> p2.lineTo(x(q.azimuth.coerceAtMost(360.0)), y(q.elevation)) }
+            drawPath(p2, colorSegunda,
+                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
+            if (orden2.size <= 40) orden2.forEach { q ->
+                drawCircle(colorSegunda, radius = 4f,
+                           center = androidx.compose.ui.geometry.Offset(x(q.azimuth),
+                                                                        y(q.elevation)))
+            }
+        }
+
+        cursorX?.let { cx ->
+            val az = (((cx - izq) / w) * 360.0).coerceIn(0.0, 360.0)
+            drawLine(borde, androidx.compose.ui.geometry.Offset(x(az), 0f),
+                     androidx.compose.ui.geometry.Offset(x(az), h), 2f)
+            val elev = orden.minByOrNull {
+                kotlin.math.abs(cl.umag.glaciertemp.core.sensors.Angles.wrap(it.azimuth - az))
+            }?.elevation
+            val texto = "%.0f° %s".format(az, cl.umag.glaciertemp.core.sensors.Compass.cardinal(az)) +
+                        (elev?.let { "   %.1f°".format(it) } ?: "")
+            val r = medidor.measure(texto, estilo.copy(color = borde))
+            val tx = (x(az) + 6f).coerceAtMost(size.width - r.size.width - 2f)
+            drawRect(fondoCursor,
+                     androidx.compose.ui.geometry.Offset(tx - 3f, 2f),
+                     androidx.compose.ui.geometry.Size(r.size.width + 6f,
+                                                       r.size.height.toFloat()))
+            drawText(r, topLeft = androidx.compose.ui.geometry.Offset(tx, 2f))
+        }
     }
 }
 
 /** Copia el horizonte en el formato de la calculadora de ICE-D: dos lineas de numeros. */
 @Composable
-private fun CopiarHorizonte(puntos: List<HorizonPoints.Point>) {
+private fun CopiarHorizonte(puntos: List<HorizonPoints.Point>, cual: String = "") {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var copiado by remember { mutableStateOf(false) }
     LaunchedEffect(copiado) { if (copiado) { kotlinx.coroutines.delay(1500); copiado = false } }
@@ -958,8 +1041,8 @@ private fun CopiarHorizonte(puntos: List<HorizonPoints.Point>) {
             copiado = true
         },
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-        modifier = Modifier.testTag("fb-cosmo-copy")) {
-        Text(if (copiado) "Copied" else "Copy")
+        modifier = Modifier.testTag("fb-cosmo-copy-$cual")) {
+        Text(if (copiado) "Copied" else if (cual.isEmpty()) "Copy" else "Copy $cual")
     }
 }
 
@@ -972,8 +1055,18 @@ private fun CopiarHorizonte(puntos: List<HorizonPoints.Point>) {
 @Composable
 private fun MedirRumboYBuzamiento(onDone: (Double, Double) -> Unit, onCancel: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val beeper = remember { GpsTimeBeeper() }
+
     var rumbo by remember { mutableStateOf<Double?>(null) }
     var buzamiento by remember { mutableStateOf<Double?>(null) }
+    val vivo = rememberUpdatedState(rumbo to buzamiento)
+
+    // Las dos posiciones. La primera se toma tal cual; la segunda con el telefono girado
+    // media vuelta sobre la superficie.
+    var primera by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var segunda by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var midiendo by remember { mutableStateOf(false) }
+    var cuenta by remember { mutableIntStateOf(0) }
 
     DisposableEffect(Unit) {
         val sm = ctx.getSystemService(android.content.Context.SENSOR_SERVICE)
@@ -989,35 +1082,127 @@ private fun MedirRumboYBuzamiento(onDone: (Double, Double) -> Unit, onCancel: ()
             }
             override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
         }
-        sm.registerListener(oyente, sensor, android.hardware.SensorManager.SENSOR_DELAY_UI)
+        sm.registerListener(oyente, sensor, android.hardware.SensorManager.SENSOR_DELAY_FASTEST)
         onDispose { sm.unregisterListener(oyente) }
     }
+
+    // Tres segundos de promedio por posicion. Circular para el rumbo, que da la vuelta.
+    LaunchedEffect(midiendo) {
+        if (!midiendo) return@LaunchedEffect
+        val rumbos = ArrayList<Double>()
+        val buzamientos = ArrayList<Double>()
+        for (seg in SEGUNDOS_DOS_POSICIONES downTo 1) {
+            cuenta = seg
+            AlbedoRun.beep(midiendo = true, ultimo = false).let { beeper.beep(it.hz, it.ms) }
+            repeat(10) {
+                kotlinx.coroutines.delay(100)
+                val (r, b) = vivo.value
+                if (r != null && b != null) { rumbos += r; buzamientos += b }
+            }
+        }
+        AlbedoRun.beep(midiendo = true, ultimo = true).let { beeper.beep(it.hz, it.ms) }
+        cuenta = 0
+        midiendo = false
+        val r = Angles.mean(rumbos)?.let { Compass.normalize(it) }
+        val b = buzamientos.average().takeIf { buzamientos.isNotEmpty() }
+        if (r != null && b != null) {
+            if (primera == null) primera = r to b else segunda = r to b
+        }
+    }
+
+    val p1 = primera
+    val p2 = segunda
+    // El buzamiento NO cambia al girar el telefono sobre el plano --el plano es el mismo-- y
+    // el rumbo si cambia media vuelta. Ver Reversal: cada uno se combina de su manera.
+    val finalBuz = if (p1 != null && p2 != null) Reversal.surface(p1.second, p2.second) else null
+    val finalRumbo = if (p1 != null && p2 != null) Reversal.heading(p1.first, p2.first) else null
 
     AlertDialog(
         onDismissRequest = onCancel,
         modifier = Modifier.testTag("fb-cosmo-dip-dialog"),
-        title = { Text("Lay the phone on the surface") },
+        title = { Text("Strike and dip in two positions") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Screen up, flat against the rock, then read it without moving it.")
-                Text("Strike %s   Dip %s".format(
-                         rumbo?.let { "%.0f°".format(it) } ?: "—",
-                         buzamiento?.let { "%.0f°".format(it) } ?: "—"),
-                     style = MaterialTheme.typography.headlineSmall,
-                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                     modifier = Modifier.testTag("fb-cosmo-dip-live"))
+                when {
+                    midiendo -> {
+                        Text(if (p1 == null) "Hold still — first position"
+                             else "Hold still — second position",
+                             style = MaterialTheme.typography.titleMedium)
+                        Text("$cuenta", style = MaterialTheme.typography.displaySmall,
+                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                             modifier = Modifier.testTag("fb-cosmo-dip-count"))
+                    }
+                    p1 == null ->
+                        Text("Lay the phone flat on the surface, screen up, then press Start. " +
+                             "It averages for $SEGUNDOS_DOS_POSICIONES seconds.")
+                    p2 == null -> {
+                        Text("First position: strike %.0f°, dip %.0f°".format(p1.first, p1.second),
+                             style = MaterialTheme.typography.bodyMedium,
+                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                             modifier = Modifier.testTag("fb-cosmo-dip-first"))
+                        // EL EJE SE DICE, porque es lo unico que hay que hacer bien: girar
+                        // sobre otro eje no cancela el sesgo, lo mezcla.
+                        Text("Now turn the phone 180° WITHOUT LIFTING IT: keep it flat on the " +
+                             "same spot and spin it in place, so the end that pointed away " +
+                             "now points towards you. Which way you spin it does not matter.",
+                             style = MaterialTheme.typography.bodyMedium)
+                        Text("That reverses the sensor's own bias while the rock stays put, " +
+                             "so combining the two readings cancels it.",
+                             style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    else -> {
+                        Text("Strike %.0f°   Dip %.0f°"
+                                 .format(finalRumbo!!.value, finalBuz!!.value),
+                             style = MaterialTheme.typography.headlineSmall,
+                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                             modifier = Modifier.testTag("fb-cosmo-dip-live"))
+                        Text("Bias removed: %.1f° in dip, %.1f° in strike"
+                                 .format(finalBuz.bias, finalRumbo.bias),
+                             style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                             modifier = Modifier.testTag("fb-cosmo-dip-bias"))
+                        Reversal.warning(listOf(finalBuz.bias, finalRumbo.bias))?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall,
+                                 color = MaterialTheme.colorScheme.error,
+                                 modifier = Modifier.testTag("fb-cosmo-dip-warn"))
+                        }
+                    }
+                }
+                if (!midiendo && p2 == null) {
+                    Text("Live: strike %s  dip %s".format(
+                             rumbo?.let { "%.0f°".format(it) } ?: "—",
+                             buzamiento?.let { "%.0f°".format(it) } ?: "—"),
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Text("The strike needs the magnetometer, so keep the hammer and the sled away.",
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
-            TextButton(onClick = { onDone(rumbo ?: 0.0, buzamiento ?: 0.0) },
-                       enabled = buzamiento != null,
-                       modifier = Modifier.testTag("fb-cosmo-dip-use")) { Text("Use these") }
+            when {
+                midiendo -> {}
+                p2 != null -> TextButton(
+                    onClick = { onDone(finalRumbo!!.value, finalBuz!!.value) },
+                    modifier = Modifier.testTag("fb-cosmo-dip-use")) { Text("Use these") }
+                else -> TextButton(onClick = { midiendo = true },
+                                   enabled = buzamiento != null,
+                                   modifier = Modifier.testTag("fb-cosmo-dip-start")) {
+                    Text(if (p1 == null) "Start" else "Start second")
+                }
+            }
         },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } })
+        dismissButton = {
+            TextButton(onClick = onCancel) {
+                Text(if (p1 != null && p2 == null) "Use first only" else "Cancel")
+            }
+        })
 }
+
+/** Tres segundos por posicion: lo pedido, y bastante para promediar el temblor de la mano. */
+private const val SEGUNDOS_DOS_POSICIONES = 3
 
 /**
  * El horizonte tecleado a mano, en el formato de la calculadora.

@@ -53,7 +53,8 @@ import kotlin.math.abs
  * tarea seria imposible: se estaria apuntando al horizonte de detras.
  */
 @Composable
-fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: () -> Unit) {
+fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: () -> Unit,
+                        location: LocationSource? = null) {
     val ctx = LocalContext.current
     var permiso by remember { mutableStateOf(tienePermisoCamara(ctx)) }
     val pedir = rememberLauncherForActivityResult(
@@ -74,6 +75,23 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
             TextButton(onClick = onCancel) { Text("Back") }
         }
         return
+    }
+
+    // AZIMUT VERDADERO, NO MAGNETICO. Se corrige aqui, en la entrada, para que el grafico,
+    // el recorrido del sol, el panel y lo que se copia hablen todos del mismo norte. Sin
+    // posicion no hay declinacion y se dice: presentar lo magnetico como verdadero seria el
+    // error que esto viene a evitar.
+    val declinacion = rememberDeclination(location)
+    val declinacionRef = rememberUpdatedState(declinacion)
+
+    // AVISO DE CALIBRACION AL ENTRAR. Un barrido entero con la brujula mal calibrada sale
+    // torcido de una forma que el factor de apantallamiento NO perdona --no es una rotacion
+    // rigida, es una deformacion-- y hasta ahora nada lo decia.
+    val precision = rememberCompassAccuracy()
+    var avisoCalibracion by remember { mutableStateOf(false) }
+    var yaAvisado by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(precision) {
+        if (!yaAvisado && precision.isPoor()) { avisoCalibracion = true; yaAvisado = true }
     }
 
     val bins = remember { HorizonBins() }
@@ -120,7 +138,9 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
         val oyente = object : android.hardware.SensorEventListener {
             override fun onSensorChanged(e: android.hardware.SensorEvent) {
                 android.hardware.SensorManager.getRotationMatrixFromVector(R, e.values)
-                val (az, el) = ViewDirection.of(R)
+                val (azMag, el) = ViewDirection.of(R)
+                val az = cl.umag.glaciertemp.core.sensors.Compass.normalize(
+                    azMag + (declinacionRef.value ?: 0.0))
                 azimut = az
                 elevacion = el
                 ladeo = ViewDirection.roll(R)
@@ -171,6 +191,7 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
             Cruz(diferencia = if (registrando) referencia?.let { it - elevacion } else null,
                  modifier = Modifier.fillMaxSize())
             Lectura(azimut, elevacion, ladeo, cubiertos, bins.total(), registrando,
+                    declinacion, precision,
                     Modifier.align(Alignment.TopStart).padding(12.dp))
         }
 
@@ -193,6 +214,12 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
                  color = if (problema) MaterialTheme.colorScheme.error
                          else MaterialTheme.colorScheme.onSurfaceVariant,
                  modifier = Modifier.testTag("hz-hint"))
+            if (precision.isPoor()) {
+                TextButton(onClick = { avisoCalibracion = true },
+                           modifier = Modifier.testTag("hz-calib")) {
+                    Text("Compass accuracy is ${precision.label} — how to improve it")
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!registrando) {
                     Button(onClick = { registrando = true },
@@ -221,6 +248,8 @@ fun HorizonMapperScreen(onDone: (HorizonProfile, Int, Int) -> Unit, onCancel: ()
             }
         }
     }
+
+    if (avisoCalibracion) DialogoDeCalibracion(precision) { avisoCalibracion = false }
 
     if (huecos) {
         val faltan = BooleanArray(bins.total()) { bins.samples(it) > 0 }
@@ -368,6 +397,7 @@ private fun DrawScope.flecha(centro: Offset, arriba: Boolean, largo: Float, colo
 @Composable
 private fun Lectura(azimut: Double?, elevacion: Double, ladeo: Double,
                     cubiertos: Int, total: Int, registrando: Boolean,
+                    declinacion: Double?, precision: CompassAccuracy,
                     modifier: Modifier = Modifier) {
     Surface(color = Color.Black.copy(alpha = 0.45f),
             shape = MaterialTheme.shapes.small,
@@ -389,6 +419,13 @@ private fun Lectura(azimut: Double?, elevacion: Double, ladeo: Double,
                          else Color(0xFFFFC107),
                  style = MaterialTheme.typography.bodySmall,
                  modifier = Modifier.testTag("hz-progress"))
+            Text((declinacion?.let { "true N  ·  decl " + Declination.describe(it) }
+                      ?: "magnetic N  ·  no position") +
+                 "  ·  compass " + precision.label,
+                 color = if (declinacion != null && !precision.isPoor())
+                             Color.White.copy(alpha = 0.8f) else Color(0xFFFFC107),
+                 style = MaterialTheme.typography.bodySmall,
+                 modifier = Modifier.testTag("hz-north"))
         }
     }
 }

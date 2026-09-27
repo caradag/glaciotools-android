@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.core.sensors.AlbedoRun
 import cl.umag.glaciertemp.core.sensors.Angles
+import cl.umag.glaciertemp.core.sensors.Reversal
 import cl.umag.glaciertemp.core.sensors.Scalars
 import cl.umag.glaciertemp.core.sensors.Tilt
 import cl.umag.glaciertemp.core.sensors.Compass
@@ -68,7 +69,8 @@ fun SensorsScreen(onBack: () -> Unit, location: LocationSource? = null) {
             onDone = { perfil, sectores, muestras ->
                 horizonte = Horizonte(perfil, sectores, muestras); mapeando = false
             },
-            onCancel = { mapeando = false })
+            onCancel = { mapeando = false },
+            location = location)
         return
     }
 
@@ -109,8 +111,8 @@ fun SensorsScreen(onBack: () -> Unit, location: LocationSource? = null) {
 
         Box(Modifier.weight(1f)) {
             when (tab) {
-                0 -> TiltTab(onMapHorizon = { mapeando = true })
-                1 -> CompassTab()
+                0 -> TiltTab(onMapHorizon = { mapeando = true }, location = location)
+                1 -> CompassTab(location = location)
                 2 -> PressureTab()
                 else -> LightTab()
             }
@@ -279,10 +281,14 @@ private data class Horizonte(
 )
 
 @Composable
-private fun TiltTab(onMapHorizon: () -> Unit) {
+private fun TiltTab(onMapHorizon: () -> Unit, location: LocationSource? = null) {
+    val declinacion = rememberDeclination(location)
     if (!hay(Sensor.TYPE_ROTATION_VECTOR)) return SinSensor("orientation sensor")
     val v by sensorValues(Sensor.TYPE_ROTATION_VECTOR)
-    val a = v?.let { anglesDe(it) }
+    // El yaw se pasa a norte REAL aqui: lo que se lee y lo que se copia son lo mismo.
+    val a = v?.let { anglesDe(it) }?.let { (y, p, r) ->
+        Triple(Compass.normalize(y + (declinacion ?: 0.0)), p, r)
+    }
     val ahoraRef = rememberUpdatedState(a)
 
     val beeper = remember { GpsTimeBeeper() }
@@ -290,6 +296,8 @@ private fun TiltTab(onMapHorizon: () -> Unit) {
     var cuenta by remember { mutableIntStateOf(0) }
     var midiendo by remember { mutableStateOf(false) }
     var medida by remember { mutableStateOf<Inclinacion?>(null) }
+    // La segunda posicion, con el telefono girado media vuelta sobre la superficie.
+    var segunda by remember { mutableStateOf<Inclinacion?>(null) }
 
     LaunchedEffect(corriendo) {
         if (!corriendo) return@LaunchedEffect
@@ -302,11 +310,12 @@ private fun TiltTab(onMapHorizon: () -> Unit) {
             muestrear = {
                 ahoraRef.value?.let { (y, p, r) -> yaws += y; pitches += p; rolls += r }
             })
-        medida = Inclinacion(
+        val nueva = Inclinacion(
             Angles.mean(yaws), Angles.median(yaws),
             Angles.mean(pitches), Angles.median(pitches),
             Angles.mean(rolls), Angles.median(rolls),
             yaws.size)
+        if (medida == null) medida = nueva else segunda = nueva
         midiendo = false
         cuenta = 0
         corriendo = false
@@ -314,9 +323,11 @@ private fun TiltTab(onMapHorizon: () -> Unit) {
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Cifra("Yaw (azimuth)",
+        Cifra(if (declinacion != null) "Yaw (azimuth, true N)" else "Yaw (azimuth, magnetic N)",
               a?.let { Compass.format(it.first, 1) + "  " + Compass.cardinal(it.first) } ?: "—",
               "sn-yaw")
+        NorteYDeclinacion(declinacion)
+        FilaDePrecision(rememberCompassAccuracy())
         Cifra("Pitch", a?.let { "%.1f°".format(it.second) } ?: "—", "sn-pitch")
         Cifra("Roll", a?.let { "%.1f°".format(it.third) } ?: "—", "sn-roll")
 
@@ -329,7 +340,7 @@ private fun TiltTab(onMapHorizon: () -> Unit) {
             Medicion(hacia = null, midiendo = midiendo, cuenta = cuenta,
                      onCancel = { corriendo = false; cuenta = 0; midiendo = false })
         } else {
-            Button(onClick = { medida = null; corriendo = true },
+            Button(onClick = { medida = null; segunda = null; corriendo = true },
                    modifier = Modifier.testTag("sn-tilt-measure")) {
                 Text("Measure for ${AlbedoRun.HOLD_SECONDS} s")
             }
@@ -341,7 +352,43 @@ private fun TiltTab(onMapHorizon: () -> Unit) {
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
-        medida?.let { ResultadoInclinacion(it) }
+        medida?.let { primera ->
+            ResultadoInclinacion(primera)
+            val dos = segunda
+            if (dos == null && !corriendo) {
+                // SEGUNDA POSICION, opcional. Cancela el sesgo del sensor sin calibrar nada.
+                // EL EJE SE DICE: girar sobre otro no cancela el sesgo, lo mezcla.
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp),
+                           verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Second position (optional)",
+                             style = MaterialTheme.typography.titleSmall)
+                        Text("Turn the phone 180° WITHOUT LIFTING IT: keep it flat against " +
+                             "the same surface and spin it in place, so the end that pointed " +
+                             "away now points towards you. Which way you spin it does not " +
+                             "matter.",
+                             style = MaterialTheme.typography.bodyMedium)
+                        Text("The sensor's bias turns with the phone while the surface stays " +
+                             "put, so combining the two readings cancels it and shows how " +
+                             "big it was.",
+                             style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { corriendo = true },
+                                   modifier = Modifier.testTag("sn-tilt-second")) {
+                                Text("Measure second position")
+                            }
+                            OutlinedButton(onClick = { segunda = primera.copy(muestras = -1) },
+                                           modifier = Modifier.testTag("sn-tilt-skip")) {
+                                Text("Keep just this one")
+                            }
+                        }
+                    }
+                }
+            } else if (dos != null && dos.muestras >= 0) {
+                ResultadoEnDosPosiciones(primera, dos)
+            }
+        }
 
         HorizontalDivider()
 
@@ -413,11 +460,12 @@ private fun FilaMediaMediana(rotulo: String, media: Double?, mediana: Double?, t
 // --------------------------------------- brujula ---------------------------------------
 
 @Composable
-private fun CompassTab() {
+private fun CompassTab(location: LocationSource? = null) {
+    val declinacion = rememberDeclination(location)
     if (!hay(Sensor.TYPE_ROTATION_VECTOR)) return SinSensor("compass")
     val v by sensorValues(Sensor.TYPE_ROTATION_VECTOR)
     val campo by sensorValues(Sensor.TYPE_MAGNETIC_FIELD)
-    val rumbo = v?.let { anglesDe(it).first }
+    val rumbo = v?.let { Compass.normalize(anglesDe(it).first + (declinacion ?: 0.0)) }
     val uT = campo?.let { sqrt((it[0]*it[0] + it[1]*it[1] + it[2]*it[2]).toDouble()) }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -426,9 +474,11 @@ private fun CompassTab() {
 
         Rosa(rumbo)
 
-        Cifra("Heading",
+        Cifra(if (declinacion != null) "Heading (true N)" else "Heading (magnetic N)",
               rumbo?.let { Compass.format(it) + "  " + Compass.cardinal(it) } ?: "—",
               "sn-heading")
+        NorteYDeclinacion(declinacion)
+        FilaDePrecision(rememberCompassAccuracy())
         uT?.let {
             Text("Magnetic field %.1f µT".format(it),
                  style = MaterialTheme.typography.bodyMedium,
@@ -441,12 +491,32 @@ private fun CompassTab() {
         // El aviso del campo va con NUMEROS porque "cerca de metal" no es accionable si uno
         // esta de pie sobre un trineo: 25-65 uT es lo normal en la superficie terrestre, y
         // ver 200 dice sin ambiguedad que la lectura no vale.
-        Text("This is magnetic north, not true north. Earth's field is 25–65 µT at the " +
-             "surface; a much larger reading means something nearby is magnetic — a ski " +
-             "pole, a sled, the vehicle — and the heading is wrong.",
+        Text("Earth's field is 25–65 µT at the surface; a much larger reading means " +
+             "something nearby is magnetic — a ski pole, a sled, the vehicle — and the " +
+             "heading is wrong no matter how well the compass is calibrated.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+/**
+ * Que norte se esta usando y con que correccion.
+ *
+ * SE DICE SIEMPRE, tambien cuando no hay posicion. Un azimut sin decir de que norte habla es
+ * el dato que despues no se puede usar: la diferencia son mas de diez grados en Patagonia, y
+ * quien lo lea dentro de un ano no tiene forma de saber cual era.
+ */
+@Composable
+private fun NorteYDeclinacion(declinacion: Double?) {
+    Text(declinacion?.let {
+             "True north. Magnetic declination " + Declination.describe(it) +
+             " added to what the sensor reports."
+         } ?: "Magnetic north: no position yet, so the declination is unknown and nothing " +
+              "has been corrected.",
+         style = MaterialTheme.typography.bodySmall,
+         color = if (declinacion != null) MaterialTheme.colorScheme.onSurfaceVariant
+                 else MaterialTheme.colorScheme.error,
+         modifier = Modifier.testTag("sn-declination"))
 }
 
 /** La rosa. Gira la aguja, no el circulo: el que mira es el que gira, no el norte. */
@@ -694,4 +764,54 @@ private fun Instrucciones(titulo: String, cuerpo: String, onOk: () -> Unit) {
             }
         },
     )
+}
+
+
+/**
+ * Lo que sale de combinar las dos posiciones.
+ *
+ * CADA ANGULO SE COMBINA DE SU MANERA, y equivocarse aqui da casi cero en vez del valor:
+ * el pitch y el roll son del APARATO y cambian de signo al girarlo, asi que el valor sale de
+ * la semidiferencia; el yaw es un rumbo y la segunda lectura viene girada media vuelta. Ver
+ * Reversal, que es donde esta la aritmetica y sus pruebas.
+ */
+@Composable
+private fun ResultadoEnDosPosiciones(a: Inclinacion, b: Inclinacion) {
+    val yaw = if (a.yawMd != null && b.yawMd != null)
+        Reversal.heading(a.yawMd, b.yawMd) else null
+    val pitch = if (a.pitchMd != null && b.pitchMd != null)
+        Reversal.device(a.pitchMd, b.pitchMd) else null
+    val roll = if (a.rollMd != null && b.rollMd != null)
+        Reversal.device(a.rollMd, b.rollMd) else null
+
+    Card(Modifier.fillMaxWidth().testTag("sn-tilt-two")) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Two positions, bias removed", style = MaterialTheme.typography.titleSmall)
+            FilaCorregida("Yaw", yaw?.let { Compass.normalize(it.value) }, yaw?.bias, "sn-two-yaw")
+            FilaCorregida("Pitch", pitch?.value, pitch?.bias, "sn-two-pitch")
+            FilaCorregida("Roll", roll?.value, roll?.bias, "sn-two-roll")
+            Reversal.warning(listOfNotNull(pitch?.bias, roll?.bias))?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.error,
+                     modifier = Modifier.testTag("sn-two-warn"))
+            }
+            Text("The bias column is what the two positions disagreed by, halved. It is the " +
+                 "sensor's own offset, and it is gone from the value on the left.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun FilaCorregida(rotulo: String, valor: Double?, sesgo: Double?, tag: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(rotulo, style = MaterialTheme.typography.bodyMedium,
+             modifier = Modifier.width(56.dp))
+        Text((valor?.let { "%.1f°".format(it) } ?: "—") +
+             "     bias " + (sesgo?.let { "%+.2f°".format(it) } ?: "—"),
+             style = MaterialTheme.typography.bodyMedium,
+             fontFamily = FontFamily.Monospace,
+             modifier = Modifier.testTag(tag))
+    }
 }

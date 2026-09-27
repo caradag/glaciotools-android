@@ -199,8 +199,16 @@ data class CosmoSample(
     val manualAzimuths: List<Double> = emptyList(),
     val manualElevations: List<Double> = emptyList(),
 
-    /** Lo que sale de los anteriores. Se guarda para no depender de recalcularlo. */
+    /**
+     * El factor en uso, y ademas el de CADA medida por separado.
+     *
+     * SE GUARDAN LOS DOS. Haber medido el horizonte dos veces --barriendo con el telefono y
+     * a mano con brujula-- solo sirve si despues se pueden comparar; quedarse con uno
+     * tiraria justo la informacion por la que se midio dos veces.
+     */
     val shieldingFactor: Double? = null,
+    val shieldingFromPhone: Double? = null,
+    val shieldingFromManual: Double? = null,
 ) {
     fun isEmpty(): Boolean =
         site.isBlank() && place.isBlank() && boulder.isBlank() && surface.isBlank() &&

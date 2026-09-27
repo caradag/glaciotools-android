@@ -101,7 +101,8 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
                     fieldbook.setCosmoHorizon(perfil.elevations.toList(), perfil.binDeg)
                     donde = Herramienta.LIBRETA
                 },
-                onCancel = { donde = Herramienta.LIBRETA })
+                onCancel = { donde = Herramienta.LIBRETA },
+                location = fieldbook.location)
         }
         Herramienta.DIARIO -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {

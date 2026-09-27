@@ -163,6 +163,8 @@ object FieldbookOdt {
                     c.strikeDeg?.let { apantalla += "strike ${FieldbookCsv.num(it)}°" }
                     c.dipDeg?.let { apantalla += "dip ${FieldbookCsv.num(it)}°" }
                     c.shieldingFactor?.let { apantalla += "shielding factor %.4f".format(it) }
+                    c.shieldingFromPhone?.let { apantalla += "from phone sweep %.4f".format(it) }
+                    c.shieldingFromManual?.let { apantalla += "from hand survey %.4f".format(it) }
                     if (apantalla.isNotEmpty())
                         doc.body("Shielding: " + apantalla.joinToString(", "))
                     if (c.manualAzimuths.isNotEmpty()) {

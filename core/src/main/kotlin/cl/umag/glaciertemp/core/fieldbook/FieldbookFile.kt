@@ -182,6 +182,8 @@ object FieldbookFile {
                     kvNum("strike", c.strikeDeg)
                     kvNum("dip", c.dipDeg)
                     kvNum("shielding", c.shieldingFactor)
+                    kvNum("shielding_phone", c.shieldingFromPhone)
+                    kvNum("shielding_manual", c.shieldingFromManual)
                     if (c.manualAzimuths.isNotEmpty()) {
                         kv("manual_az", c.manualAzimuths.joinToString(" ") { "%.1f".format(it) })
                         kv("manual_el", c.manualElevations.joinToString(" ") { "%.1f".format(it) })
@@ -369,6 +371,8 @@ object FieldbookFile {
                     manualElevations = c?.one("manual_el")?.split(" ")
                         ?.mapNotNull { it.toDoubleOrNull() } ?: emptyList(),
                     shieldingFactor = c?.num("shielding"),
+                    shieldingFromPhone = c?.num("shielding_phone"),
+                    shieldingFromManual = c?.num("shielding_manual"),
                 )
                 base.copy(
                     cosmoName = c?.one("name") ?: "",

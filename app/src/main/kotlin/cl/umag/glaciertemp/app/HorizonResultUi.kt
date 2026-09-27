@@ -1,6 +1,7 @@
 package cl.umag.glaciertemp.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -14,6 +15,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -199,6 +201,9 @@ private fun GraficoDeHorizonte(profile: HorizonProfile, caminos: List<Camino>,
     val estiloEje = MaterialTheme.typography.labelSmall.copy(color = ejes)
     val estiloCardinal = MaterialTheme.typography.labelMedium.copy(
         color = ejes, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+    val fondoCursor = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+    // El dedo sobre el grafico: dice el azimut y la elevacion del horizonte ahi.
+    var cursorX by remember { mutableStateOf<Float?>(null) }
 
     // El eje vertical llega a donde haga falta: con un cerro a 60 grados, fijarlo en 30
     // cortaria justo lo que se ha ido a medir.
@@ -208,7 +213,13 @@ private fun GraficoDeHorizonte(profile: HorizonProfile, caminos: List<Camino>,
     val minEl = minOf(profile.minElevation(), 0.0).let { (it / 10).toInt() * 10 - 10 }
         .coerceAtLeast(-90)
 
-    Canvas(modifier) {
+    Canvas(modifier.pointerInput(Unit) {
+        detectDragGestures(
+            onDragStart = { cursorX = it.x },
+            onDragEnd = { cursorX = null },
+            onDragCancel = { cursorX = null },
+            onDrag = { cambio, _ -> cursorX = cambio.position.x })
+    }) {
         val izq = 42f * densidad
         val abajo = 26f * densidad
         val arriba = 8f * densidad
@@ -256,6 +267,20 @@ private fun GraficoDeHorizonte(profile: HorizonProfile, caminos: List<Camino>,
         }
         drawPath(relleno2, relleno)
         drawPath(p, borde, style = Stroke(width = 3f))
+
+        cursorX?.let { cx ->
+            val az = (((cx - izq) / w) * 360.0).coerceIn(0.0, 360.0)
+            drawLine(borde, Offset(x(az), arriba), Offset(x(az), arriba + h), 2f)
+            val elev = profile.elevationAt(az.coerceAtMost(359.9))
+            val texto = "%.0f° %s   %.1f°".format(
+                az, cl.umag.glaciertemp.core.sensors.Compass.cardinal(az), elev)
+            val r = medidor.measure(texto, estiloCardinal)
+            val tx = (x(az) + 6f).coerceAtMost(size.width - r.size.width - 2f)
+            drawRect(fondoCursor, Offset(tx - 4f, arriba + 2f),
+                     androidx.compose.ui.geometry.Size(r.size.width + 8f,
+                                                       r.size.height.toFloat()))
+            drawText(r, topLeft = Offset(tx, arriba + 2f))
+        }
 
         // El sol. Se parte la curva cuando salta de 360 a 0, o cruzaria el grafico entero.
         caminos.forEach { c ->
