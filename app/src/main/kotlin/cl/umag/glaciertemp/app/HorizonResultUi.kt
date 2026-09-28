@@ -334,14 +334,14 @@ private fun Apantallamiento(profile: HorizonProfile) {
             value = rumbo, onValueChange = { rumbo = it.filter { c -> c.isDigit() || c == '.' } },
             label = { Text("Strike °") }, singleLine = true,
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
             modifier = Modifier.weight(1f).testTag("hz-strike"))
         OutlinedTextField(
             value = buzamiento,
             onValueChange = { buzamiento = it.filter { c -> c.isDigit() || c == '.' } },
             label = { Text("Dip °") }, singleLine = true,
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
             modifier = Modifier.weight(1f).testTag("hz-dip"))
     }
 

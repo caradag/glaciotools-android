@@ -21,6 +21,8 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.drawText
 import cl.umag.glaciertemp.core.sensors.Angles
 import cl.umag.glaciertemp.core.sensors.AlbedoRun
@@ -1259,13 +1261,20 @@ private fun HorizonteAMano(
                      "in the same order. Same format as the ICE-D calculator.",
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // TECLADO NUMERICO tambien aqui, aunque sean listas: lo que se teclea son
+                // decenas de numeros seguidos, y el pad decimal trae el espacio, el punto y
+                // el signo, que es todo lo que hace falta. Con el teclado de texto hay que
+                // cambiar de capa en cada numero.
+                val padNumerico = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 OutlinedTextField(
                     value = az, onValueChange = { az = it },
                     label = { Text("Azimuths") }, placeholder = { Text("0 55 115 235 310") },
+                    keyboardOptions = padNumerico,
                     modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-manual-az"))
                 OutlinedTextField(
                     value = el, onValueChange = { el = it },
                     label = { Text("Elevations") }, placeholder = { Text("3 0 5 0 0") },
+                    keyboardOptions = padNumerico,
                     modifier = Modifier.fillMaxWidth().testTag("fb-cosmo-manual-el"))
                 leido.error?.let {
                     Text(it, color = MaterialTheme.colorScheme.error,

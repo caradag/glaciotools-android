@@ -317,12 +317,12 @@ private fun TarjetaPosicion(vm: AlmanacViewModel, s: AlmanacUiState) {
                 OutlinedTextField(lat, { lat = it }, label = { Text("Latitude") },
                     singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = KeyboardType.Number),
+                        keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth().testTag("planner-lat"))
                 OutlinedTextField(lon, { lon = it }, label = { Text("Longitude") },
                     singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = KeyboardType.Number),
+                        keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth().testTag("planner-lon"))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {

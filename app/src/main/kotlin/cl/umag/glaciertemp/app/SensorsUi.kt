@@ -18,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -1001,6 +1003,9 @@ private fun BloqueDeLugar(
                 GraficoDePresion(lugar.samples,
                                  Modifier.fillMaxWidth().height(140.dp)
                                      .testTag("sn-place-chart"))
+                Text("Drag across the chart to read a reading.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else if (lugar.samples.size == 1) {
                 Text("One reading. Take another later and the change appears here.",
                      style = MaterialTheme.typography.bodySmall,
@@ -1090,7 +1095,20 @@ private fun GraficoDePresion(muestras: List<PressureSample>, modifier: Modifier 
     val orden = remember(muestras) { muestras.sortedBy { it.epochMillis } }
     if (orden.size < 2) return
 
-    Canvas(modifier) {
+    // EL CURSOR DA LA LECTURA CONCRETA. La curva dice la forma --si la caida se acelera-- y
+    // eso ya es la mitad del dato; la otra mitad es "cuanto marcaba el martes por la tarde",
+    // y para eso hay que poder senalar un punto.
+    var cursorX by remember { mutableStateOf<Float?>(null) }
+    val fondoCursor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+    val borde = MaterialTheme.colorScheme.onSurface
+
+    Canvas(modifier.pointerInput(Unit) {
+        detectDragGestures(
+            onDragStart = { cursorX = it.x },
+            onDragEnd = { cursorX = null },
+            onDragCancel = { cursorX = null },
+            onDrag = { cambio, _ -> cursorX = cambio.position.x })
+    }) {
         val izq = 46f * densidad
         val abajo = 16f * densidad
         val w = size.width - izq
@@ -1126,6 +1144,25 @@ private fun GraficoDePresion(muestras: List<PressureSample>, modifier: Modifier 
         drawPath(p, linea, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
         orden.forEach { m ->
             drawCircle(linea, radius = 4f, center = Offset(x(m.epochMillis), y(m.hPa)))
+        }
+
+        cursorX?.let { cx ->
+            // La muestra MAS CERCANA, no una interpolacion: entre dos lecturas tomadas a
+            // mano no se sabe que hizo la presion, y dibujar un valor intermedio seria
+            // inventarselo. Se marca el punto real y se dice cuando fue.
+            val cercana = orden.minByOrNull { kotlin.math.abs(x(it.epochMillis) - cx) }
+            if (cercana != null) {
+                val px = x(cercana.epochMillis)
+                drawLine(borde, Offset(px, 0f), Offset(px, h), 2f)
+                drawCircle(borde, radius = 6f, center = Offset(px, y(cercana.hPa)))
+                val texto = "%.2f hPa  %s".format(cercana.hPa, cuandoCorto(cercana.epochMillis))
+                val r = medidor.measure(texto, estilo.copy(color = borde))
+                val tx = (px + 6f).coerceIn(izq, (size.width - r.size.width).coerceAtLeast(izq))
+                drawRect(fondoCursor, Offset(tx - 4f, 2f),
+                         androidx.compose.ui.geometry.Size(r.size.width + 8f,
+                                                           r.size.height.toFloat()))
+                drawText(r, topLeft = Offset(tx, 2f))
+            }
         }
 
         // Cuanto tiempo abarca, que es lo que da sentido a la pendiente.
