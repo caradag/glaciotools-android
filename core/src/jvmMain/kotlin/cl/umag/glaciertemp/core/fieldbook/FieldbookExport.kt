@@ -44,6 +44,15 @@ object FieldbookExport {
     const val STAKE_CSV = "stake_measurements.csv"
     const val DENDRO_CSV = "dendro_samples.csv"
     const val COSMO_CSV = "cosmogenic_samples.csv"
+
+    /**
+     * Los aforos NO comparten fichero: una carpeta con uno por aforo.
+     *
+     * Cada aforo es una tabla completa de treinta y pico filas que solo significa algo junta
+     * y en orden. Amontonar diez aforos en un CSV obligaria a separarlos otra vez antes de
+     * poder usarlos, que es trabajo puesto ahi por nada.
+     */
+    const val GAUGING_DIR = "Stream gauging"
     const val NOTEBOOK_ODT = "fieldbook.odt"
     const val JOURNAL_ODT = "journal.odt"
     const val PICTURES = "Pictures"
@@ -75,6 +84,7 @@ object FieldbookExport {
                 EntryType.GNSS -> e.pointName.ifBlank { "unnamed point" }
                 EntryType.DENDRO -> e.sampleLabel.ifBlank { "unlabelled sample" }
                 EntryType.COSMO -> e.cosmoName.ifBlank { "unnamed cosmo sample" }
+                EntryType.GAUGING -> e.profileName.ifBlank { "unnamed profile" }
                 EntryType.NOTE -> e.title().ifBlank { "note" }
             })
             var nombre = base
@@ -172,6 +182,24 @@ object FieldbookExport {
             texto(STAKE_CSV, FieldbookCsv.stakes(entries, nombreCampana))
             texto(DENDRO_CSV, FieldbookCsv.dendro(entries, nombreCampana))
             texto(COSMO_CSV, FieldbookCsv.cosmo(entries, nombreCampana))
+
+            // Un fichero por aforo. Se desempatan los nombres repetidos igual que las
+            // carpetas de fotos: el mismo perfil aforado dos veces el mismo dia daria el
+            // mismo nombre, y el segundo pisaria al primero dentro del zip sin decir nada.
+            val usados = HashSet<String>()
+            entries.filter { it.type == EntryType.GAUGING }
+                .sortedBy { it.createdEpochMillis }
+                .forEach { e ->
+                    val fecha = FieldbookCsv.time(e.createdEpochMillis, zone)
+                        .take(16).replace(':', '-')
+                    val base = FieldbookCsv.folderName(
+                        e.profileName.ifBlank { "unnamed profile" } + " " + fecha)
+                    var nombre = base
+                    var n = 2
+                    while (!usados.add(nombre)) { nombre = "$base ($n)"; n++ }
+                    texto("$GAUGING_DIR/$nombre.csv",
+                          FieldbookCsv.gauging(e, nombreCampana(e.campaignId), zone))
+                }
 
             zip.putNextEntry(ZipEntry(NOTEBOOK_ODT))
             zip.write(FieldbookOdt.build(entries, media, campaigns, zone))

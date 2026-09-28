@@ -358,6 +358,7 @@ private fun tipoEnPalabras(t: EntryType): String = when (t) {
     EntryType.GNSS -> "GNSS point"
     EntryType.DENDRO -> "sample"
     EntryType.COSMO -> "cosmogenic sample"
+    EntryType.GAUGING -> "gauging"
     EntryType.NOTE -> "entry"
 }
 

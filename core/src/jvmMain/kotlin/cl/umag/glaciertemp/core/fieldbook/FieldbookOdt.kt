@@ -182,6 +182,45 @@ object FieldbookOdt {
                 }
                 e.photos.forEach { foto(doc, media, it, it) }
             }
+
+            EntryType.GAUGING -> {
+                val g = e.gauging
+                if (g != null) {
+                    val r = Gauging.summarize(g)
+                    val cab = ArrayList<String>()
+                    g.widthM?.let { cab += "width ${FieldbookCsv.num(it)} m" }
+                    g.intervalM?.let { cab += "interval ${FieldbookCsv.num(it * 100)} cm" }
+                    cab += "${r.binCount} bin(s)"
+                    doc.body("Section: " + cab.joinToString(", "))
+
+                    // EL CAUDAL, Y SI ESTA COMPLETO. Un total parcial y uno terminado se
+                    // parecen demasiado escritos a secas, y solo el segundo se puede citar.
+                    r.dischargeM3s?.let {
+                        doc.body("Discharge: ${FieldbookCsv.num(it)} m3/s" +
+                                 if (r.isComplete) ""
+                                 else "  (PARTIAL: ${r.completeBins} of ${r.binCount} bins)")
+                    }
+                    r.areaM2?.let { doc.body("Wetted area: ${FieldbookCsv.num(it)} m2") }
+                    val vel = ArrayList<String>()
+                    r.meanVelocityMps?.let { vel += "mean ${FieldbookCsv.num(it)} m/s" }
+                    r.maxVelocityMps?.let { vel += "max ${FieldbookCsv.num(it)} m/s" }
+                    if (vel.isNotEmpty()) doc.body("Velocity: " + vel.joinToString(", "))
+
+                    if (!r.depthTimes.isEmpty) doc.meta(
+                        "Depths measured " + rango(r.depthTimes, zone))
+                    if (!r.velocityTimes.isEmpty) doc.meta(
+                        "Velocities measured " + rango(r.velocityTimes, zone))
+
+                    // LA TABLA NO VA AQUI: va a su propio CSV, uno por aforo. Treinta y
+                    // cinco filas de numeros dentro de un documento de texto no se leen ni
+                    // se pueden usar para nada, y el CSV se abre en una hoja de calculo.
+                    doc.meta("The full table of bins is in its own CSV file.")
+                    if (g.comments.isNotBlank()) {
+                        doc.body("Comments"); doc.multiline(g.comments)
+                    }
+                }
+                e.photos.forEach { foto(doc, media, it, it) }
+            }
         }
     }
 
@@ -214,11 +253,19 @@ object FieldbookOdt {
         else doc.meta("[photo $nombre is no longer on the phone]")
     }
 
+    /** "de 10:05 a 11:12, mediana 10:39" -- lo que fecha un aforo que duro una hora. */
+    private fun rango(t: Gauging.TimeSpan, zone: ZoneId): String = buildString {
+        append("from ").append(hora(t.firstMillis ?: 0L, zone))
+        append(" to ").append(hora(t.lastMillis ?: 0L, zone))
+        t.medianMillis?.let { append(", median ").append(hora(it, zone)) }
+    }
+
     private fun tipoEnPalabras(t: EntryType): String = when (t) {
         EntryType.NOTE -> "General note"
         EntryType.STAKE -> "Stake measurement"
         EntryType.GNSS -> "GNSS measurement"
         EntryType.DENDRO -> "Dendro sample"
         EntryType.COSMO -> "Cosmogenic isotopes sample"
+        EntryType.GAUGING -> "Stream gauging"
     }
 }

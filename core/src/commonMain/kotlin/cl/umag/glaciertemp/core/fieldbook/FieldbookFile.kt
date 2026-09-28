@@ -199,6 +199,31 @@ object FieldbookFile {
                 }
                 e.photos.forEach { kv("photo", it) }
             }
+
+            EntryType.GAUGING -> {
+                append("[gauging]\n")
+                kv("profile", e.profileName)
+                e.gauging?.let { g ->
+                    kvNum("width_m", g.widthM)
+                    kvNum("interval_m", g.intervalM)
+                    kv("depth_from_bed", if (g.depthFromBed) "1" else "0")
+                    kv("comments", g.comments)
+                    // UN BLOQUE POR TRAMO, y TODOS, incluidos los vacios. El indice del
+                    // tramo es su posicion en el perfil, asi que saltarse los vacios
+                    // correria todos los de despues al releer: el dato de la vertical 30
+                    // aparecería en la 24. Un bloque vacio ocupa nueve bytes.
+                    g.bins.forEach { b ->
+                        append("[bin]\n")
+                        kvNum("depth_m", b.depthM)
+                        kvNum("v_mps", b.velocityMps)
+                        kv("depth_first", b.depthFirstEditMillis)
+                        kv("depth_last", b.depthLastEditMillis)
+                        kv("v_first", b.velocityFirstEditMillis)
+                        kv("v_last", b.velocityLastEditMillis)
+                    }
+                }
+                e.photos.forEach { kv("photo", it) }
+            }
         }
     }
 
@@ -380,6 +405,32 @@ object FieldbookFile {
                     cosmoName = c?.one("name") ?: "",
                     cosmo = muestra.takeIf { !it.isEmpty() },
                     photos = c?.all("photo") ?: emptyList(),
+                )
+            }
+
+            EntryType.GAUGING -> {
+                val g = bloques.firstOrNull { it.name == "gauging" }
+                val tramos = bloques.filter { it.name == "bin" }.map { b ->
+                    GaugingBin(
+                        depthM = b.num("depth_m"),
+                        velocityMps = b.num("v_mps"),
+                        depthFirstEditMillis = b.long("depth_first"),
+                        depthLastEditMillis = b.long("depth_last"),
+                        velocityFirstEditMillis = b.long("v_first"),
+                        velocityLastEditMillis = b.long("v_last"),
+                    )
+                }
+                val aforo = StreamGauging(
+                    widthM = g?.num("width_m"),
+                    intervalM = g?.num("interval_m"),
+                    depthFromBed = g?.one("depth_from_bed") == "1",
+                    bins = tramos,
+                    comments = g?.one("comments") ?: "",
+                )
+                base.copy(
+                    profileName = g?.one("profile") ?: "",
+                    gauging = aforo.takeIf { !it.isEmpty() },
+                    photos = g?.all("photo") ?: emptyList(),
                 )
             }
         }

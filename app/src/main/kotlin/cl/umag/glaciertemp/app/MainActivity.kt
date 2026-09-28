@@ -83,6 +83,8 @@ class MainActivity : ComponentActivity() {
             java.io.File(filesDir, "fieldbook/receivers.txt"))
         fieldbook.species = cl.umag.glaciertemp.core.fieldbook.NameStore(
             java.io.File(filesDir, "fieldbook/species.txt"))
+        fieldbook.profiles = cl.umag.glaciertemp.core.fieldbook.NameStore(
+            java.io.File(filesDir, "fieldbook/profiles.txt"))
         val campanas = cl.umag.glaciertemp.core.fieldbook.CampaignStore(
             java.io.File(filesDir, "fieldbook/campaigns.txt"))
         fieldbook.campaigns = campanas

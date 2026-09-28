@@ -85,6 +85,10 @@ object FieldbookSearch {
                     campos += "Species" to e.species
                     campos += "Notes" to e.notes
                 }
+                EntryType.GAUGING -> {
+                    campos += "Profile" to e.profileName
+                    e.gauging?.let { campos += "Comments" to it.comments }
+                }
                 EntryType.COSMO -> {
                     campos += "Sample" to e.cosmoName
                     e.cosmo?.let { c ->

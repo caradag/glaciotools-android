@@ -240,6 +240,101 @@ object FieldbookCsv {
      * pueden quedar iguales despues de limpiar --"E-12" y "E 12"-- asi que quien las crea
      * tiene que desempatar. Se hace en [FieldbookExport], no aqui.
      */
+    // --------------------------------- aforos de caudal ---------------------------------
+
+    /**
+     * UN aforo, en UN fichero propio, con cabecera comentada.
+     *
+     * POR QUE UNO POR AFORO y no todos juntos como los demas tipos. Un aforo no es una fila:
+     * es una tabla de treinta y cinco filas que solo significan algo juntas y en orden. Diez
+     * aforos en un mismo CSV serian trescientas cincuenta filas que hay que volver a separar
+     * a mano antes de poder hacer nada con ellas, y el primer paso de cualquiera que lo abra
+     * seria deshacer la union. Separados, cada fichero se abre y ya es el perfil.
+     *
+     * LA CABECERA VA COMENTADA CON # y lleva TODO lo de la nota, no un resumen. Un CSV de
+     * caudales sin saber donde, cuando ni con que ancho de tramo se midio no vale nada, y
+     * adjuntar esos datos en otro fichero es garantizar que algun dia viajen separados.
+     * Comentada con # porque asi las hojas de calculo y `pandas` la saltan solas.
+     */
+    fun gauging(
+        e: FieldEntry,
+        campaign: String = "",
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): String = buildString {
+        val g = e.gauging ?: StreamGauging()
+        val tramos = Gauging.bins(g.widthM, g.intervalM)
+        val r = Gauging.summarize(g)
+
+        fun c(clave: String, valor: Any?) {
+            val v = when (valor) { null -> ""; is Double -> num(valor); else -> valor.toString() }
+            if (v.isNotBlank()) append("# ").append(clave).append(": ").append(v).append('\n')
+        }
+        fun hora(ms: Long?) = ms?.let { time(it, zone) }
+
+        append("# GlacioTools stream gauging\n")
+        c("profile", e.profileName)
+        c("campaign", campaign)
+        c("observer", e.person)
+        c("created", hora(e.createdEpochMillis))
+        c("entry_id", e.id)
+        e.position?.let { p ->
+            c("latitude", p.latitude)
+            c("longitude", p.longitude)
+            c("altitude_m_wgs84", p.altitudeMetres)
+            c("position_accuracy_m", p.accuracyMetres)
+            c("position_source", p.source.name)
+            c("position_point", p.pointName)
+            c("position_at", hora(p.atEpochMillis.takeIf { it > 0 }))
+        }
+        c("section_width_m", g.widthM)
+        c("bin_interval_m", g.intervalM)
+        c("bins", r.binCount)
+        c("bins_complete", r.completeBins)
+        // El metodo, escrito en el fichero. Dentro de diez anos nadie se acuerda de a que
+        // profundidad se midio, y es lo que decide si el numero significa lo que dice.
+        c("velocity_method", "single point at " +
+                             num(Gauging.VELOCITY_DEPTH_FRACTION) + " of depth from surface")
+        c("velocity_depth_shown_from", if (g.depthFromBed) "bed" else "surface")
+        c("discharge_m3s", r.dischargeM3s)
+        c("discharge_is_complete", if (r.isComplete) "yes" else "no")
+        c("wetted_area_m2", r.areaM2)
+        c("mean_velocity_mps", r.meanVelocityMps)
+        c("max_velocity_mps", r.maxVelocityMps)
+        c("mean_depth_m", r.meanDepthM)
+        c("max_depth_m", r.maxDepthM)
+        c("depth_first_measured", hora(r.depthTimes.firstMillis))
+        c("depth_last_measured", hora(r.depthTimes.lastMillis))
+        c("depth_median_time", hora(r.depthTimes.medianMillis))
+        c("velocity_first_measured", hora(r.velocityTimes.firstMillis))
+        c("velocity_last_measured", hora(r.velocityTimes.lastMillis))
+        c("velocity_median_time", hora(r.velocityTimes.medianMillis))
+        c("photos", e.photos.size.takeIf { it > 0 })
+        // Los comentarios pueden traer saltos de linea, y una cabecera de # no los admite:
+        // cada linea lleva su propio #, porque partir el comentario en dos dejaria la
+        // segunda mitad como una fila de datos ilegible.
+        if (g.comments.isNotBlank()) {
+            append("# comments:\n")
+            g.comments.lineSequence().forEach { append("#   ").append(it).append('\n') }
+        }
+
+        append(row("bin", "start_m", "end_m", "centre_m", "bin_width_m", "depth_m",
+                   "velocity_depth_m", "velocity_depth_from", "velocity_mps",
+                   "area_m2", "discharge_m3s",
+                   "depth_first_edit", "depth_last_edit",
+                   "velocity_first_edit", "velocity_last_edit"))
+        tramos.forEach { t ->
+            val b = g.bins.getOrElse(t.index) { GaugingBin() }
+            append(row(
+                t.index + 1, t.startM, t.endM, t.centreM, t.widthM, b.depthM,
+                Gauging.measurementDepthM(b.depthM, g.depthFromBed),
+                if (g.depthFromBed) "bed" else "surface",
+                b.velocityMps,
+                Gauging.binArea(t, b), Gauging.binDischarge(t, b),
+                hora(b.depthFirstEditMillis), hora(b.depthLastEditMillis),
+                hora(b.velocityFirstEditMillis), hora(b.velocityLastEditMillis)))
+        }
+    }
+
     fun folderName(raw: String): String {
         val limpio = raw.trim()
             .replace(Regex("""[\\/:*?"<>|\u0000-\u001F]"""), "_")

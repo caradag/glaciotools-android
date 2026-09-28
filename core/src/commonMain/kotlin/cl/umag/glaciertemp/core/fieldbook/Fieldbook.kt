@@ -18,7 +18,7 @@ import cl.umag.glaciertemp.core.Decimals
  */
 
 /** Que clase de entrada es. El nombre va tal cual al fichero, asi que no se renombra. */
-enum class EntryType { NOTE, STAKE, GNSS, DENDRO, COSMO }
+enum class EntryType { NOTE, STAKE, GNSS, DENDRO, COSMO, GAUGING }
 
 /** De donde salio una coordenada. Cambia lo que significa su antiguedad. */
 enum class PositionSource {
@@ -286,6 +286,19 @@ data class FieldEntry(
     val cosmoName: String = "",
     val cosmo: CosmoSample? = null,
 
+    // --- GAUGING ---
+    /**
+     * Nombre del perfil aforado.
+     *
+     * NO es unico, al reves que el de una muestra o una baliza: un perfil se afora muchas
+     * veces --esa es toda la gracia de tener un perfil-- y dos aforos del mismo sitio TIENEN
+     * que llamarse igual para poder compararse. Por eso se recuerda en una lista y se ofrece
+     * en un desplegable, como los observadores y los receptores, en vez de rechazarse por
+     * repetido.
+     */
+    val profileName: String = "",
+    val gauging: StreamGauging? = null,
+
     /** Fotografias de la entrada. En STAKE cuelgan de cada medicion, no de aqui. */
     val photos: List<String> = emptyList(),
 ) {
@@ -309,6 +322,7 @@ data class FieldEntry(
         EntryType.GNSS -> pointName.ifBlank { "(unnamed point)" }
         EntryType.DENDRO -> sampleLabel.ifBlank { "(unlabelled sample)" }
         EntryType.COSMO -> cosmoName.ifBlank { "(unnamed cosmo sample)" }
+        EntryType.GAUGING -> profileName.ifBlank { "(unnamed profile)" }
     }
 
     /** Todos los ficheros de medios a los que apunta la entrada, del tipo que sea. */

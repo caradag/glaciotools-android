@@ -41,6 +41,7 @@ fun typeLabel(t: EntryType): String = when (t) {
     EntryType.GNSS -> "GNSS measurement"
     EntryType.DENDRO -> "Dendro sample"
     EntryType.COSMO -> "Cosmogenic isotopes sample"
+    EntryType.GAUGING -> "Stream gauging"
 }
 
 private fun typeBlurb(t: EntryType): String = when (t) {
@@ -53,6 +54,8 @@ private fun typeBlurb(t: EntryType): String = when (t) {
                         "perimeter."
     EntryType.COSMO -> "A boulder sampled for exposure dating: site and boulder " +
                        "description, dimensions, and the topographic shielding."
+    EntryType.GAUGING -> "Discharge of a river by the area-velocity method: depth and " +
+                         "velocity across the section, bin by bin, with the total."
 }
 
 /**
@@ -447,6 +450,7 @@ private fun shortLabel(t: EntryType): String = when (t) {
     EntryType.GNSS -> "GNSS"
     EntryType.DENDRO -> "Dendro"
     EntryType.COSMO -> "Cosmo"
+    EntryType.GAUGING -> "Gauging"
 }
 
 /**
@@ -650,6 +654,15 @@ fun FieldbookNotice(vm: FieldbookViewModel, s: FieldbookUiState) {
 private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                         borrar: Boolean, onBorrar: (Boolean) -> Unit,
                         onMapHorizon: () -> Unit) {
+    // EL AFORO TIENE PANTALLA PROPIA. Todas las demas notas son un formulario que cabe en
+    // una columna que se desplaza; un aforo es una tabla larga que hay que recorrer mirando
+    // a la vez el perfil que se construye, y un grafico que se va con el desplazamiento deja
+    // de servir para lo unico que sirve: ver el error de tecleo con el rio todavia delante.
+    if (e.type == EntryType.GAUGING) {
+        GaugingScreen(vm, s, e, onBorrar)
+        return
+    }
+
     var falta by remember { mutableStateOf<List<String>?>(null) }
 
     /**
@@ -711,6 +724,10 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
                 EntryType.GNSS -> GnssEntryEditor(vm, s, e, onFinished = { revisar() })
                 EntryType.DENDRO -> DendroEditor(vm, s, e)
                 EntryType.COSMO -> CosmoEditor(vm, s, e, onMapHorizon)
+                // GAUGING no llega aqui: tiene pantalla propia y EntryScreen se desvia
+                // antes. Esta rama existe solo para que el when siga siendo exhaustivo, que
+                // es lo que hace que anadir un tipo nuevo no se pueda olvidar en este sitio.
+                EntryType.GAUGING -> {}
             }
 
             HorizontalDivider()

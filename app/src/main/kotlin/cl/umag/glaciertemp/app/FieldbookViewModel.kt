@@ -14,9 +14,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import cl.umag.glaciertemp.core.fieldbook.GaugingBin
 
 /** Cual de las dos listas de nombres reutilizables se esta tocando. */
-enum class NameList { PEOPLE, RECEIVERS, SPECIES }
+enum class NameList { PEOPLE, RECEIVERS, SPECIES, PROFILES }
 
 /** Una peticion de posicion en curso. */
 data class PositionRequest(val waiting: Boolean = false, val note: String? = null)
@@ -34,6 +35,13 @@ data class FieldbookUiState(
     val people: List<String> = emptyList(),
     val receivers: List<String> = emptyList(),
     val species: List<String> = emptyList(),
+    /**
+     * Nombres de perfiles de aforo ya usados.
+     *
+     * Al reves que el nombre de una muestra, este NO es unico: un perfil se afora muchas
+     * veces y dos aforos del mismo sitio tienen que llamarse igual para poder compararse.
+     */
+    val profiles: List<String> = emptyList(),
     val savedPoints: List<SavedPoint.Solution> = emptyList(),
     val positionRequest: PositionRequest? = null,
     /** La campana abierta, o null si todavia no se ha empezado ninguna. */
@@ -87,6 +95,7 @@ class FieldbookViewModel : ViewModel() {
     var people: NameStore? = null
     var receivers: NameStore? = null
     var species: NameStore? = null
+    var profiles: NameStore? = null
     var campaigns: CampaignStore? = null
 
     /** Almacen del diario. Solo se usa para borrarlo junto con su campana. */
@@ -145,6 +154,7 @@ class FieldbookViewModel : ViewModel() {
             people = people?.list() ?: emptyList(),
             receivers = receivers?.list() ?: emptyList(),
             species = species?.list() ?: emptyList(),
+            profiles = profiles?.list() ?: emptyList(),
         )
     }
 
@@ -188,6 +198,9 @@ class FieldbookViewModel : ViewModel() {
         EntryType.GNSS -> e.pointName
         EntryType.DENDRO -> e.sampleLabel
         EntryType.COSMO -> e.cosmoName
+        // El de aforo NO entra aqui: se repite a proposito, asi que no hay nada que
+        // comprobar. Meterlo haria que la app rechazara volver a aforar el mismo perfil.
+        EntryType.GAUGING -> ""
         EntryType.NOTE -> ""
     }
 
@@ -393,6 +406,11 @@ class FieldbookViewModel : ViewModel() {
             // Nace con su ficha ya puesta: asi el editor no tiene que distinguir entre "sin
             // rellenar" y "sin crear", que son lo mismo para quien escribe.
             EntryType.COSMO -> e.copy(cosmo = CosmoSample())
+            // Con el ultimo perfil ya escrito: casi siempre se vuelve al mismo, y tenerlo
+            // puesto es lo que hace que dos aforos del mismo sitio se llamen igual de verdad.
+            EntryType.GAUGING -> e.copy(
+                profileName = profiles?.mostRecent() ?: "",
+                gauging = cl.umag.glaciertemp.core.fieldbook.StreamGauging())
         }
         s.save(inicial)
         _state.value = _state.value.copy(open = inicial, error = null, filter = null)
@@ -476,6 +494,91 @@ class FieldbookViewModel : ViewModel() {
         }
     }
 
+    // ---------------------------------- aforo de caudal ----------------------------------
+
+    /** Cambia la ficha del aforo sin repetir el copy de la entrada entera. */
+    fun updateGauging(immediate: Boolean = false,
+                      f: (cl.umag.glaciertemp.core.fieldbook.StreamGauging) ->
+                         cl.umag.glaciertemp.core.fieldbook.StreamGauging) {
+        update(immediate = immediate) {
+            it.copy(gauging = f(it.gauging
+                ?: cl.umag.glaciertemp.core.fieldbook.StreamGauging()))
+        }
+    }
+
+    /**
+     * Reajusta la tabla al ancho y al intervalo que haya, conservando lo medido.
+     *
+     * Se llama al soltar el campo de ancho o de intervalo. Si la tabla se acorta, lo que
+     * sobra se pierde -- y se DICE cuanto, porque un aforo que adelgaza en silencio es un
+     * aforo al que le faltan verticales sin que nadie se entere.
+     */
+    fun resizeGaugingTable() {
+        val g = _state.value.open?.gauging ?: return
+        val n = cl.umag.glaciertemp.core.fieldbook.Gauging.bins(g.widthM, g.intervalM).size
+        if (n == g.bins.size) return
+        // CERO TRAMOS NO ES "VACIA LA TABLA", ES "TODAVIA NO SE PUEDE SABER". Pasa al borrar
+        // el ancho para reescribirlo, y tambien mientras el intervalo tecleado da mas tramos
+        // del tope. Vaciar la tabla ahi tiraria las treinta verticales ya medidas por haber
+        // tocado un campo, que es la peor cosa que puede hacer una libreta de terreno.
+        if (n == 0) return
+        val perdidos = cl.umag.glaciertemp.core.fieldbook.Gauging.wouldLose(g.bins, n)
+        updateGauging(immediate = true) {
+            it.copy(bins = cl.umag.glaciertemp.core.fieldbook.Gauging.resize(it.bins, n))
+        }
+        if (perdidos > 0) _state.value = _state.value.copy(
+            note = "The table is now $n bin(s); $perdidos measured bin(s) at the far bank " +
+                   "were dropped.")
+    }
+
+    /**
+     * Escribe la profundidad o la velocidad de un tramo ANOTANDO LA HORA.
+     *
+     * La hora se pone sola porque es la unica manera de que este: nadie apunta a mano la hora
+     * de treinta y cinco verticales, y sin ella no se puede saber despues si el caudal
+     * calculado corresponde a un instante o a una crecida de una hora.
+     *
+     * BORRAR EL VALOR BORRA TAMBIEN SUS HORAS. Una casilla vacia no se midio nunca, asi que
+     * no tiene hora de medida; dejarla puesta metaria un tramo sin dato dentro del rango
+     * horario del aforo y correria el principio o el final a una hora en la que no se midio.
+     */
+    fun setBinDepth(index: Int, v: Double?) = editBin(index) { b, ahora ->
+        if (v == null) b.copy(depthM = null, depthFirstEditMillis = null,
+                              depthLastEditMillis = null)
+        else b.copy(depthM = v,
+                    depthFirstEditMillis = b.depthFirstEditMillis ?: ahora,
+                    depthLastEditMillis = ahora)
+    }
+
+    fun setBinVelocity(index: Int, v: Double?) = editBin(index) { b, ahora ->
+        if (v == null) b.copy(velocityMps = null, velocityFirstEditMillis = null,
+                              velocityLastEditMillis = null)
+        else b.copy(velocityMps = v,
+                    velocityFirstEditMillis = b.velocityFirstEditMillis ?: ahora,
+                    velocityLastEditMillis = ahora)
+    }
+
+    private fun editBin(
+        index: Int,
+        f: (cl.umag.glaciertemp.core.fieldbook.GaugingBin, Long) ->
+           cl.umag.glaciertemp.core.fieldbook.GaugingBin,
+    ) {
+        if (index < 0) return
+        val ahora = System.currentTimeMillis()
+        updateGauging(immediate = false) { g ->
+            // SE ALARGA LA LISTA SI HACE FALTA en vez de descartar la escritura. Antes habia
+            // aqui un `if (index !in bins.indices) return`, y con la lista todavia sin crear
+            // eso se tragaba el aforo entero sin un solo aviso: la tabla se veia, se tecleaba
+            // y el caudal seguia diciendo "0 of 12 bins". Un dato de terreno que se pierde en
+            // silencio es el peor fallo que puede tener una libreta, asi que aqui no se
+            // descarta nunca: si el tramo no existe todavia, se crea.
+            val lista = g.bins.toMutableList()
+            while (lista.size <= index) lista.add(GaugingBin())
+            lista[index] = f(lista[index], ahora)
+            g.copy(bins = lista)
+        }
+    }
+
     /** Escribe ya lo que estuviera pendiente. Es idempotente y barato si no hay nada. */
     fun flush() {
         guardadoJob?.cancel(); guardadoJob = null
@@ -508,12 +611,14 @@ class FieldbookViewModel : ViewModel() {
         NameList.PEOPLE -> people
         NameList.RECEIVERS -> receivers
         NameList.SPECIES -> species
+        NameList.PROFILES -> profiles
     }
 
     private fun labelFor(which: NameList): String = when (which) {
         NameList.PEOPLE -> "people"
         NameList.RECEIVERS -> "receivers"
         NameList.SPECIES -> "species"
+        NameList.PROFILES -> "profiles"
     }
 
     /** Guarda el nombre en la lista que toque y lo deja como el mas reciente. */
@@ -540,7 +645,8 @@ class FieldbookViewModel : ViewModel() {
         _state.value = _state.value.copy(
             people = people?.list() ?: emptyList(),
             receivers = receivers?.list() ?: emptyList(),
-            species = species?.list() ?: emptyList())
+            species = species?.list() ?: emptyList(),
+            profiles = profiles?.list() ?: emptyList())
     }
 
     // ------------------------------------ posicion ------------------------------------
