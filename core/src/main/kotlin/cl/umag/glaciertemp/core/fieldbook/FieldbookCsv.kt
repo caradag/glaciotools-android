@@ -42,10 +42,18 @@ object FieldbookCsv {
         else s
     }
 
-    /** Numeros con punto decimal SIEMPRE, sea cual sea el idioma del telefono. */
+    /**
+     * Numeros con punto decimal SIEMPRE, sea cual sea el idioma del telefono.
+     *
+     * OCHO decimales, no cuatro. Por esta funcion pasan las latitudes y longitudes, y cuatro
+     * decimales de grado son 11 metros: bastaba para no cuadrar con el punto que el receptor
+     * habia medido al centimetro. Ocho son del orden del milimetro, mas fino que cualquier
+     * dato que la app pueda producir. Los ceros de mas se recortan, asi que una altura de
+     * antena de 1,5 cm sigue saliendo "1.5" y no "1.50000000".
+     */
     fun num(v: Double?): String = v?.let {
         if (it == it.toLong().toDouble()) it.toLong().toString()
-        else "%.4f".format(java.util.Locale.ROOT, it).trimEnd('0').trimEnd('.')
+        else "%.8f".format(java.util.Locale.ROOT, it).trimEnd('0').trimEnd('.')
     } ?: ""
 
     private fun row(vararg cells: Any?): String = cells.joinToString(",") { cell(it) } + "\n"

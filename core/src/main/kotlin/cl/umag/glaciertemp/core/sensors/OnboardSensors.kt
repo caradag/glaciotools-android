@@ -135,9 +135,9 @@ object AlbedoRun {
 
     /** Dos decimales para el albedo; los lux, enteros a partir de 10. */
     fun fmt(lux: Double): String =
-        if (abs(lux) >= 10.0) lux.roundToInt().toString() else "%.1f".format(lux)
+        if (abs(lux) >= 10.0) lux.roundToInt().toString() else "%.1f".format(java.util.Locale.ROOT, lux)
 
-    fun fmtAlbedo(a: Double): String = "%.2f".format(a)
+    fun fmtAlbedo(a: Double): String = "%.2f".format(java.util.Locale.ROOT, a)
 }
 
 /**
@@ -188,11 +188,11 @@ object SensorReport {
         buildString {
             appendLine("GlacioTools — compass  $cuando")
             appendLine("Heading: ${Compass.format(heading, 1)}  (${Compass.cardinal(heading)})")
-            append("Magnetic field: " + (uT?.let { "%.1f µT".format(it) } ?: "—"))
+            append("Magnetic field: " + (uT?.let { "%.1f µT".format(java.util.Locale.ROOT, it) } ?: "—"))
         }
 
     fun pressure(hPa: Double, cuando: String): String =
-        "GlacioTools — pressure  $cuando\nPressure: %.2f hPa".format(hPa)
+        "GlacioTools — pressure  $cuando\nPressure: %.2f hPa".format(java.util.Locale.ROOT, hPa)
 
     fun light(lux: Double, cuando: String): String =
         "GlacioTools — light  $cuando\nIlluminance: ${AlbedoRun.fmt(lux)} lx"
@@ -216,5 +216,5 @@ object SensorReport {
         append("Phone light sensor, visible band, uncalibrated — comparative, not radiometric.")
     }
 
-    private fun g(deg: Double): String = "%.1f°".format(deg)
+    private fun g(deg: Double): String = "%.1f°".format(java.util.Locale.ROOT, deg)
 }

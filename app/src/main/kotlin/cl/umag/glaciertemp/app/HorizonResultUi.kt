@@ -317,8 +317,10 @@ private fun Apantallamiento(profile: HorizonProfile) {
     var buzamiento by rememberSaveable { mutableStateOf("") }
     var midiendo by remember { mutableStateOf(false) }
 
-    val s = rumbo.toDoubleOrNull() ?: 0.0
-    val d = buzamiento.toDoubleOrNull() ?: 0.0
+    // parseNumber y no toDoubleOrNull: un teclado en espanol pone COMA, y "12,5" caia al
+    // ?: 0.0 sin decir nada -- el factor se calculaba con buzamiento cero y parecia correcto.
+    val s = parseNumber(rumbo) ?: 0.0
+    val d = parseNumber(buzamiento) ?: 0.0
     val r = remember(profile, s, d) { Shielding.compute(profile, s, d) }
 
     Text("Topographic shielding", style = MaterialTheme.typography.titleMedium)
@@ -402,14 +404,19 @@ private fun BotonCopiarShielding(profile: HorizonProfile, strike: Double, dip: D
     OutlinedButton(onClick = {
         val texto = buildString {
             appendLine("GlacioTools — topographic shielding")
-            appendLine("Shielding factor: %.4f".format(r.factor))
-            appendLine("  terrain alone: %.4f".format(r.fromTerrain))
-            appendLine("  dipping surface alone: %.4f".format(r.fromDip))
-            appendLine("Strike %.0f°, dip %.0f°".format(strike, dip))
-            appendLine("Sky visible: %.1f %%".format(profile.skyFraction() * 100))
+            // Locale.ROOT en TODO este bloque: esto no es pantalla, es texto que se pega en
+            // una calculadora que espera punto decimal. Con el telefono en espanol salia
+            // "0,9543" y la lista del horizonte con comas, que ademas parte los campos.
+            appendLine("Shielding factor: %.4f".format(java.util.Locale.ROOT, r.factor))
+            appendLine("  terrain alone: %.4f".format(java.util.Locale.ROOT, r.fromTerrain))
+            appendLine("  dipping surface alone: %.4f".format(java.util.Locale.ROOT, r.fromDip))
+            appendLine("Strike %.0f°, dip %.0f°".format(java.util.Locale.ROOT, strike, dip))
+            appendLine("Sky visible: %.1f %%".format(java.util.Locale.ROOT,
+                                                    profile.skyFraction() * 100))
             appendLine("Horizon, elevation in degrees per %d° of azimuth from north:"
                            .format(profile.binDeg))
-            appendLine(profile.elevations.joinToString(" ") { "%.1f".format(it) })
+            appendLine(profile.elevations.joinToString(" ") {
+                "%.1f".format(java.util.Locale.ROOT, it) })
             append("Balco skyline.m integration, sin(h)^3.3, 1° sectors. " +
                    "Horizon from 72 points at 5° spacing.")
         }

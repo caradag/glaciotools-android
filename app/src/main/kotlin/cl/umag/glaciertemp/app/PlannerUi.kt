@@ -300,8 +300,12 @@ private fun TarjetaPosicion(vm: AlmanacViewModel, s: AlmanacUiState) {
                     // vacio invita a teclear grados en un formato cualquiera.
                     OutlinedButton(
                         onClick = {
-                            lat = s.latDeg?.let { "%.5f".format(it) } ?: ""
-                            lon = s.lonDeg?.let { "%.5f".format(it) } ?: ""
+                            // Locale.ROOT al RELLENAR y parseNumber al leer. Sin el primero
+                            // el campo se rellenaba "-53,16" y el boton Update no hacia nada
+                            // en absoluto; sin el segundo tampoco valdria lo que se teclee
+                            // con un teclado en espanol.
+                            lat = s.latDeg?.let { "%.5f".format(java.util.Locale.ROOT, it) } ?: ""
+                            lon = s.lonDeg?.let { "%.5f".format(java.util.Locale.ROOT, it) } ?: ""
                             editando = true
                         },
                         enabled = s.latDeg != null,
@@ -326,8 +330,8 @@ private fun TarjetaPosicion(vm: AlmanacViewModel, s: AlmanacUiState) {
                     modifier = Modifier.fillMaxWidth().testTag("planner-lon"))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
-                        val la = lat.trim().toDoubleOrNull()
-                        val lo = lon.trim().toDoubleOrNull()
+                        val la = parseNumber(lat)
+                        val lo = parseNumber(lon)
                         if (la != null && lo != null && la in -90.0..90.0 && lo in -180.0..180.0) {
                             vm.setManualPosition(la, lo); editando = false
                         }

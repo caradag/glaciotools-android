@@ -78,9 +78,9 @@ object PressureTrend {
         val d = ultima.hPa - previa.hPa
         val horas = (ultima.epochMillis - previa.epochMillis) / 3_600_000.0
         val cuanto = when {
-            horas < 1.0 -> "%.0f min".format(horas * 60)
-            horas < 48.0 -> "%.1f h".format(horas)
-            else -> "%.0f days".format(horas / 24)
+            horas < 1.0 -> "%.0f min".format(java.util.Locale.ROOT, horas * 60)
+            horas < 48.0 -> "%.1f h".format(java.util.Locale.ROOT, horas)
+            else -> "%.0f days".format(java.util.Locale.ROOT, horas / 24)
         }
         val verbo = when {
             abs(d) < 0.3 -> "steady"
@@ -88,7 +88,7 @@ object PressureTrend {
             else -> "falling"
         }
         return if (verbo == "steady") "Steady over the last $cuanto"
-               else "%s %.1f hPa over the last %s".format(
+               else "%s %.1f hPa over the last %s".format(java.util.Locale.ROOT, 
                    verbo.replaceFirstChar { it.uppercase() }, abs(d), cuanto)
     }
 
@@ -102,7 +102,7 @@ object PressureTrend {
         val d3 = change(samples, 3.0, now) ?: return null
         return when {
             d3 <= -MARCADO_3H ->
-                "Falling fast — %.1f hPa in about three hours. That is the classic sign of a ".format(-d3) +
+                "Falling fast — %.1f hPa in about three hours. That is the classic sign of a ".format(java.util.Locale.ROOT, -d3) +
                 "front arriving."
             d3 <= -MODERADO_3H -> "Falling steadily. Worth watching."
             d3 >= MARCADO_3H -> "Rising fast — usually clearing, often with wind first."
@@ -129,12 +129,12 @@ object PressureReport {
             appendLine("timestamp	hPa	latitude	longitude	altitude_m")
             val f = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
             place.samples.sortedBy { it.epochMillis }.forEach { s ->
-                appendLine("%s	%.2f	%s	%s	%s".format(
+                appendLine("%s	%.2f	%s	%s	%s".format(java.util.Locale.ROOT, 
                     f.format(java.time.Instant.ofEpochMilli(s.epochMillis).atZone(zone)),
                     s.hPa,
-                    s.latitude?.let { "%.6f".format(it) } ?: "",
-                    s.longitude?.let { "%.6f".format(it) } ?: "",
-                    s.altitudeMetres?.let { "%.1f".format(it) } ?: ""))
+                    s.latitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
+                    s.longitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
+                    s.altitudeMetres?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""))
             }
             append("Raw sensor pressure, not corrected to sea level. ")
             append("Only the change means anything, and only between readings taken at the ")
@@ -173,11 +173,11 @@ class PressureStore(private val dir: File) {
     fun append(id: String, s: PressureSample) {
         val f = file(id)
         if (!f.exists()) return
-        f.appendText("%d,%.3f,%s,%s,%s\n".format(
+        f.appendText("%d,%.3f,%s,%s,%s\n".format(java.util.Locale.ROOT, 
             s.epochMillis, s.hPa,
-            s.latitude?.let { "%.6f".format(it) } ?: "",
-            s.longitude?.let { "%.6f".format(it) } ?: "",
-            s.altitudeMetres?.let { "%.1f".format(it) } ?: ""))
+            s.latitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
+            s.longitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
+            s.altitudeMetres?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""))
     }
 
     fun rename(id: String, name: String): Boolean {
@@ -186,11 +186,11 @@ class PressureStore(private val dir: File) {
         tmp.writeText("# GlacioTools pressure place\nid=$id\nname=" +
                       name.replace('\n', ' ') + "\n$SEPARATOR\n" +
                       p.samples.joinToString("") { s ->
-                          "%d,%.3f,%s,%s,%s\n".format(
+                          "%d,%.3f,%s,%s,%s\n".format(java.util.Locale.ROOT, 
                               s.epochMillis, s.hPa,
-                              s.latitude?.let { "%.6f".format(it) } ?: "",
-                              s.longitude?.let { "%.6f".format(it) } ?: "",
-                              s.altitudeMetres?.let { "%.1f".format(it) } ?: "")
+                              s.latitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
+                              s.longitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
+                              s.altitudeMetres?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: "")
                       })
         val ok = tmp.renameTo(file(id))
         if (!ok) tmp.delete()

@@ -75,7 +75,7 @@ object FieldbookFile {
      * Los decimales se escriben con `Double.toString`, que no mira el idioma del telefono y
      * ademas ida y vuelta da el MISMO double.
      *
-     * No se usa `"%.8f".format(v)`: sin Locale.ROOT escribe la coma decimal en un telefono en
+     * No se usa `"%.8f".format(java.util.Locale.ROOT, v)`: sin Locale.ROOT escribe la coma decimal en un telefono en
      * espanol --que es donde esta app va a correr-- y el fichero deja de poder leerse con un
      * parser de numeros; y con un numero fijo de decimales una latitud pierde precision al
      * guardarla. Aqui no hay nada que formatear para leer: eso lo hace la pantalla.
@@ -185,14 +185,14 @@ object FieldbookFile {
                     kvNum("shielding_phone", c.shieldingFromPhone)
                     kvNum("shielding_manual", c.shieldingFromManual)
                     if (c.manualAzimuths.isNotEmpty()) {
-                        kv("manual_az", c.manualAzimuths.joinToString(" ") { "%.1f".format(it) })
-                        kv("manual_el", c.manualElevations.joinToString(" ") { "%.1f".format(it) })
+                        kv("manual_az", c.manualAzimuths.joinToString(" ") { "%.2f".format(java.util.Locale.ROOT, it) })
+                        kv("manual_el", c.manualElevations.joinToString(" ") { "%.2f".format(java.util.Locale.ROOT, it) })
                     }
                     if (c.horizonDeg.isNotEmpty()) {
                         kv("horizon_bin", c.horizonBinDeg.toString())
                         // El perfil entero en UNA linea: son 72 numeros y partirlos en 72
                         // claves haria el fichero ilegible para lo que aporta.
-                        kv("horizon", c.horizonDeg.joinToString(" ") { "%.2f".format(it) })
+                        kv("horizon", c.horizonDeg.joinToString(" ") { "%.2f".format(java.util.Locale.ROOT, it) })
                     }
                 }
                 e.photos.forEach { kv("photo", it) }

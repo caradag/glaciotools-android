@@ -64,7 +64,7 @@ object HorizonPoints {
             .mapNotNull { it.trim().takeIf { s -> s.isNotEmpty() }?.toDoubleOrNull() }
 
     private fun num(v: Double): String =
-        if (v == Math.floor(v) && !v.isInfinite()) "%.0f".format(v) else "%.1f".format(v)
+        if (v == Math.floor(v) && !v.isInfinite()) "%.0f".format(java.util.Locale.ROOT, v) else "%.1f".format(java.util.Locale.ROOT, v)
 
     /** El perfil de 1 grado que pide el calculo de apantallamiento. */
     fun toShieldingHorizon(points: List<Point>): DoubleArray =
