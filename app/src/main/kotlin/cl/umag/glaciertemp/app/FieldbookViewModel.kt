@@ -507,28 +507,29 @@ class FieldbookViewModel : ViewModel() {
     }
 
     /**
-     * Reajusta la tabla al ancho y al intervalo que haya, conservando lo medido.
+     * Graba el ancho y el intervalo del aforo y ajusta la tabla, conservando lo medido.
      *
-     * Se llama al soltar el campo de ancho o de intervalo. Si la tabla se acorta, lo que
-     * sobra se pierde -- y se DICE cuanto, porque un aforo que adelgaza en silencio es un
-     * aforo al que le faltan verticales sin que nadie se entere.
+     * Se llama SOLO desde el boton OK de la cabecera. Mientras se teclea, el ancho y el
+     * intervalo son un borrador de la pantalla y la tabla no se toca: rehacerla en cada
+     * pulsacion, con "0.2" pasando por "0." y "0.0", era crear y destruir filas por un dedo.
+     *
+     * Si la tabla se acorta, lo que sobra se pierde -- y se DICE cuanto, porque un aforo que
+     * adelgaza en silencio es un aforo al que le faltan verticales sin que nadie se entere.
+     * Devuelve false, sin tocar nada, si el ancho y el intervalo no dan una tabla valida.
      */
-    fun resizeGaugingTable() {
-        val g = _state.value.open?.gauging ?: return
-        val n = cl.umag.glaciertemp.core.fieldbook.Gauging.bins(g.widthM, g.intervalM).size
-        if (n == g.bins.size) return
-        // CERO TRAMOS NO ES "VACIA LA TABLA", ES "TODAVIA NO SE PUEDE SABER". Pasa al borrar
-        // el ancho para reescribirlo, y tambien mientras el intervalo tecleado da mas tramos
-        // del tope. Vaciar la tabla ahi tiraria las treinta verticales ya medidas por haber
-        // tocado un campo, que es la peor cosa que puede hacer una libreta de terreno.
-        if (n == 0) return
+    fun applyGaugingSettings(widthM: Double?, intervalM: Double?): Boolean {
+        val n = cl.umag.glaciertemp.core.fieldbook.Gauging.bins(widthM, intervalM).size
+        if (n == 0) return false
+        val g = _state.value.open?.gauging ?: cl.umag.glaciertemp.core.fieldbook.StreamGauging()
         val perdidos = cl.umag.glaciertemp.core.fieldbook.Gauging.wouldLose(g.bins, n)
         updateGauging(immediate = true) {
-            it.copy(bins = cl.umag.glaciertemp.core.fieldbook.Gauging.resize(it.bins, n))
+            it.copy(widthM = widthM, intervalM = intervalM,
+                    bins = cl.umag.glaciertemp.core.fieldbook.Gauging.resize(it.bins, n))
         }
         if (perdidos > 0) _state.value = _state.value.copy(
             note = "The table is now $n bin(s); $perdidos measured bin(s) at the far bank " +
                    "were dropped.")
+        return true
     }
 
     /**

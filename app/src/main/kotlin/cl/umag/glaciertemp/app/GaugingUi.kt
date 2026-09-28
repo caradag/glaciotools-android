@@ -74,27 +74,21 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
     val resumen = remember(g) { Gauging.summarize(g) }
     val rango = remember(g.bins) { Gauging.velocityRange(g) }
     var detalle by remember { mutableStateOf<Int?>(null) }
-    // LA CABECERA SE PLIEGA EN CUANTO HAY TABLA. Medido en el emulador: con el teclado
-    // abierto y los campos de configuracion desplegados quedaba UNA fila visible en una
-    // pantalla de 2400 px. El perfil, el ancho y el intervalo se ponen una vez y se pasa
-    // luego una hora en la tabla, asi que su sitio natural es una linea que se despliega
-    // cuando hace falta, no cuatro franjas ocupando la mitad de la pantalla siempre.
+    // LA CABECERA SE PLIEGA AL PULSAR OK. Medido en el emulador: con el teclado abierto y
+    // los campos de configuracion desplegados quedaba UNA fila visible en una pantalla de
+    // 2400 px. El perfil, el ancho y el intervalo se ponen una vez y se pasa luego una hora
+    // en la tabla, asi que su sitio natural es una linea que se despliega cuando hace falta.
     var ajustes by remember { mutableStateOf(false) }
     val configurado = tramos.isNotEmpty()
+    val abierta = !configurado || ajustes
 
-    // EL AJUSTE DE LA TABLA VA AQUI ARRIBA, FUERA DE TODO `if`. Estuvo dentro del bloque de
-    // configuracion y eso lo rompia entero: en cuanto se tecleaba el ancho y el intervalo, la
-    // cabecera se plegaba, el bloque salia de la composicion, el efecto se cancelaba antes de
-    // cumplir su espera y la tabla no llegaba a crearse nunca. Como escribir en un tramo que
-    // no existe no hacia nada, el aforo entero se tecleaba y no se guardaba NADA. Solo se vio
-    // ejecutandolo: compila igual de bien en los dos sitios.
-    //
-    // La espera sigue estando porque tecleando "20" se pasa por "2", y reajustar en cada
-    // pulsacion generaria 350 filas y las borraria antes de llegar al segundo digito.
-    LaunchedEffect(g.widthM, g.intervalM) {
-        kotlinx.coroutines.delay(900)
-        vm.resizeGaugingTable()
-    }
+    // EL ANCHO Y EL INTERVALO SON UN BORRADOR HASTA EL OK. La tabla se construye con lo que
+    // hay grabado, no con lo que se esta tecleando: asi se puede probar un intervalo, ver
+    // cuantos tramos daria y corregirlo sin que aparezcan y desaparezcan filas, y sin que un
+    // valor a medio escribir recorte verticales ya medidas. Se rellena con lo grabado cada
+    // vez que la cabecera se abre, de modo que Cancel deja todo como estaba.
+    var anchoBorrador by remember(e.id, abierta) { mutableStateOf(g.widthM) }
+    var intervaloBorrador by remember(e.id, abierta) { mutableStateOf(g.intervalM) }
 
     Column(Modifier.fillMaxSize()) {
 
@@ -105,15 +99,15 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
 
                 FieldbookNotice(vm, s)
 
-                if (configurado && !ajustes) {
+                if (!abierta) {
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(buildString {
                                  append(e.profileName.ifBlank { "(unnamed profile)" })
-                                 append("  ·  ").append(Decimals.trimmed(g.widthM ?: 0.0, 2))
+                                 append("  ·  ").append(Decimals.trimmed(g.widthM ?: 0.0, 3))
+                                 append(" m  ·  bins ")
+                                 append(Decimals.trimmed(g.intervalM ?: 0.0, 3))
                                  append(" m  ·  ")
-                                 append(Decimals.trimmed((g.intervalM ?: 0.0) * 100, 1))
-                                 append(" cm  ·  ")
                                  append(if (g.depthFromBed) "from bed" else "from surface")
                              },
                              Modifier.weight(1f),
@@ -125,7 +119,7 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                     }
                 }
 
-                if (!configurado || ajustes) {
+                if (abierta) {
                 NamePicker(
                     label = "Profile",
                     value = e.profileName,
@@ -136,23 +130,20 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                     onClearAll = { vm.clearNames(NameList.PROFILES) },
                     tag = "fb-gauging-profile")
 
+                // TODO EN METROS, el intervalo incluido. Estuvo en centimetros porque asi se
+                // dice en terreno, pero era la unica casilla del aforo en otra unidad, y una
+                // tabla con x en metros y el intervalo en centimetros invita a leer mal justo
+                // el numero que decide cuantas verticales hay.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NumberField("Section width", g.widthM,
-                                onValue = { v -> vm.updateGauging { it.copy(widthM = v) } },
+                    NumberField("Section width", anchoBorrador,
+                                onValue = { anchoBorrador = it },
                                 suffix = "m", modifier = Modifier.weight(1f),
                                 tag = "fb-gauging-width")
-                    // EN CENTIMETROS porque asi se dice en terreno ("cada veinte"), y se
-                    // guarda en metros: mezclar las dos unidades dentro del modelo es como
-                    // se cuela un factor de cien en el caudal.
-                    NumberField("Bin interval", g.intervalM?.let { it * 100 },
-                                onValue = { v ->
-                                    vm.updateGauging { it.copy(intervalM = v?.div(100)) }
-                                },
-                                suffix = "cm", modifier = Modifier.weight(1f),
+                    NumberField("Bin interval", intervaloBorrador,
+                                onValue = { intervaloBorrador = it },
+                                suffix = "m", modifier = Modifier.weight(1f),
                                 tag = "fb-gauging-interval")
                 }
-
-                DemasiadosTramos(g, tramos)
 
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -169,10 +160,25 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                             it.copy(depthFromBed = true) } },
                         label = { Text("From bed") },
                         modifier = Modifier.testTag("fb-gauging-from-bed"))
+                }
+
+                val previstos = Gauging.bins(anchoBorrador, intervaloBorrador)
+                CuantosTramos(anchoBorrador, intervaloBorrador, previstos, g)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = {
+                               if (vm.applyGaugingSettings(anchoBorrador, intervaloBorrador))
+                                   ajustes = false
+                           },
+                           enabled = previstos.isNotEmpty(),
+                           modifier = Modifier.weight(1f).testTag("fb-gauging-ok")) {
+                        Text(if (configurado) "OK — update table" else "OK — build table")
+                    }
                     if (configurado) {
                         TextButton(onClick = { ajustes = false },
                                    modifier = Modifier.testTag("fb-gauging-settings-done")) {
-                            Text("Hide")
+                            Text("Cancel")
                         }
                     }
                 }
@@ -212,7 +218,8 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                 item { CopiarAforo(e) }
             } else {
                 item {
-                    Text("Enter the section width and the bin interval to build the table.",
+                    Text("Enter the section width and the bin interval, then press OK to " +
+                         "build the table.",
                          style = MaterialTheme.typography.bodyMedium,
                          color = MaterialTheme.colorScheme.onSurfaceVariant,
                          modifier = Modifier.padding(vertical = 16.dp)
@@ -288,20 +295,42 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
 }
 
 /**
- * El aviso cuando el intervalo tecleado genera mas tramos de los que tiene sentido tener.
+ * Cuantos tramos daria el ancho y el intervalo tecleados, ANTES de aceptarlos.
  *
- * Se dice CUANTOS serian. "Demasiados" a secas deja a quien lo lee sin saber si sobra un
- * digito o si el perfil es de verdad enorme, que es justo lo que hay que decidir.
+ * Es lo que permite ajustar el intervalo con conocimiento de causa: "35 bins" dice si el
+ * trabajo es de media hora o de tres. Se dice ademas si el ultimo tramo queda mas corto
+ * --pasa cuando el ancho no es multiplo del intervalo, y es legitimo, pero conviene saberlo--
+ * y cuantas verticales medidas se perderian si la tabla nueva es mas corta que la actual.
  */
 @Composable
-private fun DemasiadosTramos(g: StreamGauging, tramos: List<Gauging.Bin>) {
-    val cuantos = Gauging.binCount(g.widthM, g.intervalM)
-    if (tramos.isNotEmpty() || cuantos <= Gauging.MAX_BINS) return
-    Text("That would be $cuantos bins. The interval is probably in metres by mistake — " +
-         "it is entered in centimetres.",
-         style = MaterialTheme.typography.bodySmall,
-         color = MaterialTheme.colorScheme.error,
-         modifier = Modifier.testTag("fb-gauging-toomany"))
+private fun CuantosTramos(ancho: Double?, intervalo: Double?, previstos: List<Gauging.Bin>,
+                          g: StreamGauging) {
+    val cuantos = Gauging.binCount(ancho, intervalo)
+    val error = MaterialTheme.colorScheme.error
+    val (texto, color) = when {
+        cuantos == 0 ->
+            "Enter a width and an interval greater than zero." to
+                MaterialTheme.colorScheme.onSurfaceVariant
+        previstos.isEmpty() ->
+            "That would be $cuantos bins, more than the ${Gauging.MAX_BINS} allowed. " +
+                "Check the interval — it is in metres." to error
+        else -> {
+            val ultimo = previstos.last()
+            val corto = previstos.size > 1 && intervalo != null &&
+                        ultimo.widthM < intervalo - 1e-9
+            val perdidos = Gauging.wouldLose(g.bins, previstos.size)
+            buildString {
+                append("This gives ${previstos.size} bin")
+                if (previstos.size != 1) append("s")
+                if (corto) append(", the last one ${Decimals.trimmed(ultimo.widthM, 3)} m wide")
+                append(".")
+                if (perdidos > 0) append(" $perdidos measured bin(s) at the far bank " +
+                                         "would be dropped.")
+            } to (if (perdidos > 0) error else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    Text(texto, style = MaterialTheme.typography.bodySmall, color = color,
+         modifier = Modifier.testTag("fb-gauging-bincount"))
 }
 
 /** El caudal acumulado, y si esta terminado o no. */
@@ -401,13 +430,26 @@ private fun PerfilDelRio(g: StreamGauging, tramos: List<Gauging.Bin>,
 
         // El fondo, uniendo los centros. Se dibuja ENCIMA de las columnas y solo entre
         // tramos medidos: unir por encima de un hueco inventaria un fondo que nadie sondeo.
-        var previo: Offset? = null
+        //
+        // LAS ORILLAS CUENTAN COMO MEDIDAS DE PROFUNDIDAD CERO. El perfil empieza y acaba en
+        // la superficie, que es lo que es un cauce, y asi la primera profundidad tecleada ya
+        // dibuja un tramo de fondo desde la orilla en vez de un punto suelto. La regla del
+        // hueco las alcanza igual: la orilla derecha solo se une si el ultimo tramo esta
+        // medido. Son solo dibujo: el caudal no las usa.
+        val puntos = ArrayList<Offset?>()
+        puntos += Offset(x(0.0), y(0.0))
         tramos.forEach { t ->
             val d = g.bins.getOrElse(t.index) { GaugingBin() }.depthM
-            if (d == null) { previo = null; return@forEach }
-            val p = Offset(x(t.centreM), y(d))
+            puntos += d?.let { Offset(x(t.centreM), y(it)) }
+        }
+        puntos += Offset(x(ancho), y(0.0))
+
+        var previo: Offset? = null
+        puntos.forEachIndexed { i, p ->
+            if (p == null) { previo = null; return@forEachIndexed }
             previo?.let { drawLine(fondo, it, p, 2f) }
-            drawCircle(fondo, radius = 2.5f, center = p)
+            // Las orillas no llevan punto: no son una medida.
+            if (i != 0 && i != puntos.lastIndex) drawCircle(fondo, radius = 2.5f, center = p)
             previo = p
         }
 
@@ -603,9 +645,8 @@ private fun Estadisticas(r: Gauging.Summary) {
                   r.meanVelocityMps?.let { Decimals.fixed(it, 3) + " m/s" } ?: "—")
             Linea("Max velocity",
                   r.maxVelocityMps?.let { Decimals.fixed(it, 3) + " m/s" } ?: "—")
-            HorizontalDivider(Modifier.padding(vertical = 3.dp))
-            Tramo("Depths", r.depthTimes)
-            Tramo("Velocities", r.velocityTimes)
+            Tramo("Depth measurements", r.depthTimes)
+            Tramo("Velocity measurements", r.velocityTimes)
             // LA MEDIANA FECHA EL AFORO. Un perfil largo se mide a lo largo de una hora, y
             // si el rio subio durante esa hora el caudal no corresponde a ningun instante:
             // corresponde, con suerte, al del medio.
@@ -616,11 +657,25 @@ private fun Estadisticas(r: Gauging.Summary) {
     }
 }
 
+/**
+ * Inicio, fin y mediana de una tanda, como bloque con TITULO y una linea por dato.
+ *
+ * Estuvo en una sola `Linea` con las tres horas en el valor. El valor no tiene peso y la
+ * etiqueta si, asi que el texto largo se quedaba todo el ancho y la etiqueta se aplastaba a
+ * cero: el titulo desaparecia y se partia letra a letra hacia abajo, dejando una columna
+ * alta y vacia debajo del bloque.
+ */
 @Composable
-private fun Tramo(k: String, t: Gauging.TimeSpan) {
-    Linea(k, if (t.isEmpty) "—"
-             else "${cuando(t.firstMillis)} → ${cuando(t.lastMillis)}   " +
-                  "(median ${cuando(t.medianMillis)})")
+private fun Tramo(titulo: String, t: Gauging.TimeSpan) {
+    HorizontalDivider(Modifier.padding(vertical = 3.dp))
+    Text(titulo, style = MaterialTheme.typography.labelLarge)
+    if (t.isEmpty) {
+        Linea("Not measured yet", "—")
+        return
+    }
+    Linea("Start", cuando(t.firstMillis))
+    Linea("End", cuando(t.lastMillis))
+    Linea("Median", cuando(t.medianMillis))
 }
 
 /**

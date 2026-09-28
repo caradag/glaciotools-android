@@ -52,7 +52,7 @@ data class GaugingBin(
 data class StreamGauging(
     /** Ancho total del perfil, en metros. */
     val widthM: Double? = null,
-    /** Ancho de cada tramo, en metros. Se teclea en centimetros pero se guarda en metros. */
+    /** Ancho de cada tramo, en metros, como todo lo demas del aforo. */
     val intervalM: Double? = null,
     /**
      * Si la tercera columna cuenta desde el FONDO en vez de desde la superficie.
@@ -80,9 +80,9 @@ object Gauging {
     /**
      * Tope de tramos.
      *
-     * Existe por un dedo, no por una limitacion: tecleando el intervalo en centimetros es
-     * facil poner 2 donde iban 20, y sin tope un perfil de siete metros generaria tres mil
-     * quinientas filas y la pantalla se quedaria pensando. Con tope, se avisa.
+     * Existe por un dedo, no por una limitacion: es facil teclear 0.02 donde iba 0.2, y sin
+     * tope un perfil de siete metros generaria trescientas cincuenta filas o mas y la pantalla
+     * se quedaria pensando. Con tope, se avisa antes de aceptar.
      */
     const val MAX_BINS = 500
 

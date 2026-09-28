@@ -189,7 +189,7 @@ object FieldbookOdt {
                     val r = Gauging.summarize(g)
                     val cab = ArrayList<String>()
                     g.widthM?.let { cab += "width ${FieldbookCsv.num(it)} m" }
-                    g.intervalM?.let { cab += "interval ${FieldbookCsv.num(it * 100)} cm" }
+                    g.intervalM?.let { cab += "interval ${FieldbookCsv.num(it)} m" }
                     cab += "${r.binCount} bin(s)"
                     doc.body("Section: " + cab.joinToString(", "))
 
