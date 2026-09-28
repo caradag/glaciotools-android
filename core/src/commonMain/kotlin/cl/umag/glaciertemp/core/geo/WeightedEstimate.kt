@@ -115,7 +115,7 @@ object WeightedEstimate {
         // Si el cribado se lleva casi todo, el que esta mal es el cribado: pasa cuando la
         // nube tiene dos grupos legitimos y la MAD sale minuscula. Mejor no cribar nada.
         if (descartadas > values.size / 2) {
-            java.util.Arrays.fill(guardar, true)
+            guardar.fill(true)
             descartadas = 0
         }
 
