@@ -182,4 +182,33 @@ object GpsExport {
         if (s.any { it == ',' || it == '"' || it == '\n' })
             "\"" + s.replace("\"", "\"\"").replace('\n', ' ') + "\""
         else s
+
+    /**
+     * Lo que se copia al portapapeles de un punto.
+     *
+     * VIVE EN CORE Y NO EN LA PANTALLA porque es texto que alguien va a leer fuera de la
+     * app --pegado en un correo, en una hoja, en un cuaderno-- y eso se puede comprobar con
+     * una prueba. En la pantalla no se podia, y ahi es donde se colo un "487 fixes in 487
+     * sessions".
+     *
+     * LAS DOS COORDENADAS Y LA INCERTIDUMBRE. La geografica es la que se dicta por radio y
+     * se pega en un mapa; la UTM la que sirve para medir distancias. Y una latitud sin su
+     * precision al lado no se puede juzgar: no es lo mismo veinte minutos de promediado que
+     * una lectura suelta.
+     */
+    fun clipboardText(st: GpsPointStats, name: String): String = buildString {
+        appendLine("GlacioTools — " + name.ifBlank { "GNSS point" })
+        appendLine("%.6f, %.6f".format(java.util.Locale.ROOT,
+                                       st.estimateLatitude, st.estimateLongitude))
+        appendLine(st.estimateUtm.format())
+        st.altitude?.estimate?.let {
+            appendLine("Altitude %.1f m (WGS84 ellipsoid)".format(java.util.Locale.ROOT, it))
+        }
+        appendLine("± %.2f m horizontal".format(java.util.Locale.ROOT,
+                                                st.horizontalStandardError))
+        appendLine("%d fix%s in %d session%s".format(
+            st.samples, if (st.samples == 1) "" else "es",
+            st.sessions, if (st.sessions == 1) "" else "s"))
+        append("Averaged with GlacioTools; not a differential solution.")
+    }
 }

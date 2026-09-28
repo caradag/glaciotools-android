@@ -105,7 +105,16 @@ class GpsAverager(primera: GpsSample? = null) {
     val size: Int get() = muestras.size
     fun samples(): List<GpsSample> = muestras.toList()
 
-    fun add(raw: GpsSample) {
+    /**
+     * Anade una muestra y DEVUELVE la version sellada con su tramo.
+     *
+     * Devolverla no es cosmetico: quien la guarda en disco tiene que guardar ESTA y no la
+     * cruda. Guardando la cruda, el tramo se pierde, y al recargar el punto cada muestra
+     * pasa por un tramo propio -- lo que no solo cuenta mal las visitas, sino que le dice al
+     * estimador que hay tantas medidas independientes como muestras y hace que el error
+     * declarado salga demasiado bueno.
+     */
+    fun add(raw: GpsSample): GpsSample {
         // La muestra se apunta al tramo abierto salvo que ya venga con uno --que es lo que
         // pasa al cargar de disco, donde el tramo ya esta decidido.
         val s = if (raw.sessionStartMillis != 0L) raw
@@ -127,6 +136,7 @@ class GpsAverager(primera: GpsSample? = null) {
         muestras.add(s)
         este.add(u.easting)
         norte.add(n)
+        return s
     }
 
     fun addAll(list: List<GpsSample>) = list.forEach { add(it) }

@@ -225,8 +225,9 @@ class GpsViewModel : ViewModel() {
             runCatching {
                 loc.samples(1000L).collect { m ->
                     llego = true
-                    averager.add(m)
-                    pendientes.add(m)
+                    // La SELLADA, no la cruda: es la que lleva el tramo, y el tramo es lo
+                    // que el estimador usa para saber cuantas medidas independientes hay.
+                    pendientes.add(averager.add(m))
                     publicar()
                 }
             }.onFailure { e ->

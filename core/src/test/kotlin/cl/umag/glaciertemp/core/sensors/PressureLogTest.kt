@@ -151,3 +151,36 @@ class GreatCircleTest {
         assertEquals(100.0, d, 2.0)
     }
 }
+
+class PressureReportTest {
+
+    private fun lugar() = PressurePlace("p1", "Campamento", listOf(
+        PressureSample(AHORA - 3 * HORA, 1008.25, -51.5, -73.25, 412.0),
+        PressureSample(AHORA, 1003.5)))
+
+    @Test fun `se copia como tabla, una fila por lectura`() {
+        val t = PressureReport.clipboardText(lugar(), java.time.ZoneId.of("UTC"))
+        assertTrue(t.contains("timestamp\thPa"), t)
+        assertEquals(2, t.lines().count { it.contains("\t") && !it.startsWith("timestamp") },
+                     "una fila por lectura: $t")
+        assertTrue(t.contains("1008.25"), t)
+        assertTrue(t.contains("1003.50"), t)
+    }
+
+    @Test fun `lleva el nombre del lugar y la tendencia`() {
+        val t = PressureReport.clipboardText(lugar(), java.time.ZoneId.of("UTC"))
+        assertTrue(t.contains("Campamento"), t)
+        assertTrue(t.contains("Falling"), t)
+    }
+
+    @Test fun `una lectura sin posicion deja las columnas vacias, no ceros`() {
+        // Un cero en latitud es una coordenada en el golfo de Guinea, no "no se sabe".
+        val t = PressureReport.clipboardText(lugar(), java.time.ZoneId.of("UTC"))
+        val ultima = t.lines().first { it.contains("1003.50") }
+        assertTrue(ultima.endsWith("\t\t\t"), "las columnas vacias van vacias: '$ultima'")
+    }
+
+    @Test fun `se dice que solo el cambio significa algo`() {
+        assertTrue(PressureReport.clipboardText(lugar()).contains("same spot"))
+    }
+}

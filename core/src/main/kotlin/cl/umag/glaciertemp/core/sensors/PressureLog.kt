@@ -112,6 +112,37 @@ object PressureTrend {
 }
 
 /**
+ * Lo que se copia de un lugar: la serie entera, no solo la ultima.
+ *
+ * COMO TABLA Y NO COMO PROSA. Esto acaba pegado en una hoja de calculo para dibujarlo o
+ * cruzarlo con otra cosa, y una frase bonita habria que deshacerla a mano. Una fila por
+ * lectura, con la fecha en formato ordenable, la presion y donde se tomo.
+ */
+object PressureReport {
+
+    fun clipboardText(place: PressurePlace,
+                      zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String =
+        buildString {
+            appendLine("GlacioTools — pressure at " + place.name.ifBlank { "(unnamed place)" })
+            PressureTrend.describe(place.samples)?.let { appendLine(it) }
+            appendLine()
+            appendLine("timestamp	hPa	latitude	longitude	altitude_m")
+            val f = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            place.samples.sortedBy { it.epochMillis }.forEach { s ->
+                appendLine("%s	%.2f	%s	%s	%s".format(
+                    f.format(java.time.Instant.ofEpochMilli(s.epochMillis).atZone(zone)),
+                    s.hPa,
+                    s.latitude?.let { "%.6f".format(it) } ?: "",
+                    s.longitude?.let { "%.6f".format(it) } ?: "",
+                    s.altitudeMetres?.let { "%.1f".format(it) } ?: ""))
+            }
+            append("Raw sensor pressure, not corrected to sea level. ")
+            append("Only the change means anything, and only between readings taken at the ")
+            append("same spot.")
+        }
+}
+
+/**
  * Los lugares y sus lecturas, en disco.
  *
  * Un fichero por lugar, como la libreta y por lo mismo: anadir una lectura a un sitio no

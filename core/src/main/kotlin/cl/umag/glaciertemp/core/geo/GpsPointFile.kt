@@ -147,7 +147,14 @@ object GpsPointFile {
             val t = l.trim()
             if (t.isEmpty() || t.startsWith("epochMillis")) continue
             if (t.startsWith(SESSION_MARK)) {
-                t.removePrefix(SESSION_MARK).toLongOrNull()?.let { tramo = it; huboMarcas = true }
+                // UNA MARCA DE CERO NO ES UNA MARCA. Las versiones anteriores guardaban la
+                // muestra sin sellar, asi que el fichero lleva "tramo 0" para todo. Tomarlo
+                // por bueno dejaria a todas las muestras con tramo 0, y al recargarlas el
+                // promediador no podria distinguirlo de "sin tramo". Se cae a la inferencia
+                // por huecos, que para esos ficheros es lo correcto.
+                t.removePrefix(SESSION_MARK).toLongOrNull()?.let {
+                    if (it != 0L) { tramo = it; huboMarcas = true }
+                }
                 continue
             }
             // Cualquier otro comentario se ignora sin contarlo como linea rota.

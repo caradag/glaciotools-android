@@ -32,6 +32,7 @@ import kotlinx.coroutines.launch
 import cl.umag.glaciertemp.core.sensors.GreatCircle
 import cl.umag.glaciertemp.core.sensors.PressurePlace
 import cl.umag.glaciertemp.core.sensors.PressureSample
+import cl.umag.glaciertemp.core.sensors.PressureReport
 import cl.umag.glaciertemp.core.sensors.PressureStore
 import cl.umag.glaciertemp.core.sensors.PressureTrend
 import cl.umag.glaciertemp.core.sensors.AlbedoRun
@@ -1012,7 +1013,11 @@ private fun BloqueDeLugar(
                        modifier = Modifier.testTag("sn-place-take")) { Text("Take reading") }
                 Text("${lugar.samples.size} reading" + (if (lugar.samples.size == 1) "" else "s"),
                      style = MaterialTheme.typography.bodySmall,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                     modifier = Modifier.weight(1f))
+                if (lugar.samples.isNotEmpty()) {
+                    BotonCopiar({ PressureReport.clipboardText(lugar) }, "sn-place-copy")
+                }
             }
         }
     }

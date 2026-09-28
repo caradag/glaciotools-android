@@ -573,17 +573,7 @@ private fun CopiarCoordenadas(st: GpsPointStats, nombre: String) {
     LaunchedEffect(copiado) { if (copiado) { kotlinx.coroutines.delay(1500); copiado = false } }
     OutlinedButton(
         onClick = {
-            val texto = buildString {
-                appendLine("GlacioTools — " + nombre.ifBlank { "GNSS point" })
-                appendLine("${f(st.estimateLatitude, 6)}, ${f(st.estimateLongitude, 6)}")
-                appendLine(st.estimateUtm.format())
-                st.altitude?.estimate?.let {
-                    appendLine("Altitude ${f(it, 1)} m (WGS84 ellipsoid)")
-                }
-                appendLine("± ${f(st.horizontalStandardError, 2)} m horizontal, " +
-                           "${st.samples} fixes in ${st.sessions} session(s)")
-                append("Averaged with GlacioTools; not a differential solution.")
-            }
+            val texto = cl.umag.glaciertemp.core.geo.GpsExport.clipboardText(st, nombre)
             val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                 as? android.content.ClipboardManager
             cb?.setPrimaryClip(android.content.ClipData.newPlainText("GlacioTools", texto))
