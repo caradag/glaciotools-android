@@ -13,7 +13,7 @@ class AnglesTest {
         assertEquals(30.0, Angles.median(listOf(20.0, 30.0, 40.0))!!, 1e-6)
     }
 
-    @Test fun `la media de 359 y 1 es el norte, no el sur`() {
+    @Test fun `la media de 359 y 1 es el norte no el sur`() {
         // El fallo que justifica todo este fichero: la media aritmetica daria 180.
         val m = Angles.mean(listOf(359.0, 1.0))!!
         assertEquals(0.0, Angles.wrap(m), 1e-6)
@@ -25,7 +25,7 @@ class AnglesTest {
         assertEquals(0.0, Angles.wrap(m), 1e-6)
     }
 
-    @Test fun `funciona igual con el salto de mas menos 180, que es el telefono boca abajo`() {
+    @Test fun `funciona igual con el salto de mas menos 180 que es el telefono boca abajo`() {
         val m = Angles.mean(listOf(179.0, -179.0))!!
         assertEquals(180.0, kotlin.math.abs(m), 1e-6)
         val md = Angles.median(listOf(178.0, 179.0, -180.0, -179.0, -178.0))!!

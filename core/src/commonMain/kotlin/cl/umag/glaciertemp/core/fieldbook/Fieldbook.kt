@@ -1,5 +1,7 @@
 package cl.umag.glaciertemp.core.fieldbook
 
+import cl.umag.glaciertemp.core.Decimals
+
 /**
  * La libreta de terreno: lo que se anota estando en el glaciar.
  *
@@ -54,7 +56,7 @@ data class FieldPosition(
     val atEpochMillis: Long = 0L,
 ) {
     /** Las coordenadas en una linea, que es como se leen en pantalla y en un export. */
-    fun describe(): String = "%.5f, %.5f".format(java.util.Locale.ROOT, latitude, longitude)
+    fun describe(): String = Decimals.fixed(latitude, 5) + ", " + Decimals.fixed(longitude, 5)
 
     /** Lo que permite juzgarla: de donde salio, con que exactitud y a que altura. */
     fun detail(): String {
@@ -63,8 +65,8 @@ data class FieldPosition(
             PositionSource.SAVED_POINT -> "saved point" + (pointName?.let { " “$it”" } ?: "")
             PositionSource.PHONE -> "phone GPS"
         }
-        accuracyMetres?.let { partes += "accuracy %.0f m".format(java.util.Locale.ROOT, it) }
-        altitudeMetres?.let { partes += "%.0f m (WGS84)".format(java.util.Locale.ROOT, it) }
+        accuracyMetres?.let { partes += "accuracy " + Decimals.fixed(it, 0) + " m" }
+        altitudeMetres?.let { partes += Decimals.fixed(it, 0) + " m (WGS84)" }
         return partes.joinToString("  ·  ")
     }
 }

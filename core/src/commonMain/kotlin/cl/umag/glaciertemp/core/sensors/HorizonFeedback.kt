@@ -1,5 +1,6 @@
 package cl.umag.glaciertemp.core.sensors
 
+import cl.umag.glaciertemp.core.Decimals
 import kotlin.math.abs
 
 /**
@@ -78,7 +79,7 @@ object HorizonFeedback {
     /** Los tramos en palabras, para el mensaje. */
     fun describeGaps(gaps: List<ClosedRange<Double>>): String =
         gaps.joinToString(", ") {
-            "%.0f°–%.0f°".format(java.util.Locale.ROOT, it.start, it.endInclusive % 360.0)
+            Decimals.fixed(it.start, 0) + "°–" + Decimals.fixed(it.endInclusive % 360.0, 0) + "°"
         }
 
     /**

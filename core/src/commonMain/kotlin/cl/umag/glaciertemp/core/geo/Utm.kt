@@ -6,6 +6,11 @@ import kotlin.math.floor
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
+import kotlin.math.pow
+import kotlin.math.PI
+import cl.umag.glaciertemp.core.Decimals
+import cl.umag.glaciertemp.core.radianes
+import cl.umag.glaciertemp.core.grados
 
 /**
  * Coordenada UTM sobre WGS84.
@@ -23,7 +28,7 @@ data class UtmCoord(
 ) {
     /** "19F 371837 4107791", que es como se escribe en una libreta de terreno. */
     fun format(decimals: Int = 0): String =
-        "$zone$band ${"%.${decimals}f".format(easting)} ${"%.${decimals}f".format(northing)}"
+        "$zone$band ${Decimals.fixed(easting, decimals)} ${Decimals.fixed(northing, decimals)}"
 }
 
 /**
@@ -102,8 +107,8 @@ object Utm {
         val zone = forceZone ?: zoneFor(latitude, lon)
         val lon0 = (zone - 1) * 6.0 - 180.0 + 3.0
 
-        val phi = Math.toRadians(latitude)
-        val dLon = Math.toRadians(normalizeLongitude(lon - lon0))
+        val phi = radianes(latitude)
+        val dLon = radianes(normalizeLongitude(lon - lon0))
         val sinPhi = sin(phi)
         val cosPhi = cos(phi)
         val tanPhi = tan(phi)
@@ -163,7 +168,7 @@ object Utm {
         val c1 = EP2 * cosP * cosP
         val t1 = tanP * tanP
         val n1 = A / sqrt(1 - E2 * sinP * sinP)
-        val r1 = A * (1 - E2) / Math.pow(1 - E2 * sinP * sinP, 1.5)
+        val r1 = A * (1 - E2) / (1 - E2 * sinP * sinP).pow(1.5)
         val d = x / (n1 * K0)
         val d2 = d * d
 
@@ -172,12 +177,12 @@ object Utm {
             (61 + 90 * t1 + 298 * c1 + 45 * t1 * t1 - 252 * EP2 - 3 * c1 * c1) *
                 d2 * d2 * d2 / 720)
 
-        val lon = Math.toRadians(lon0) + (d -
+        val lon = radianes(lon0) + (d -
             (1 + 2 * t1 + c1) * d2 * d / 6 +
             (5 - 2 * c1 + 28 * t1 - 3 * c1 * c1 + 8 * EP2 + 24 * t1 * t1) *
                 d2 * d2 * d / 120) / cosP
 
-        return Math.toDegrees(lat) to normalizeLongitude(Math.toDegrees(lon))
+        return grados(lat) to normalizeLongitude(grados(lon))
     }
 
     /**

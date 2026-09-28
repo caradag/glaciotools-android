@@ -13,7 +13,7 @@ class ClockOffsetTest {
         assertEquals("in sync", ClockOffset.describe(49))
     }
 
-    @Test fun `dice hacia donde, no un signo que haya que interpretar`() {
+    @Test fun `dice hacia donde no un signo que haya que interpretar`() {
         assertTrue(ClockOffset.describe(3_200).endsWith("behind GPS"),
                    "si el GPS va por delante, el telefono atrasa")
         assertTrue(ClockOffset.describe(-3_200).endsWith("ahead of GPS"))

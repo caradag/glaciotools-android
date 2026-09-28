@@ -1,5 +1,7 @@
 package cl.umag.glaciertemp.core.fieldbook
 
+import cl.umag.glaciertemp.core.Decimals
+
 /**
  * Como se guarda una entrada de la libreta en disco.
  *
@@ -185,14 +187,14 @@ object FieldbookFile {
                     kvNum("shielding_phone", c.shieldingFromPhone)
                     kvNum("shielding_manual", c.shieldingFromManual)
                     if (c.manualAzimuths.isNotEmpty()) {
-                        kv("manual_az", c.manualAzimuths.joinToString(" ") { "%.2f".format(java.util.Locale.ROOT, it) })
-                        kv("manual_el", c.manualElevations.joinToString(" ") { "%.2f".format(java.util.Locale.ROOT, it) })
+                        kv("manual_az", c.manualAzimuths.joinToString(" ") { Decimals.fixed(it, 2) })
+                        kv("manual_el", c.manualElevations.joinToString(" ") { Decimals.fixed(it, 2) })
                     }
                     if (c.horizonDeg.isNotEmpty()) {
                         kv("horizon_bin", c.horizonBinDeg.toString())
                         // El perfil entero en UNA linea: son 72 numeros y partirlos en 72
                         // claves haria el fichero ilegible para lo que aporta.
-                        kv("horizon", c.horizonDeg.joinToString(" ") { "%.2f".format(java.util.Locale.ROOT, it) })
+                        kv("horizon", c.horizonDeg.joinToString(" ") { Decimals.fixed(it, 2) })
                     }
                 }
                 e.photos.forEach { kv("photo", it) }

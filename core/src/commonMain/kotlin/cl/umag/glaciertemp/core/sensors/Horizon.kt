@@ -5,6 +5,8 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+import cl.umag.glaciertemp.core.radianes
+import cl.umag.glaciertemp.core.grados
 
 /**
  * A donde mira la camara, sacado de la MATRIZ DE ROTACION y no de yaw/pitch/roll.
@@ -28,8 +30,8 @@ object ViewDirection {
         val e = -R[2].toDouble()
         val n = -R[5].toDouble()
         val u = -R[8].toDouble()
-        val az = Compass.normalize(Math.toDegrees(atan2(e, n)))
-        val el = Math.toDegrees(asin(u.coerceIn(-1.0, 1.0)))
+        val az = Compass.normalize(grados(atan2(e, n)))
+        val el = grados(asin(u.coerceIn(-1.0, 1.0)))
         return az to el
     }
 
@@ -45,7 +47,7 @@ object ViewDirection {
         // componente vertical vale cero.
         val arribaDelDerecho = R[6].toDouble()
         val horizontal = sqrt((R[0] * R[0] + R[3] * R[3]).toDouble())
-        return Math.toDegrees(atan2(arribaDelDerecho, horizontal))
+        return grados(atan2(arribaDelDerecho, horizontal))
     }
 }
 
@@ -144,7 +146,7 @@ data class HorizonProfile(val elevations: DoubleArray, val binDeg: Int) {
      * la horizontal, pero eso no es mas cielo: es suelo lejano. Contarlo daria mas del 100 %.
      */
     fun skyFraction(): Double {
-        val m = elevations.map { sin(Math.toRadians(it.coerceAtLeast(0.0))) }.average()
+        val m = elevations.map { sin(radianes(it.coerceAtLeast(0.0))) }.average()
         return (1.0 - m).coerceIn(0.0, 1.0)
     }
 

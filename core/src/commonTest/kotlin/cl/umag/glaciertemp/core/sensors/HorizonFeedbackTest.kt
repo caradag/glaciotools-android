@@ -16,7 +16,7 @@ class HorizonFeedbackTest {
         assertEquals(HorizonFeedback.Band.WAY_OFF, HorizonFeedback.band(40.0))
     }
 
-    @Test fun `el signo no cambia la banda, solo la direccion de la flecha`() {
+    @Test fun `el signo no cambia la banda solo la direccion de la flecha`() {
         assertEquals(HorizonFeedback.band(7.0), HorizonFeedback.band(-7.0))
     }
 

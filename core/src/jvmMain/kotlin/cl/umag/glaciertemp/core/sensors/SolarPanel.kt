@@ -2,6 +2,7 @@ package cl.umag.glaciertemp.core.sensors
 
 import kotlin.math.cos
 import kotlin.math.sin
+import cl.umag.glaciertemp.core.radianes
 
 /**
  * Donde apuntar un panel solar teniendo medido el horizonte.
@@ -61,7 +62,7 @@ object SolarPanel {
             val w = Solar.beamFraction(p.elevation)
             if (w <= 0.0) return@mapNotNull null
             val tapado = horizon != null && p.elevation < horizon.elevationAt(p.azimuth)
-            Rayo(Math.toRadians(p.azimuth), Math.toRadians(p.elevation), w, tapado)
+            Rayo(radianes(p.azimuth), radianes(p.elevation), w, tapado)
         }
         if (util.isEmpty()) return null
 
@@ -72,11 +73,11 @@ object SolarPanel {
 
         var t = 0
         while (t <= 90) {
-            val cb = cos(Math.toRadians(t.toDouble()))
-            val sb = sin(Math.toRadians(t.toDouble()))
+            val cb = cos(radianes(t.toDouble()))
+            val sb = sin(radianes(t.toDouble()))
             var a = 0
             while (a < 360) {
-                val ga = Math.toRadians(a.toDouble())
+                val ga = radianes(a.toDouble())
                 var visto = 0.0
                 var sinHorizonte = 0.0
                 util.forEach { r ->

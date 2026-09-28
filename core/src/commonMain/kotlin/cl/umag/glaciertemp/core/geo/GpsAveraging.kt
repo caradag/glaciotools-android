@@ -1,6 +1,7 @@
 package cl.umag.glaciertemp.core.geo
 
 import kotlin.math.sqrt
+import cl.umag.glaciertemp.core.nowMillis
 
 /**
  * Una lectura suelta del receptor. Es el dato crudo: no se promedia ni se filtra nada.
@@ -90,7 +91,7 @@ class GpsAverager(primera: GpsSample? = null) {
      */
     var currentSession: Long = 0L; private set
 
-    fun startSession(atMillis: Long = System.currentTimeMillis()) { currentSession = atMillis }
+    fun startSession(atMillis: Long = nowMillis()) { currentSession = atMillis }
 
     /** Zona y hemisferio en los que se proyecta TODO, fijados por la primera muestra. */
     var zone: Int = 0; private set

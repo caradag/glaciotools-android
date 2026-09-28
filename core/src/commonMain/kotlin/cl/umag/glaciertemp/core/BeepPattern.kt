@@ -1,5 +1,7 @@
 package cl.umag.glaciertemp.core
 
+import kotlin.math.pow
+
 /**
  * Que suena en cada segundo de la cuenta atras del cambio de minuto.
  *
@@ -37,5 +39,5 @@ object BeepPattern {
 
     /** Un semitono por segundo: la subida se oye sin tener que compararla con nada. */
     private fun hz(segundo: Int): Double =
-        880.0 * Math.pow(2.0, (segundo - PRIMER_SEGUNDO) / 12.0)
+        880.0 * 2.0.pow((segundo - PRIMER_SEGUNDO) / 12.0)
 }

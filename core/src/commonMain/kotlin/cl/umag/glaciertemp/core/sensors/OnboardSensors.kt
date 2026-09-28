@@ -1,8 +1,11 @@
 package cl.umag.glaciertemp.core.sensors
 
+import cl.umag.glaciertemp.core.Decimals
 import cl.umag.glaciertemp.core.BeepPattern
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.pow
+import kotlin.math.roundToLong
 
 /** El rumbo en palabras y en grados. */
 object Compass {
@@ -34,9 +37,11 @@ object Compass {
      * rumbo: la brujula se quedaba un instante marcando 360 al cruzar el norte.
      */
     fun format(deg: Double, decimales: Int = 0): String {
-        val f = Math.pow(10.0, decimales.toDouble())
-        val r = Math.round(normalize(deg) * f) / f
-        return "%.${decimales}f°".format(if (r >= 360.0) 0.0 else r)
+        // roundToLong y NO kotlin.math.round: el primero desempata hacia +infinito, igual que
+        // el Math.round que habia aqui; el segundo desempata al par y 2,5 pasaria a valer 2.
+        val f = 10.0.pow(decimales)
+        val r = (normalize(deg) * f).roundToLong() / f
+        return Decimals.fixed(if (r >= 360.0) 0.0 else r, decimales) + "°"
     }
 
     fun cardinal(deg: Double): String {
@@ -128,16 +133,17 @@ object AlbedoRun {
         val d = abs(deMedias - deMedianas)
         // Cinco centesimas: por debajo, la diferencia no cambia ninguna lectura del dato.
         return if (d >= 0.05)
-            "Mean and median disagree by %.2f — the light was not steady during the " .format(d) +
+            "Mean and median disagree by " + Decimals.fixed(d, 2) +
+            " — the light was not steady during the " +
             "measurement. Take it again."
         else null
     }
 
     /** Dos decimales para el albedo; los lux, enteros a partir de 10. */
     fun fmt(lux: Double): String =
-        if (abs(lux) >= 10.0) lux.roundToInt().toString() else "%.1f".format(java.util.Locale.ROOT, lux)
+        if (abs(lux) >= 10.0) lux.roundToInt().toString() else Decimals.fixed(lux, 1)
 
-    fun fmtAlbedo(a: Double): String = "%.2f".format(java.util.Locale.ROOT, a)
+    fun fmtAlbedo(a: Double): String = Decimals.fixed(a, 2)
 }
 
 /**
@@ -188,11 +194,11 @@ object SensorReport {
         buildString {
             appendLine("GlacioTools — compass  $cuando")
             appendLine("Heading: ${Compass.format(heading, 1)}  (${Compass.cardinal(heading)})")
-            append("Magnetic field: " + (uT?.let { "%.1f µT".format(java.util.Locale.ROOT, it) } ?: "—"))
+            append("Magnetic field: " + (uT?.let { Decimals.fixed(it, 1) + " µT" } ?: "—"))
         }
 
     fun pressure(hPa: Double, cuando: String): String =
-        "GlacioTools — pressure  $cuando\nPressure: %.2f hPa".format(java.util.Locale.ROOT, hPa)
+        "GlacioTools — pressure  $cuando\nPressure: " + Decimals.fixed(hPa, 2) + " hPa"
 
     fun light(lux: Double, cuando: String): String =
         "GlacioTools — light  $cuando\nIlluminance: ${AlbedoRun.fmt(lux)} lx"
@@ -216,5 +222,5 @@ object SensorReport {
         append("Phone light sensor, visible band, uncalibrated — comparative, not radiometric.")
     }
 
-    private fun g(deg: Double): String = "%.1f°".format(java.util.Locale.ROOT, deg)
+    private fun g(deg: Double): String = Decimals.fixed(deg, 1) + "°"
 }

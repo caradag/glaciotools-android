@@ -5,6 +5,9 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.tan
+import cl.umag.glaciertemp.core.radianes
+import cl.umag.glaciertemp.core.grados
+import kotlin.math.PI
 
 /**
  * Factor de apantallamiento topografico para nucleidos cosmogenicos.
@@ -67,10 +70,10 @@ object Shielding {
     fun dippingHorizon(strikeDeg: Double, dipDeg: Double): DoubleArray {
         val h = DoubleArray(SECTORS)
         if (dipDeg <= 0.0) return h
-        val strike = Math.toRadians(strikeDeg)
-        val dip = Math.toRadians(dipDeg)
+        val strike = radianes(strikeDeg)
+        val dip = radianes(dipDeg)
         for (i in 0 until SECTORS) {
-            val a = Math.toRadians((i + 1).toDouble()) - (strike - Math.PI / 2)
+            val a = radianes((i + 1).toDouble()) - (strike - PI / 2)
             // Negativo es por debajo de la horizontal: ahi no tapa nada.
             h[i] = atan(tan(dip) * cos(a)).coerceAtLeast(0.0)
         }
@@ -105,14 +108,14 @@ object Shielding {
             while (k < az.size - 2 && az[k + 1] < x) k++
             val x0 = az[k]; val x1 = az[k + 1]
             h[i] = if (x1 == x0) el[k]
-                   else Math.toRadians(el[k] + (el[k + 1] - el[k]) * (x - x0) / (x1 - x0))
+                   else radianes(el[k] + (el[k + 1] - el[k]) * (x - x0) / (x1 - x0))
         }
         return h
     }
 
     /** La integral de skyline.m: uno menos la media de sin(h) elevado a 3,3. */
     fun factorOf(horizonRad: DoubleArray): Double {
-        val s = horizonRad.sumOf { sin(it.coerceIn(0.0, Math.PI / 2)).pow(EXPONENT) } / SECTORS
+        val s = horizonRad.sumOf { sin(it.coerceIn(0.0, PI / 2)).pow(EXPONENT) } / SECTORS
         return (1.0 - s).coerceIn(0.0, 1.0)
     }
 
@@ -135,7 +138,7 @@ object Shielding {
         val compuesto = DoubleArray(SECTORS) { maxOf(porBuzamiento[it], porRelieve[it]) }
         return Result(
             factor = factorOf(compuesto),
-            horizonDeg = DoubleArray(SECTORS) { Math.toDegrees(compuesto[it]) },
+            horizonDeg = DoubleArray(SECTORS) { grados(compuesto[it]) },
             fromTerrain = factorOf(porRelieve),
             fromDip = factorOf(porBuzamiento),
         )
@@ -153,10 +156,10 @@ object Shielding {
         val e = R[2].toDouble()
         val n = R[5].toDouble()
         val u = R[8].toDouble()
-        val dip = Math.toDegrees(kotlin.math.acos(u.coerceIn(-1.0, 1.0)))
+        val dip = grados(kotlin.math.acos(u.coerceIn(-1.0, 1.0)))
         // Sin pendiente apreciable la direccion no significa nada; se devuelve 0 y no ruido.
         if (dip < 0.5) return 0.0 to 0.0
-        val direccionDeBuzamiento = Compass.normalize(Math.toDegrees(kotlin.math.atan2(-e, -n)))
+        val direccionDeBuzamiento = Compass.normalize(grados(kotlin.math.atan2(-e, -n)))
         // El buzamiento cae a la derecha del rumbo: rumbo = direccion de buzamiento - 90.
         return Compass.normalize(direccionDeBuzamiento - 90.0) to dip.coerceIn(0.0, 90.0)
     }

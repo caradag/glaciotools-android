@@ -1,5 +1,7 @@
 package cl.umag.glaciertemp.core.geo
 
+import cl.umag.glaciertemp.core.Decimals
+
 /**
  * Como se guarda un punto en disco.
  *
@@ -90,7 +92,7 @@ object GpsPointFile {
         return sb.toString()
     }
 
-    private fun fmt(v: Double, d: Int) = "%.${d}f".format(java.util.Locale.ROOT, v)
+    private fun fmt(v: Double, d: Int) = Decimals.fixed(v, d)
 
     data class Parsed(val header: Header, val samples: List<GpsSample>, val skipped: Int) {
         /** Los tramos que hay, en orden. */

@@ -25,8 +25,8 @@ object ClockOffset {
         if (a < EN_HORA_MS) return "in sync"
         val cuanto = when {
             a < 1000 -> "$a ms"
-            a < 60_000 -> "%.1f s".format(java.util.Locale.ROOT, a / 1000.0)
-            else -> "%d min %02d s".format(a / 60_000, (a % 60_000) / 1000)
+            a < 60_000 -> Decimals.fixed(a / 1000.0, 1) + " s"
+            else -> "${a / 60_000} min ${((a % 60_000) / 1000).toString().padStart(2, '0')} s"
         }
         return if (gpsMenosTelefono > 0) "$cuanto behind GPS" else "$cuanto ahead of GPS"
     }

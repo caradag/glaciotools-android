@@ -108,7 +108,7 @@ class GpsExportTest {
     }
 
     @Test
-    fun `varios puntos caben en un fichero, una fila por punto`() {
+    fun `varios puntos caben en un fichero una fila por punto`() {
         val otras = GpsAverager().apply {
             addAll(muestras.map { it.copy(latitude = it.latitude + 0.01) })
         }.stats()!!
@@ -127,7 +127,7 @@ class GpsExportTest {
     }
 
     @Test
-    fun `varios puntos en gpx son un waypoint cada uno, y sigue siendo xml valido`() {
+    fun `varios puntos en gpx son un waypoint cada uno y sigue siendo xml valido`() {
         val otras = GpsAverager().apply {
             addAll(muestras.map { it.copy(latitude = it.latitude + 0.01) })
         }.stats()!!

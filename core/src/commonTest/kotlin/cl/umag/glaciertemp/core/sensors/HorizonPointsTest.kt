@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 
 class HorizonPointsTest {
 
-    @Test fun `el formato copiado es el de la calculadora, dos lineas`() {
+    @Test fun `el formato copiado es el de la calculadora dos lineas`() {
         // El ejemplo de la propia pagina de ICE-D.
         val p = listOf(0.0 to 3.0, 55.0 to 0.0, 115.0 to 5.0, 235.0 to 0.0, 310.0 to 0.0)
             .map { HorizonPoints.Point(it.first, it.second) }
@@ -20,7 +20,7 @@ class HorizonPointsTest {
         assertEquals("10 200\n9 4", HorizonPoints.toClipboard(p))
     }
 
-    @Test fun `lee espacios, comas y saltos de linea por igual`() {
+    @Test fun `lee espacios comas y saltos de linea por igual`() {
         // Lo pegado viene de una hoja de calculo, de un cuaderno o de la propia pagina.
         listOf("0 90 180 270", "0,90,180,270", "0\n90\n180\n270", "0; 90 ,180\t270").forEach {
             val r = HorizonPoints.parse(it, "1 2 3 4")
@@ -52,7 +52,7 @@ class HorizonPointsTest {
         assertTrue(r.error!!.contains("three"), r.error!!)
     }
 
-    @Test fun `dos campos vacios no son un error, solo no hay datos`() {
+    @Test fun `dos campos vacios no son un error solo no hay datos`() {
         val r = HorizonPoints.parse("", "")
         assertNull(r.error)
         assertTrue(r.points.isEmpty())

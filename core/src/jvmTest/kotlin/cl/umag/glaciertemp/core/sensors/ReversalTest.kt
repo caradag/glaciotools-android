@@ -16,7 +16,7 @@ class ReversalTest {
         assertEquals(0.5, r.bias, 1e-9)
     }
 
-    @Test fun `el pitch del aparato sale de la semidiferencia, NO de la media`() {
+    @Test fun `el pitch del aparato sale de la semidiferencia NO de la media`() {
         // Inclinacion real 12 grados, sesgo 0,4. Primera posicion 12,4; girado, -11,6.
         // Promediar a lo bruto daria 0,4 --el sesgo-- en vez de 12.
         val r = Reversal.device(12.4, -11.6)

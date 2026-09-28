@@ -3,6 +3,8 @@ package cl.umag.glaciertemp.core.sensors
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.hypot
+import kotlin.math.PI
 
 /**
  * Promediar angulos NO es promediar numeros.
@@ -37,14 +39,14 @@ object Angles {
         var sx = 0.0
         var sy = 0.0
         values.forEach { v ->
-            val r = Math.toRadians(v)
+            val r = v / 180.0 * PI
             sx += cos(r); sy += sin(r)
         }
         val n = values.size
         // Longitud del vector medio. Por debajo de esto no hay direccion que declarar.
-        val r = Math.hypot(sx / n, sy / n)
+        val r = hypot(sx / n, sy / n)
         if (r < 1e-9) return null
-        return wrap(Math.toDegrees(atan2(sy, sx)))
+        return wrap(atan2(sy, sx) * 180.0 / PI)
     }
 
     /**

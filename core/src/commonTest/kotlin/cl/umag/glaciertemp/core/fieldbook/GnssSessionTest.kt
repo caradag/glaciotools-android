@@ -21,14 +21,14 @@ class GnssSessionTest {
     }
 
     @Test
-    fun `esta en marcha entre el inicio y el termino, y solo ahi`() {
+    fun `esta en marcha entre el inicio y el termino y solo ahi`() {
         assertFalse(GnssSession().running, "sin empezar")
         assertTrue(GnssSession(startEpochMillis = T).running)
         assertFalse(GnssSession(startEpochMillis = T, endEpochMillis = T + 1000).running)
     }
 
     @Test
-    fun `la duracion se calcula y no se guarda, asi que sigue a las marcas`() {
+    fun `la duracion se calcula y no se guarda asi que sigue a las marcas`() {
         val s = GnssSession(startEpochMillis = T, endEpochMillis = T + 1_800_000L)
         assertEquals(1_800_000L, s.durationMillis)
 

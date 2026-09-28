@@ -113,7 +113,7 @@ class UtmTest {
     }
 
     @Test
-    fun `medir entre zonas distintas es un error, no un numero raro`() {
+    fun `medir entre zonas distintas es un error no un numero raro`() {
         val a = Utm.fromLatLon(-53.0, -75.0)
         val b = Utm.fromLatLon(-53.0, -69.0)
         assertNotEquals(a.zone, b.zone)

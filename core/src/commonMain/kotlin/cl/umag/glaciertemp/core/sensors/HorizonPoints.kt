@@ -1,5 +1,7 @@
 package cl.umag.glaciertemp.core.sensors
 
+import cl.umag.glaciertemp.core.Decimals
+
 /**
  * El horizonte como LISTA DE PUNTOS: azimut y elevacion, uno por uno.
  *
@@ -64,7 +66,7 @@ object HorizonPoints {
             .mapNotNull { it.trim().takeIf { s -> s.isNotEmpty() }?.toDoubleOrNull() }
 
     private fun num(v: Double): String =
-        if (v == Math.floor(v) && !v.isInfinite()) "%.0f".format(java.util.Locale.ROOT, v) else "%.1f".format(java.util.Locale.ROOT, v)
+        if (v == kotlin.math.floor(v) && !v.isInfinite()) Decimals.fixed(v, 0) else Decimals.fixed(v, 1)
 
     /** El perfil de 1 grado que pide el calculo de apantallamiento. */
     fun toShieldingHorizon(points: List<Point>): DoubleArray =

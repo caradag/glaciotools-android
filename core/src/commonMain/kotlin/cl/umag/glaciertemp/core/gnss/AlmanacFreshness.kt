@@ -1,5 +1,7 @@
 package cl.umag.glaciertemp.core.gnss
 
+import kotlin.math.abs
+
 /** En que estado esta el almanaque guardado. */
 enum class Freshness {
     /** No hay ninguno. La herramienta no puede predecir nada. */
@@ -69,7 +71,7 @@ object AlmanacFreshness {
      */
     fun daysOutsideValidity(epochRefMillis: Long?, forDayMillis: Long): Long? {
         if (epochRefMillis == null) return null
-        val dias = Math.abs(forDayMillis - epochRefMillis) / DIA
+        val dias = abs(forDayMillis - epochRefMillis) / DIA
         return if (dias > STALE_DAYS) dias else null
     }
 

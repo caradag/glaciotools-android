@@ -127,7 +127,7 @@ class TiltMeasuredTest {
 
 class SensorReportTest {
 
-    @Test fun `lo copiado dice que es, cuanto y cuando`() {
+    @Test fun `lo copiado dice que es cuanto y cuando`() {
         val t = SensorReport.tilt(12.0, -3.5, 0.2, "2026-09-26 10:00")
         assertTrue(t.contains("2026-09-26 10:00"), t)
         assertTrue(t.contains("Yaw"), t)
