@@ -660,6 +660,7 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
     // de servir para lo unico que sirve: ver el error de tecleo con el rio todavia delante.
     if (e.type == EntryType.GAUGING) {
         GaugingScreen(vm, s, e, onBorrar)
+        ConfirmarBorrado(vm, e, borrar, onBorrar)
         return
     }
 
@@ -792,6 +793,19 @@ private fun EntryScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEnt
             })
     }
 
+    ConfirmarBorrado(vm, e, borrar, onBorrar)
+}
+
+/**
+ * Confirmar antes de borrar una anotacion.
+ *
+ * Aparte y no dentro de EntryScreen porque el aforo tiene pantalla propia y sale de ella con
+ * un `return` temprano: con el dialogo al final de EntryScreen, el boton Delete del aforo
+ * ponia la bandera y no se componia nada -- el boton no hacia nada.
+ */
+@Composable
+private fun ConfirmarBorrado(vm: FieldbookViewModel, e: FieldEntry, borrar: Boolean,
+                             onBorrar: (Boolean) -> Unit) {
     if (borrar) {
         AlertDialog(
             onDismissRequest = { onBorrar(false) },
