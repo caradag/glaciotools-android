@@ -20,6 +20,7 @@ import cl.umag.glaciertemp.core.fieldbook.*
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.ui.text.drawText
 import cl.umag.glaciertemp.core.sensors.Angles
 import cl.umag.glaciertemp.core.sensors.AlbedoRun
@@ -860,10 +861,7 @@ fun CosmoEditor(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
         Text("Drag across the chart to read the azimuth.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (delTelefono.isNotEmpty()) CopiarHorizonte(delTelefono, "phone")
-            if (puntosManuales.isNotEmpty()) CopiarHorizonte(puntosManuales, "hand")
-        }
+        CopiarHorizonte(delTelefono, puntosManuales)
     }
 
     var editandoPuntos by remember { mutableStateOf(false) }
@@ -1026,23 +1024,48 @@ fun PerfilDeHorizonte(
     }
 }
 
-/** Copia el horizonte en el formato de la calculadora de ICE-D: dos lineas de numeros. */
+/**
+ * Copia TODO el horizonte que haya, en el formato de la calculadora de ICE-D.
+ *
+ * UN SOLO BOTON. Antes habia uno por medida, y eso obligaba a decidir cual copiar justo
+ * cuando lo que se quiere es tenerlo todo: se pega en un correo, en la pagina o en un
+ * cuaderno y ya se elegira alli. Cada medida va con su rotulo y sus dos lineas de numeros.
+ */
 @Composable
-private fun CopiarHorizonte(puntos: List<HorizonPoints.Point>, cual: String = "") {
+private fun CopiarHorizonte(
+    delTelefono: List<HorizonPoints.Point>,
+    aMano: List<HorizonPoints.Point>,
+) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var copiado by remember { mutableStateOf(false) }
     LaunchedEffect(copiado) { if (copiado) { kotlinx.coroutines.delay(1500); copiado = false } }
     OutlinedButton(
         onClick = {
+            val texto = buildString {
+                // Con una sola medida NO se pone rotulo: asi las dos lineas se pegan
+                // directamente en los dos campos de la pagina, que es el caso comun.
+                val dos = delTelefono.isNotEmpty() && aMano.isNotEmpty()
+                if (delTelefono.isNotEmpty()) {
+                    if (dos) appendLine("Phone sweep, azimuths then elevations:")
+                    append(HorizonPoints.toClipboard(delTelefono))
+                    if (dos) appendLine()
+                }
+                if (aMano.isNotEmpty()) {
+                    if (dos) { appendLine(); appendLine("Hand survey, azimuths then elevations:") }
+                    append(HorizonPoints.toClipboard(aMano))
+                }
+            }
             val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                 as? android.content.ClipboardManager
-            cb?.setPrimaryClip(android.content.ClipData.newPlainText(
-                "GlacioTools", HorizonPoints.toClipboard(puntos)))
+            cb?.setPrimaryClip(android.content.ClipData.newPlainText("GlacioTools", texto))
             copiado = true
         },
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-        modifier = Modifier.testTag("fb-cosmo-copy-$cual")) {
-        Text(if (copiado) "Copied" else if (cual.isEmpty()) "Copy" else "Copy $cual")
+        modifier = Modifier.testTag("fb-cosmo-copy")) {
+        Icon(Icons.Outlined.ContentCopy, null,
+             Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(if (copiado) "Copied" else "Copy horizon")
     }
 }
 

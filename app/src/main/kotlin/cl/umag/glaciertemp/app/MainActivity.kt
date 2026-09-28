@@ -94,6 +94,9 @@ class MainActivity : ComponentActivity() {
             java.io.File(filesDir, "journal"))
         // Y la libreta conoce el del diario para poder borrarlo con la campana.
         fieldbook.journal = journal.store
+        // El registro de presion por lugares: carpeta propia, como los demas almacenes.
+        val presion = cl.umag.glaciertemp.core.sensors.PressureStore(
+            java.io.File(filesDir, "pressure"))
         fieldbook.sky = AndroidSkySource(applicationContext)
         fieldbook.gpsPoints = puntos
         fieldbook.location = vm.location
@@ -116,7 +119,7 @@ class MainActivity : ComponentActivity() {
         atenderCableEnchufado(intent)
         setContent {
             GlacioToolsTheme {
-                Surface { GlacioToolsApp(vm, gps, fieldbook, almanac, journal) }
+                Surface { GlacioToolsApp(vm, gps, fieldbook, almanac, journal, presion) }
             }
         }
     }

@@ -18,13 +18,22 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import cl.umag.glaciertemp.core.sensors.GreatCircle
+import cl.umag.glaciertemp.core.sensors.PressurePlace
+import cl.umag.glaciertemp.core.sensors.PressureSample
+import cl.umag.glaciertemp.core.sensors.PressureStore
+import cl.umag.glaciertemp.core.sensors.PressureTrend
 import cl.umag.glaciertemp.core.sensors.AlbedoRun
 import cl.umag.glaciertemp.core.sensors.Angles
 import cl.umag.glaciertemp.core.sensors.Reversal
@@ -53,7 +62,8 @@ import kotlin.math.sqrt
  * que transcribir a mano tres cifras con guantes, y ahi es donde se cambian los digitos.
  */
 @Composable
-fun SensorsScreen(onBack: () -> Unit, location: LocationSource? = null) {
+fun SensorsScreen(onBack: () -> Unit, location: LocationSource? = null,
+                  pressureStore: PressureStore? = null) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     // El mapeo de horizonte se lleva la pantalla entera: la imagen de la camara no cabe
     // debajo de una fila de pestanas, y ademas se esta girando sobre uno mismo.
@@ -113,7 +123,7 @@ fun SensorsScreen(onBack: () -> Unit, location: LocationSource? = null) {
             when (tab) {
                 0 -> TiltTab(onMapHorizon = { mapeando = true }, location = location)
                 1 -> CompassTab(location = location)
-                2 -> PressureTab()
+                2 -> PressureTab(store = pressureStore, location = location)
                 else -> LightTab()
             }
         }
@@ -556,10 +566,50 @@ private fun Rosa(rumbo: Double?) {
 // -------------------------------------- barometro --------------------------------------
 
 @Composable
-private fun PressureTab() {
+private fun PressureTab(store: PressureStore? = null, location: LocationSource? = null) {
     if (!hay(Sensor.TYPE_PRESSURE)) return SinSensor("barometer")
     val v by sensorValues(Sensor.TYPE_PRESSURE)
     val hPa = v?.getOrNull(0)?.toDouble()
+
+    var lugares by remember { mutableStateOf(store?.list() ?: emptyList()) }
+    var creando by remember { mutableStateOf(false) }
+    var avisoLejos by remember { mutableStateOf<Pair<PressurePlace, Double>?>(null) }
+    val alcance = rememberCoroutineScope()
+
+    /** Toma una lectura, con la posicion si se puede, y la guarda. */
+    fun guardar(lugar: PressurePlace, presion: Double) {
+        val st = store ?: return
+        alcance.launch {
+            val fix = runCatching { location?.lastKnownFix() }.getOrNull()
+            st.append(lugar.id, PressureSample(
+                System.currentTimeMillis(), presion,
+                fix?.latitude, fix?.longitude, fix?.altitudeMetres))
+            lugares = st.list()
+        }
+    }
+
+    /** Comprueba que se esta donde se dijo antes de anadir la lectura. */
+    fun tomar(lugar: PressurePlace) {
+        val presion = hPa ?: return
+        val st = store ?: return
+        alcance.launch {
+            val fix = runCatching { location?.lastKnownFix() }.getOrNull()
+            val ref = lugar.reference()
+            val rLat = ref?.latitude
+            val rLon = ref?.longitude
+            val d = if (fix != null && rLat != null && rLon != null)
+                GreatCircle.metres(fix.latitude, fix.longitude, rLat, rLon)
+            else null
+            if (d != null && d > DISTANCIA_MAXIMA_M) {
+                avisoLejos = lugar to d
+            } else {
+                st.append(lugar.id, PressureSample(
+                    System.currentTimeMillis(), presion,
+                    fix?.latitude, fix?.longitude, fix?.altitudeMetres))
+                lugares = st.list()
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -577,8 +627,80 @@ private fun PressureTab() {
              "a steady fall over hours is weather coming.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        HorizontalDivider()
+        Text("Places", style = MaterialTheme.typography.titleMedium)
+        // UN REGISTRO POR LUGAR, y no uno solo para todo. La presion cae unos 12 hPa por cada
+        // cien metros de altura: mezclando lecturas del campamento y de una estacion mas
+        // alta, la serie mide la cuesta y no el tiempo. Manteniendo la altura constante, el
+        // cambio SI es meteorologia, y eso vale igual a nivel del mar que a mil metros.
+        Text("One series per place, each always sampled from the same spot. Pressure drops " +
+             "about 12 hPa per 100 m of height, so mixing readings from camp and from a " +
+             "station higher up measures the walk, not the weather.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Button(onClick = { creando = true }, modifier = Modifier.testTag("sn-place-new")) {
+            Text("New place")
+        }
+
+        if (lugares.isEmpty()) {
+            Text("No places yet. Create one where you will come back to — camp, a stake " +
+                 "field, a weather station — and take a reading whenever you pass.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                 modifier = Modifier.testTag("sn-places-empty"))
+        }
+
+        lugares.forEach { lugar ->
+            BloqueDeLugar(
+                lugar = lugar,
+                presionActual = hPa,
+                onTake = { tomar(lugar) },
+                onRename = { nuevo -> store?.rename(lugar.id, nuevo); lugares = store?.list() ?: emptyList() },
+                onDelete = { store?.delete(lugar.id); lugares = store?.list() ?: emptyList() })
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    if (creando) NombreDeLugar(
+        titulo = "New place", inicial = "",
+        onDone = { nombre ->
+            store?.create(nombre)
+            lugares = store?.list() ?: emptyList()
+            creando = false
+        },
+        onCancel = { creando = false })
+
+    avisoLejos?.let { (lugar, d) ->
+        AlertDialog(
+            onDismissRequest = { avisoLejos = null },
+            modifier = Modifier.testTag("sn-place-far"),
+            title = { Text("You are not at “${lugar.name}”") },
+            text = {
+                Text("This is %.0f m from where the series was started. Pressure drops about "
+                         .format(d) +
+                     "12 hPa per 100 m of height, so a reading taken somewhere else does not " +
+                     "compare with the rest and will look like a weather change that did not " +
+                     "happen.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                               hPa?.let { guardar(lugar, it) }
+                               avisoLejos = null
+                           },
+                           modifier = Modifier.testTag("sn-place-far-save")) {
+                    Text("Add it anyway")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { avisoLejos = null }) { Text("Cancel") }
+            })
     }
 }
+
+/** A partir de aqui ya no se esta en el mismo sitio: 100 m son unos 12 hPa. */
+private const val DISTANCIA_MAXIMA_M = 100.0
+
 
 // ------------------------------- luz y medida de albedo -------------------------------
 
@@ -819,3 +941,196 @@ private fun FilaCorregida(rotulo: String, valor: Double?, sesgo: Double?, tag: S
              modifier = Modifier.testTag(tag))
     }
 }
+
+// ------------------------- el registro de presion de un lugar -------------------------
+
+/**
+ * Un lugar: su nombre, su grafico y el boton de tomar lectura.
+ *
+ * LA TENDENCIA VA ANTES QUE EL GRAFICO. Saber que hay 985 hPa no dice nada sin conocer la
+ * altura del sitio; saber que han caido cuatro en seis horas dice que viene un frente, y eso
+ * es lo que se viene a mirar. El grafico esta para ver la FORMA de la caida, que es otra
+ * pregunta.
+ */
+@Composable
+private fun BloqueDeLugar(
+    lugar: PressurePlace,
+    presionActual: Double?,
+    onTake: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var renombrar by remember { mutableStateOf(false) }
+    var borrar by remember { mutableStateOf(false) }
+
+    Card(Modifier.fillMaxWidth().testTag("sn-place")) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(lugar.name.ifBlank { "(unnamed place)" },
+                     style = MaterialTheme.typography.titleSmall,
+                     modifier = Modifier.weight(1f).testTag("sn-place-name"))
+                TextButton(onClick = { renombrar = true },
+                           contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                    Text("Rename")
+                }
+                TextButton(onClick = { borrar = true },
+                           contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            }
+
+            val ultima = lugar.samples.lastOrNull()
+            Text(ultima?.let { "%.2f hPa  ·  %s".format(it.hPa, cuandoCorto(it.epochMillis)) }
+                     ?: "No readings yet",
+                 style = MaterialTheme.typography.bodyMedium,
+                 fontFamily = FontFamily.Monospace,
+                 modifier = Modifier.testTag("sn-place-last"))
+
+            PressureTrend.describe(lugar.samples)?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium,
+                     modifier = Modifier.testTag("sn-place-trend"))
+            }
+            PressureTrend.warning(lugar.samples)?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.error,
+                     modifier = Modifier.testTag("sn-place-warn"))
+            }
+
+            if (lugar.samples.size >= 2) {
+                GraficoDePresion(lugar.samples,
+                                 Modifier.fillMaxWidth().height(140.dp)
+                                     .testTag("sn-place-chart"))
+            } else if (lugar.samples.size == 1) {
+                Text("One reading. Take another later and the change appears here.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onTake, enabled = presionActual != null,
+                       modifier = Modifier.testTag("sn-place-take")) { Text("Take reading") }
+                Text("${lugar.samples.size} reading" + (if (lugar.samples.size == 1) "" else "s"),
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+
+    if (renombrar) NombreDeLugar(
+        titulo = "Rename place", inicial = lugar.name,
+        onDone = { onRename(it); renombrar = false },
+        onCancel = { renombrar = false })
+
+    if (borrar) {
+        AlertDialog(
+            onDismissRequest = { borrar = false },
+            modifier = Modifier.testTag("sn-place-delete"),
+            title = { Text("Delete “${lugar.name}”?") },
+            text = { Text("Its ${lugar.samples.size} reading(s) go with it. A pressure " +
+                          "series cannot be measured again afterwards.") },
+            confirmButton = {
+                TextButton(onClick = { onDelete(); borrar = false }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { borrar = false }) { Text("Keep") } })
+    }
+}
+
+@Composable
+private fun NombreDeLugar(titulo: String, inicial: String,
+                          onDone: (String) -> Unit, onCancel: () -> Unit) {
+    var texto by remember { mutableStateOf(inicial) }
+    val foco = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { foco.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        modifier = Modifier.testTag("sn-place-dialog"),
+        title = { Text(titulo) },
+        text = {
+            OutlinedTextField(
+                value = texto, onValueChange = { texto = it },
+                label = { Text("Name") },
+                placeholder = { Text("Base camp") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+                    .focusRequester(foco).testTag("sn-place-field"))
+        },
+        confirmButton = {
+            TextButton(onClick = { onDone(texto.trim()) },
+                       enabled = texto.isNotBlank(),
+                       modifier = Modifier.testTag("sn-place-save")) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } })
+}
+
+/**
+ * Presion contra tiempo.
+ *
+ * EL EJE VERTICAL SE AJUSTA A LO QUE HAY, con un minimo de cuatro hectopascales de rango. Una
+ * escala fija de 950 a 1050 dibujaria cualquier serie como una raya horizontal, y lo que se
+ * viene a ver es justamente la pendiente. El minimo evita el problema contrario: con lecturas
+ * casi iguales, el ruido de decimas se dibujaria como una montana rusa.
+ */
+@Composable
+private fun GraficoDePresion(muestras: List<PressureSample>, modifier: Modifier = Modifier) {
+    val ejes = MaterialTheme.colorScheme.onSurfaceVariant
+    val linea = MaterialTheme.colorScheme.primary
+    val fondo = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+    val medidor = androidx.compose.ui.text.rememberTextMeasurer()
+    val estilo = MaterialTheme.typography.labelSmall.copy(color = ejes)
+    val densidad = androidx.compose.ui.platform.LocalDensity.current.density
+
+    val orden = remember(muestras) { muestras.sortedBy { it.epochMillis } }
+    if (orden.size < 2) return
+
+    Canvas(modifier) {
+        val izq = 46f * densidad
+        val abajo = 16f * densidad
+        val w = size.width - izq
+        val h = size.height - abajo
+
+        val pMin = orden.minOf { it.hPa }
+        val pMax = orden.maxOf { it.hPa }
+        val centro = (pMin + pMax) / 2
+        val rango = maxOf(pMax - pMin, 4.0)
+        val lo = centro - rango / 2 * 1.15
+        val hi = centro + rango / 2 * 1.15
+
+        val t0 = orden.first().epochMillis
+        val t1 = orden.last().epochMillis
+        val span = (t1 - t0).coerceAtLeast(1L)
+
+        fun x(t: Long) = izq + ((t - t0).toDouble() / span).toFloat() * w
+        fun y(p: Double) = (((hi - p) / (hi - lo)).toFloat()) * h
+
+        drawRect(fondo, Offset(izq, 0f), androidx.compose.ui.geometry.Size(w, h))
+        listOf(lo, centro, hi).forEach { p ->
+            val yy = y(p)
+            drawLine(ejes.copy(alpha = 0.25f), Offset(izq, yy), Offset(size.width, yy), 1f)
+            val r = medidor.measure("%.0f".format(p), estilo)
+            drawText(r, topLeft = Offset(0f, yy - r.size.height / 2f))
+        }
+
+        val p = androidx.compose.ui.graphics.Path()
+        orden.forEachIndexed { i, m ->
+            val px = x(m.epochMillis); val py = y(m.hPa)
+            if (i == 0) p.moveTo(px, py) else p.lineTo(px, py)
+        }
+        drawPath(p, linea, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
+        orden.forEach { m ->
+            drawCircle(linea, radius = 4f, center = Offset(x(m.epochMillis), y(m.hPa)))
+        }
+
+        // Cuanto tiempo abarca, que es lo que da sentido a la pendiente.
+        val horas = span / 3_600_000.0
+        val cuanto = if (horas < 48) "%.0f h".format(horas) else "%.0f days".format(horas / 24)
+        val r = medidor.measure(cuanto, estilo)
+        drawText(r, topLeft = Offset(size.width - r.size.width, h + 1f))
+    }
+}
+
+private val CORTO = SimpleDateFormat("d MMM HH:mm", Locale.US)
+
+private fun cuandoCorto(ms: Long): String = CORTO.format(Date(ms))

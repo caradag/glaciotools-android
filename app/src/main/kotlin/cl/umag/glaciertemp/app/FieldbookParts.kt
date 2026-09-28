@@ -24,7 +24,11 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
@@ -614,24 +618,7 @@ fun PhotoStrip(
             })
     }
 
-    mirando?.let { nombre ->
-        val f = resolve(nombre)
-        AlertDialog(
-            onDismissRequest = { mirando = null },
-            modifier = Modifier.testTag("$tag-viewer"),
-            text = {
-                if (f == null) Text("That photo is no longer on the phone.")
-                else {
-                    val bmp by MediaVault.rememberImage(f, 1600)
-                    bmp?.let {
-                        Image(it, contentDescription = "Photo",
-                              contentScale = ContentScale.Fit,
-                              modifier = Modifier.fillMaxWidth())
-                    } ?: CircularProgressIndicator()
-                }
-            },
-            confirmButton = { TextButton(onClick = { mirando = null }) { Text("Close") } })
-    }
+    mirando?.let { nombre -> VisorDeFoto(resolve(nombre), tag) { mirando = null } }
 }
 
 // -------------------------------------- audio --------------------------------------
@@ -728,4 +715,84 @@ fun RecordButton(recorder: AudioNoteRecorder, onFinished: (File, Long) -> Unit,
     if (compacto) contenido()
     else Row(verticalAlignment = Alignment.CenterVertically,
              horizontalArrangement = Arrangement.spacedBy(8.dp)) { contenido() }
+}
+
+
+/**
+ * La foto a pantalla completa, con pellizco para ampliar.
+ *
+ * POR QUE HACE FALTA AMPLIAR. Una foto de terreno se toma para mirarla DESPUES, y lo que se
+ * busca en ella es un detalle: la grieta al pie del bloque, la marca de pintura sobre la
+ * baliza, si esa mancha oscura es liquen o roca mojada. En una miniatura dentro de un cuadro
+ * eso no se ve, y volver al sitio a comprobarlo no es una opcion.
+ *
+ * El zoom no baja de 1 ni sube de 8, y al soltar por debajo de 1 vuelve a encajar: una foto
+ * que se pierde de la pantalla y no se sabe como recuperar es peor que una que no amplia.
+ */
+@Composable
+private fun VisorDeFoto(f: File?, tag: String, onClose: () -> Unit) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(color = Color.Black, modifier = Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize()) {
+                if (f == null) {
+                    Text("That photo is no longer on the phone.",
+                         color = Color.White,
+                         modifier = Modifier.align(Alignment.Center).padding(24.dp))
+                } else {
+                    val bmp by MediaVault.rememberImage(f, 2400)
+                    val b = bmp
+                    if (b == null) {
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    } else {
+                        var escala by remember { mutableFloatStateOf(1f) }
+                        var desplaz by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+                        Image(
+                            b, contentDescription = "Photo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = escala; scaleY = escala
+                                    translationX = desplaz.x; translationY = desplaz.y
+                                }
+                                .pointerInput(Unit) {
+                                    detectTransformGestures {
+                                        _, pan, zoom, _ ->
+                                        escala = (escala * zoom).coerceIn(1f, 8f)
+                                        // Sin ampliar no se arrastra: si no, la foto se va de
+                                        // la pantalla y no hay forma obvia de traerla.
+                                        desplaz = if (escala <= 1.01f)
+                                            androidx.compose.ui.geometry.Offset.Zero
+                                        else desplaz + pan
+                                    }
+                                }
+                                .testTag("$tag-viewer"))
+                        if (escala > 1.01f) {
+                            TextButton(onClick = {
+                                           escala = 1f
+                                           desplaz = androidx.compose.ui.geometry.Offset.Zero
+                                       },
+                                       modifier = Modifier.align(Alignment.BottomCenter)
+                                           .padding(16.dp).testTag("$tag-viewer-fit")) {
+                                Text("Fit", color = Color.White)
+                            }
+                        }
+                    }
+                }
+                TextButton(onClick = onClose,
+                           modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                               .testTag("$tag-viewer-close")) {
+                    Text("Close", color = Color.White)
+                }
+                if (f != null) {
+                    Text("Pinch to zoom, drag to pan.",
+                         color = Color.White.copy(alpha = 0.7f),
+                         style = MaterialTheme.typography.bodySmall,
+                         modifier = Modifier.align(Alignment.BottomStart).padding(12.dp))
+                }
+            }
+        }
+    }
 }

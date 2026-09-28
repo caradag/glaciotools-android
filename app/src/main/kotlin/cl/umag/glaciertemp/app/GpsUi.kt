@@ -7,6 +7,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -33,7 +34,10 @@ private fun duracion(s: Long): String = when {
 @Composable
 fun GpsToolScreen(vm: GpsViewModel, almanac: AlmanacViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { vm.refresh() }
+    // ENTRAR SIEMPRE POR LA LISTA. Un punto que quedo abierto la vez anterior hacia que
+    // pulsar "GPS tools" aterrizara dentro de el, que no es lo que nadie pide al abrir la
+    // herramienta: lo primero que se quiere ver es que puntos hay.
+    LaunchedEffect(Unit) { vm.closePoint(); vm.refresh() }
     var explicar by rememberSaveable { mutableStateOf(false) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
 
@@ -463,6 +467,8 @@ private fun AveragingScreen(vm: GpsViewModel, s: GpsUiState, a: AveragingState) 
                             etiquetar = true)
         }
 
+        if (st != null) CopiarCoordenadas(st, a.name)
+
         HorizontalDivider()
         // FOTOS DEL SITIO. Un promedio se mejora volviendo otro dia, y "vuelve a donde
         // estaba el tripode" no lo resuelve una coordenada: a un metro de error, la foto es
@@ -551,6 +557,43 @@ private fun satelitesEnUso(): Pair<Int, Int>? {
         onDispose { if (ok) runCatching { lm.unregisterGnssStatusCallback(cb) } }
     }
     return estado.value
+}
+
+/**
+ * Copia la posicion al portapapeles.
+ *
+ * LAS DOS COORDENADAS Y LA INCERTIDUMBRE, no solo un par de numeros. Lo copiado acaba pegado
+ * en un correo o en una hoja de calculo, y una latitud sin su precision al lado no se puede
+ * juzgar: no es lo mismo un punto de veinte minutos de promediado que una lectura suelta.
+ */
+@Composable
+private fun CopiarCoordenadas(st: GpsPointStats, nombre: String) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var copiado by remember { mutableStateOf(false) }
+    LaunchedEffect(copiado) { if (copiado) { kotlinx.coroutines.delay(1500); copiado = false } }
+    OutlinedButton(
+        onClick = {
+            val texto = buildString {
+                appendLine("GlacioTools — " + nombre.ifBlank { "GNSS point" })
+                appendLine("${f(st.estimateLatitude, 6)}, ${f(st.estimateLongitude, 6)}")
+                appendLine(st.estimateUtm.format())
+                st.altitude?.estimate?.let {
+                    appendLine("Altitude ${f(it, 1)} m (WGS84 ellipsoid)")
+                }
+                appendLine("± ${f(st.horizontalStandardError, 2)} m horizontal, " +
+                           "${st.samples} fixes in ${st.sessions} session(s)")
+                append("Averaged with GlacioTools; not a differential solution.")
+            }
+            val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as? android.content.ClipboardManager
+            cb?.setPrimaryClip(android.content.ClipData.newPlainText("GlacioTools", texto))
+            copiado = true
+        },
+        modifier = Modifier.testTag("gps-copy")) {
+        Icon(Icons.Outlined.ContentCopy, null, Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(if (copiado) "Copied" else "Copy position")
+    }
 }
 
 /** Mantiene la pantalla encendida mientras [activo], y la suelta al salir. */
@@ -692,7 +735,7 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
         // ARRIBA LO QUE SE VIENE A MIRAR. Al abrir un punto guardado la pregunta es "donde
         // esta y con que precision", no como quedo la nube de puntos: eso se mira despues,
         // si se mira. Las fotos van al final por lo mismo.
-        if (st != null) ResumenDelPunto(st)
+        if (st != null) ResumenDelPunto(st, p.summary.name)
         if (st == null) {
             Text("This point has no fixes yet.",
                  style = MaterialTheme.typography.bodyMedium)
@@ -800,7 +843,7 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
  * solo una obliga a convertir justo cuando no hay como.
  */
 @Composable
-private fun ResumenDelPunto(st: GpsPointStats) {
+private fun ResumenDelPunto(st: GpsPointStats, nombre: String) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Position", style = MaterialTheme.typography.labelMedium,
@@ -827,6 +870,7 @@ private fun ResumenDelPunto(st: GpsPointStats) {
                  "± is the uncertainty of the estimate, not the scatter of the fixes.",
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
+            CopiarCoordenadas(st, nombre)
         }
     }
 }

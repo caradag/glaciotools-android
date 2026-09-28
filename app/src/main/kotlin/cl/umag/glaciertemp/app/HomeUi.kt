@@ -32,7 +32,8 @@ private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA, DIARIO, SENSORES, 
 @Composable
 fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
                    fieldbook: FieldbookViewModel, almanac: AlmanacViewModel,
-                   journal: JournalViewModel) {
+                   journal: JournalViewModel,
+                   pressureStore: cl.umag.glaciertemp.core.sensors.PressureStore? = null) {
     // Con un Saver explicito y no el automatico: lo que se guarda en el Bundle al girar la
     // pantalla es el NOMBRE, que es texto y no depende de en que orden queden las constantes
     // el dia que se anada una herramienta en medio.
@@ -113,7 +114,8 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
             // El proveedor de posicion se comparte con la libreta: el recorrido del sol
             // depende de la latitud, y sin ella el grafico sale sin sus curvas.
             SensorsScreen(onBack = { donde = Herramienta.INICIO },
-                          location = fieldbook.location)
+                          location = fieldbook.location,
+                          pressureStore = pressureStore)
         }
     }
     }
