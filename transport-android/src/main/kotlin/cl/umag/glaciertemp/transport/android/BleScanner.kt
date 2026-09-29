@@ -44,20 +44,23 @@ class BleScanner(context: Context) {
     private val found = LinkedHashMap<String, BleCandidate>()
 
     /**
-     * Escanea [durationMs] y va llamando a [onUpdate] con la lista acumulada. Se acumula en
-     * vez de emitir cada hallazgo porque un mismo modulo aparece muchas veces, y lo que la
-     * UI necesita es una lista estable con el RSSI al dia.
+     * Escanea [durationMs] y llama a [onSighting] con CADA anuncio recibido.
+     *
+     * Se entrega el anuncio suelto y no la lista acumulada porque quien ordena necesita
+     * todas las lecturas para promediarlas: con la lista solo se ve la ultima de cada
+     * modulo, y dos anuncios seguidos con la misma potencia serian indistinguibles de uno.
      */
-    fun start(durationMs: Long = 12_000, onUpdate: (List<BleCandidate>) -> Unit) {
+    fun start(durationMs: Long = 12_000, onSighting: (BleCandidate) -> Unit) {
         val scanner = adapter?.bluetoothLeScanner ?: return
         stop()
         found.clear()
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val d = result.device
-                found[d.address] = BleCandidate(d, runCatching { d.name }.getOrNull(),
+                val c = BleCandidate(d, runCatching { d.name }.getOrNull(),
                     d.address, result.rssi)
-                onUpdate(found.values.sortedByDescending { it.rssi })
+                found[d.address] = c
+                onSighting(c)
             }
             override fun onBatchScanResults(results: MutableList<ScanResult>) {
                 results.forEach { onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, it) }

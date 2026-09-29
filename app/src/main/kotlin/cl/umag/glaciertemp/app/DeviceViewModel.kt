@@ -259,11 +259,28 @@ class DeviceViewModel : ViewModel() {
             status = "Scanning for Bluetooth devices...", error = null,
             discovery = _state.value.discovery.copy(
                 ble = emptyList(), scanning = true, bluetoothEnabled = true))
-        c.scanBle { list ->
-            // El mas cercano primero: con varios modulos iguales alrededor, el que se tiene
-            // en la mano es el de mayor RSSI.
-            _state.value = _state.value.copy(discovery = _state.value.discovery.copy(
-                ble = list.sortedByDescending { it.rssi }))
+        // El mas cercano primero: con varios modulos iguales alrededor, el que se tiene en la
+        // mano es el de mayor RSSI. Pero por la MEDIA de dos segundos y reordenando solo cada
+        // dos segundos: por la ultima lectura la lista se reordenaba varias veces por segundo
+        // y no habia forma de leerla ni de acertar el boton. Ver SignalRanking.
+        ranking.clear()
+        etiquetas.clear()
+        c.scanBle { t ->
+            // El escaner llama desde el hilo principal; la clasificacion no es segura entre
+            // hilos, y el tic de reordenado corre tambien en el principal.
+            etiquetas[t.address] = t.label
+            if (ranking.sighting(t.address, t.rssi, System.currentTimeMillis()))
+                publicarListaBle()
+        }
+        ticBle?.cancel()
+        ticBle = viewModelScope.launch {
+            // Algo mas que lo que dura el escaneo (12 s), para la ultima vuelta.
+            val fin = System.currentTimeMillis() + 14_000
+            while (System.currentTimeMillis() < fin) {
+                kotlinx.coroutines.delay(RANKING_WINDOW_MS)
+                ranking.reorder(System.currentTimeMillis())
+                publicarListaBle()
+            }
         }
     }.onFailure { e ->
         _state.value = _state.value.copy(
@@ -272,7 +289,21 @@ class DeviceViewModel : ViewModel() {
             discovery = _state.value.discovery.copy(scanning = false))
     }.let { }
 
+    private val RANKING_WINDOW_MS = 2_000L
+    private val ranking = cl.umag.glaciertemp.core.SignalRanking(RANKING_WINDOW_MS)
+    private val etiquetas = HashMap<String, String>()
+    private var ticBle: kotlinx.coroutines.Job? = null
+
+    private fun publicarListaBle() {
+        val lista = ranking.order().map { a ->
+            ConnectionTarget.Ble(a, etiquetas[a] ?: a, ranking.shownRssi(a) ?: 0)
+        }
+        _state.value = _state.value.copy(
+            discovery = _state.value.discovery.copy(ble = lista))
+    }
+
     fun stopBleScan() {
+        ticBle?.cancel()
         runCatching { connectivity?.stopBleScan() }
         val d = _state.value.discovery
         _state.value = _state.value.copy(
@@ -353,8 +384,8 @@ class DeviceViewModel : ViewModel() {
         // El reloj se lee al conectar, junto con la configuracion: un desfase deja mal cada
         // marca de tiempo del log y no se nota hasta que alguien compara los datos meses
         // despues.
-        val boardNow = BoardClock.parse(String(s.exchange(Protocol.TIME, quietMs = 600)))
-        val drift = boardNow?.let { BoardClock.driftSeconds(it, java.time.LocalDateTime.now()) }
+        val (boardNow, llegada) = leerRelojPlaca(s, quietMs = 600)
+        val drift = boardNow?.let { BoardClock.driftAtArrival(it, llegada) }
 
         transport = espiado; session = s
         tap = espiado
@@ -579,8 +610,13 @@ class DeviceViewModel : ViewModel() {
      * que el usuario no puede deshacer despues.
      */
     fun requestSyncClock() {
-        val id = _state.value.info?.boardId
-        if (id != null && id != downloadedFrom) {
+        val info = _state.value.info
+        val id = info?.boardId
+        // CON LA MEMORIA VACIA NO HAY NADA QUE PROTEGER. El aviso existe porque sincronizar
+        // borra el desfase con que se corregirian los registros ya grabados; sin registros,
+        // pedir que se descargue antes es pedir que se descargue nada.
+        val hayDatos = info?.recordCount?.let { it > 0 } ?: true
+        if (id != null && id != downloadedFrom && hayDatos) {
             _state.value = _state.value.copy(
                 syncPrompt = SyncPrompt(SyncStage.DATA_AT_RISK, boardTimeZone(), phoneTimeZone()))
             return
@@ -610,17 +646,28 @@ class DeviceViewModel : ViewModel() {
      * descarga larga, o si uno quiere confirmar antes de sincronizar, no habia forma de
      * volver a mirarlo que no fuera desconectar y conectar.
      */
+    /**
+     * Pide TIME y devuelve la hora de la placa junto con la del telefono AL LLEGAR la
+     * respuesta. Ver [BoardClock.driftAtArrival]: la hora de acabar el intercambio lleva
+     * dentro el silencio que lo cierra, y eso se leia como desfase.
+     */
+    private fun leerRelojPlaca(s: DeviceSession, quietMs: Int):
+            Pair<java.time.LocalDateTime?, java.time.LocalDateTime> {
+        var llegada: java.time.LocalDateTime? = null
+        val reply = String(s.exchange(Protocol.TIME, quietMs = quietMs,
+            onChunk = { if (llegada == null) llegada = java.time.LocalDateTime.now() }))
+        return BoardClock.parse(reply) to (llegada ?: java.time.LocalDateTime.now())
+    }
+
     fun checkClock() = launchGuarded("Reading the board clock...") {
         val s = checkNotNull(session) { "not connected" }
-        val reply = String(s.exchange(Protocol.TIME, quietMs = 800))
+        val (boardNow, llegada) = leerRelojPlaca(s, quietMs = 800)
         publicarTerminal()
-        val boardNow = BoardClock.parse(reply)
         if (boardNow == null) {
             reportarSilencio("the TIME command")
             return@launchGuarded
         }
-        val ahora = java.time.LocalDateTime.now()
-        val drift = BoardClock.driftSeconds(boardNow, ahora)
+        val drift = BoardClock.driftAtArrival(boardNow, llegada)
         _state.value = _state.value.copy(
             boardTime = java.time.format.DateTimeFormatter
                 .ofPattern("yyyy-MM-dd HH:mm:ss").format(boardNow),
@@ -642,10 +689,11 @@ class DeviceViewModel : ViewModel() {
         // La conversion vive en :core y se prueba alli: con husos distintos, "solo la hora"
         // NO puede mandar la hora local del telefono. Ver ClockSyncTest.
         val effectiveOffset = ClockSync.targetOffsetHours(mode, boardOffset, phoneOffset)
-        val now = ClockSync.stampFor(java.time.ZonedDateTime.now(), mode,
-                                     boardOffset, phoneOffset)
 
-        if (mode == ClockSyncMode.BOTH) {
+        // El huso solo se escribe si CAMBIA. Escribirlo cuesta una respuesta entera --la
+        // placa reprograma la alarma y la imprime-- y ademas el firmware, al recibirlo,
+        // reescribe el reloj con la ultima hora que LEYO, que puede ser de hace rato.
+        if (mode == ClockSyncMode.BOTH && boardOffset != phoneOffset) {
             // El huso PRIMERO: el firmware, al cambiarlo, mueve el reloj en consecuencia.
             Variables.byCode("TZN")?.let { tz ->
                 val reply = s.writeVariable(tz, phoneOffset.toLong())
@@ -655,8 +703,24 @@ class DeviceViewModel : ViewModel() {
                 }
             }
         }
+        // LA MARCA SE CALCULA JUSTO ANTES DE ENVIARLA, no al entrar. Se calculaba arriba, antes
+        // de escribir el huso, y todo lo que tardaba esa escritura --la respuesta entera mas
+        // su silencio final, un par de segundos por radio-- se quedaba como atraso de la placa.
+        // Ademas se espera al cambio de segundo: la placa no guarda fracciones, y truncar en
+        // un instante cualquiera anadia hasta un segundo mas de atraso.
+        kotlinx.coroutines.delay(ClockSync.msToNextSecond(System.currentTimeMillis()))
+        val now = ClockSync.stampFor(java.time.ZonedDateTime.now(), mode,
+                                     boardOffset, phoneOffset)
         val offsetHours = effectiveOffset
-        val reply = String(s.exchange(Protocol.setTime(now).trimEnd('\n'), quietMs = 800))
+        var llegada: java.time.ZonedDateTime? = null
+        val reply = String(s.exchange(Protocol.setTime(now).trimEnd('\n'), quietMs = 800,
+            onChunk = { if (llegada == null) llegada = java.time.ZonedDateTime.now() }))
+        // La referencia para el aviso es la hora del telefono AL LLEGAR la respuesta, no la
+        // marca enviada ni la de acabar el intercambio: la placa lee su reloj despues de
+        // reprogramar la alarma, y lo que tarda el silencio final no es desfase.
+        val alResponder = (llegada ?: java.time.ZonedDateTime.now())
+            .withZoneSameInstant(java.time.ZoneOffset.ofHours(effectiveOffset))
+            .toLocalDateTime()
         appendTerminal(reply, fromBoard = true)
         val shown = java.time.format.DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss").format(now)
@@ -668,7 +732,7 @@ class DeviceViewModel : ViewModel() {
                     .ofPattern("yyyy-MM-dd HH:mm:ss").format(it)
             } ?: shown,
             clockWarning = boardNow
-                ?.let { BoardClock.warning(BoardClock.driftSeconds(it, now)) },
+                ?.let { BoardClock.warning(BoardClock.driftAtArrival(it, alResponder)) },
             status = "Clock set to $shown  ·  $tz")
     }
 
@@ -1141,8 +1205,13 @@ class DeviceViewModel : ViewModel() {
         // La hora de la placa se lee ANTES de descargar: es el instante al que se refiere el
         // desfase que luego corrige las marcas. Leerla despues mediria otra cosa, y por una
         // descarga larga por radio la diferencia no es despreciable.
-        val boardNow = BoardClock.parse(String(s.exchange(Protocol.TIME, quietMs = 800)))
-        val reference = java.time.LocalDateTime.now().withNano(0)
+        val (boardNow, llegada) = leerRelojPlaca(s, quietMs = 800)
+        // La referencia es la hora del telefono que CORRESPONDE a la lectura de la placa,
+        // de modo que el desfase grabado (placa - referencia) sea exactamente el medido.
+        // Antes era la hora al acabar el intercambio, truncada: todo desfase guardado en los
+        // metadatos salia uno o dos segundos mas atrasado de lo real.
+        val reference = boardNow?.minusSeconds(BoardClock.driftAtArrival(boardNow, llegada))
+            ?: llegada.withNano(0)
 
         // La posicion se pide en paralelo y sin esperarla: los datos son el objetivo y la
         // posicion es contexto. El ultimo arreglo conocido es instantaneo; el fresco tarda.

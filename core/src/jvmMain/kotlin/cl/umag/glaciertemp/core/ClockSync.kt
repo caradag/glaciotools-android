@@ -37,6 +37,19 @@ object ClockSync {
     fun targetOffsetHours(mode: ClockSyncMode, boardTz: Int?, phoneTz: Int): Int =
         if (mode == ClockSyncMode.TIME_ONLY) (boardTz ?: phoneTz) else phoneTz
 
+    /**
+     * Cuanto falta, en milisegundos, para el proximo segundo entero del reloj del telefono.
+     *
+     * La placa solo guarda segundos enteros. Enviar la hora truncada en un instante
+     * cualquiera deja la placa atrasada entre 0 y 1 s segun el momento de pulsar; esperando
+     * al cambio de segundo y enviando justo entonces, la marca es exacta y el error queda en
+     * lo que tarda el comando en llegar.
+     */
+    fun msToNextSecond(nowMillis: Long): Long {
+        val resto = Math.floorMod(nowMillis, 1000L)
+        return if (resto == 0L) 0L else 1000L - resto
+    }
+
     /** La marca a enviar, con los segundos enteros: la placa no guarda fracciones. */
     fun stampFor(
         now: ZonedDateTime,

@@ -54,13 +54,14 @@ interface Connectivity {
     fun requestBlePermissions()
 
     /**
-     * Escanea y va entregando la lista acumulada.
+     * Escanea y entrega cada anuncio recibido, con su potencia. El orden de la lista lo
+     * decide quien llama (ver SignalRanking), que necesita todas las lecturas.
      *
      * Solo se listan los modulos que ESTAN emitiendo ahora. Antes se sembraba la lista con
      * los emparejados del sistema, y eso llenaba la pantalla de equipos que quiza estaban a
      * kilometros: un modulo emparejado no es un modulo alcanzable.
      */
-    fun scanBle(onUpdate: (List<ConnectionTarget.Ble>) -> Unit)
+    fun scanBle(onSighting: (ConnectionTarget.Ble) -> Unit)
     fun stopBleScan()
 
     val bluetoothEnabled: Boolean

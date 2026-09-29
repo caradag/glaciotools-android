@@ -303,7 +303,22 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None):
     if up.startswith("TIME"):
         # Como printRTCTime(): con la etiqueta "Time:" delante.
         # --clock-offset desplaza el reloj de la placa, para probar el aviso de desfase.
+        if len(c) > 4:
+            # Como manualClockAdjust(): la hora enviada pasa a ser la del reloj. Sin esto
+            # el simulador seguia con su desfase despues de sincronizar, y no habia manera
+            # de comprobar que la sincronizacion deja la placa en hora.
+            try:
+                nueva = datetime.strptime(c[5:].strip(), "%Y-%m-%d %H:%M:%S")
+                args.clock_offset = (nueva - datetime.now()).total_seconds()
+            except ValueError:
+                link.line("Wrong format:" + c); return
         t = datetime.now() + timedelta(seconds=getattr(args, "clock_offset", 0))
+        if len(c) > 4:
+            # Al AJUSTAR, la placa reprograma la alarma y la imprime ANTES que la hora
+            # (setWakeUp() y luego printRTCTime()). Sin esta linea el simulador contestaba
+            # solo la hora, y el error de leer la alarma como hora no se podia ver aqui.
+            siguiente = t + timedelta(seconds=board.vars.get("INT", 600))
+            link.line("Next Wakeup:" + siguiente.strftime("%Y-%m-%d %H:%M:%S"))
         link.line("Time: " + t.strftime("%Y-%m-%d %H:%M:%S")); return
 
     if up.startswith("LOGC") or up.startswith("LOG") and not up.startswith("LOGB") \

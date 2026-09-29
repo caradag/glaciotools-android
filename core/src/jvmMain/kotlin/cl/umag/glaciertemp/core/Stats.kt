@@ -54,9 +54,25 @@ object BoardClock {
 
     private val STAMP = Regex("""(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2}):(\d{2})""")
 
+    /**
+     * La hora que va detras del rotulo "Time:", con o sin espacio y distinguiendo mayusculas.
+     *
+     * SE BUSCA EL ROTULO Y NO LA PRIMERA FECHA. Al AJUSTAR el reloj (`TIME=...`) la placa
+     * reprograma la alarma y responde con dos fechas, y la primera NO es la hora:
+     *
+     *     Next Wakeup:2026-09-28 20:30:00
+     *     Time:2026-09-28 20:15:07
+     *
+     * Leyendo la primera, el aviso de despues de sincronizar comparaba la PROXIMA MEDICION
+     * con el telefono y anunciaba un desfase de varios minutos --el tiempo hasta esa
+     * medicion-- que desaparecia al pulsar "Check offset", porque TIME a secas no reprograma
+     * nada. "Ref. time:" de autoClockAdjust no cuenta: va con minuscula a proposito.
+     */
+    private val LABELLED = Regex("""(?<![A-Za-z.])Time:\s*""" + STAMP.pattern)
+
     /** Lee la hora de la respuesta a TIME, que llega como "Time: 2026-09-04 18:30:00". */
     fun parse(reply: String): java.time.LocalDateTime? {
-        val m = STAMP.find(reply) ?: return null
+        val m = LABELLED.find(reply) ?: return null
         val (y, mo, d, h, mi, se) = m.destructured
         return runCatching {
             java.time.LocalDateTime.of(y.toInt(), mo.toInt(), d.toInt(),
@@ -90,6 +106,29 @@ object BoardClock {
 
     private fun plural(n: Long, one: String, many: String) =
         if (n == 1L) "$n $one" else "$n $many"
+
+    /**
+     * El desfase medido con la hora del telefono tomada AL LLEGAR la respuesta, en segundos
+     * enteros.
+     *
+     * La placa imprime su reloj en segundos ENTEROS: cuando dice `board`, su hora verdadera
+     * estaba en algun punto de [board, board + 1 s). Y la leyo antes de que la respuesta
+     * llegara al telefono en `a`. Con eso, el desfase verdadero esta en (board - a,
+     * board - a + 1 s], y el UNICO entero dentro de ese intervalo es ceil(board - a). Lo que
+     * sobra es la latencia del enlace, milisegundos por cable y unas decenas por radio.
+     *
+     * Restar a secas --como hace [driftSeconds]-- con un telefono que lleva milisegundos da
+     * un atraso de medio segundo de media, y Duration.seconds redondea ademas hacia abajo.
+     * Y [phoneAtArrival] tiene que ser la hora del PRIMER trozo de la respuesta: tomarla al
+     * acabar el intercambio --tras el silencio que lo cierra, 600-800 ms-- sumaba ese
+     * silencio. Una placa en hora salia "2 segundos atrasada", y ese mismo error quedaba
+     * grabado en el desfase con que se corrigen las marcas de tiempo del log.
+     */
+    fun driftAtArrival(board: java.time.LocalDateTime,
+                       phoneAtArrival: java.time.LocalDateTime): Long {
+        val ms = java.time.Duration.between(phoneAtArrival, board).toMillis()
+        return Math.floorDiv(ms + 999, 1000L)
+    }
 
     /** Segundos que la placa va adelantada (positivo) o atrasada (negativo). */
     fun driftSeconds(board: java.time.LocalDateTime, phone: java.time.LocalDateTime): Long =

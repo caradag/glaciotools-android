@@ -18,9 +18,39 @@ class BoardClockTest {
     }
 
     @Test
+    fun `al ajustar el reloj lee la hora y no la proxima alarma`() {
+        // Respuesta real de TIME=: setWakeUp() imprime la alarma ANTES que printRTCTime().
+        // Leer la primera fecha daba un "desfase" igual a lo que faltaba para medir.
+        val reply = "Next Wakeup:2026-09-28 20:30:00\r\nTime:2026-09-28 20:15:07\r\n"
+        assertEquals(LocalDateTime.of(2026, 9, 28, 20, 15, 7), BoardClock.parse(reply))
+        // Y sin la hora, la alarma sola no se toma por la hora.
+        assertNull(BoardClock.parse("Next Wakeup:2026-09-28 20:30:00"))
+        assertNull(BoardClock.parse("Ref. time:2026-09-28 20:30:00"))
+    }
+
+    @Test
     fun `una respuesta sin hora no inventa una`() {
         assertNull(BoardClock.parse("Wrong format: TIME=abc"))
         assertNull(BoardClock.parse(""))
+    }
+
+    @Test
+    fun `una placa en hora no sale atrasada por medir tarde o truncar`() {
+        val b = LocalDateTime.of(2026, 9, 28, 20, 15, 7)
+        // La placa leyo 20:15:07 en algun punto de ese segundo; la respuesta llega al
+        // telefono entre 0 y ~0,9 s despues del inicio del segundo: en hora, desfase cero.
+        for (ms in listOf(0L, 100L, 450L, 900L))
+            assertEquals(0L, BoardClock.driftAtArrival(b, b.plusNanos(ms * 1_000_000)),
+                         "llegada a +$ms ms")
+        // El metodo viejo: telefono leido tras 800 ms de silencio, con Duration.seconds.
+        assertEquals(-2L, BoardClock.driftSeconds(b, b.plusNanos(1_700_000_000)))
+    }
+
+    @Test
+    fun `el desfase al llegar conserva signo y magnitud`() {
+        val b = LocalDateTime.of(2026, 9, 28, 20, 15, 7)
+        assertEquals(125L, BoardClock.driftAtArrival(b, b.minusSeconds(125).plusNanos(300_000_000)))
+        assertEquals(-3L, BoardClock.driftAtArrival(b, b.plusSeconds(3).plusNanos(300_000_000)))
     }
 
     @Test

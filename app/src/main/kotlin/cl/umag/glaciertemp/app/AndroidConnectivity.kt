@@ -56,14 +56,14 @@ class AndroidConnectivity(
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray())
     }
 
-    override fun scanBle(onUpdate: (List<ConnectionTarget.Ble>) -> Unit) {
+    override fun scanBle(onSighting: (ConnectionTarget.Ble) -> Unit) {
         // Sin permiso, startScan no falla: devuelve una lista VACIA y ningun error, que es
         // de los comportamientos mas desconcertantes de esta API. Quien llama ya comprobo
         // los permisos; esto es la ultima red.
         if (missingBlePermissions().isNotEmpty()) return
         runCatching {
-            scanner.start { list ->
-                onUpdate(list.map { ConnectionTarget.Ble(it.address, it.label, it.rssi) })
+            scanner.start { c ->
+                onSighting(ConnectionTarget.Ble(c.address, c.label, c.rssi))
             }
         }
     }
