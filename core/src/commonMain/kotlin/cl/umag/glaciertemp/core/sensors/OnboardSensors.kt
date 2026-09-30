@@ -190,10 +190,28 @@ object SensorReport {
     private fun par(rotulo: String, media: Double?, mediana: Double?): String =
         "$rotulo: mean ${media?.let { g(it) } ?: "—"}, median ${mediana?.let { g(it) } ?: "—"}"
 
-    fun compass(heading: Double, uT: Double?, cuando: String): String =
+    /**
+     * EL NORTE VA ESCRITO. Un rumbo copiado sin decir si es verdadero o magnetico no se puede
+     * usar despues, y con la declinacion va tambien su modelo y su variacion anual: quien lo
+     * lea dentro de diez anos necesita saber que correccion se aplico y con que.
+     */
+    fun compass(heading: Double, uT: Double?, cuando: String, trueNorth: Boolean = false,
+                declination: Double? = null, declinationRate: Double? = null,
+                model: String? = null): String =
         buildString {
             appendLine("GlacioTools — compass  $cuando")
-            appendLine("Heading: ${Compass.format(heading, 1)}  (${Compass.cardinal(heading)})")
+            appendLine("Heading (${if (trueNorth) "true" else "magnetic"} N): " +
+                       "${Compass.format(heading, 1)}  (${Compass.cardinal(heading)})")
+            if (declination != null) {
+                val d = if (declination >= 0) Decimals.fixed(declination, 2) + "° E"
+                        else Decimals.fixed(-declination, 2) + "° W"
+                val r = declinationRate?.let {
+                    val min = it * 60
+                    ", annual change " + Decimals.fixed(kotlin.math.abs(min), 1) + "′ " +
+                        (if (min >= 0) "E" else "W")
+                } ?: ""
+                appendLine("Declination: $d$r" + (model?.let { " ($it)" } ?: ""))
+            }
             append("Magnetic field: " + (uT?.let { Decimals.fixed(it, 1) + " µT" } ?: "—"))
         }
 

@@ -5,6 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.material3.Surface
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import android.os.Build
 import androidx.activity.result.contract.ActivityResultContracts
 
@@ -121,7 +124,14 @@ class MainActivity : ComponentActivity() {
         atenderCableEnchufado(intent)
         setContent {
             GlacioToolsTheme {
-                Surface { GlacioToolsApp(vm, gps, fieldbook, almanac, journal, presion) }
+                // Las testTag como resource-id: uiautomator (tools/ui.py) las encuentra asi. Las
+                // pantallas de sensores recomponen con cada lectura y nunca quedan inactivas, de
+                // modo que los tests de Compose no pueden esperarlas; se miran desde fuera.
+                @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+                val raiz = Modifier.semantics { testTagsAsResourceId = true }
+                Surface(raiz) {
+                    GlacioToolsApp(vm, gps, fieldbook, almanac, journal, presion)
+                }
             }
         }
     }

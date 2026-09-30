@@ -44,6 +44,8 @@ import cl.umag.glaciertemp.core.sensors.Scalars
 import cl.umag.glaciertemp.core.sensors.Tilt
 import cl.umag.glaciertemp.core.sensors.Compass
 import cl.umag.glaciertemp.core.sensors.SensorReport
+import cl.umag.glaciertemp.core.geomag.MagneticResult
+import cl.umag.glaciertemp.core.geomag.Reliability
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -211,7 +213,7 @@ private fun Cifra(rotulo: String, valor: String, tag: String) {
 }
 
 @Composable
-private fun BotonCopiar(texto: () -> String, tag: String) {
+internal fun BotonCopiar(texto: () -> String, tag: String) {
     val ctx = LocalContext.current
     var copiado by remember { mutableStateOf(false) }
     LaunchedEffect(copiado) { if (copiado) { delay(1500); copiado = false } }
@@ -295,7 +297,8 @@ private data class Horizonte(
 
 @Composable
 private fun TiltTab(onMapHorizon: () -> Unit, location: LocationSource? = null) {
-    val declinacion = rememberDeclination(location)
+    val campoMag = rememberMagneticField(location)
+    val declinacion = campoMag?.declination
     if (!hay(Sensor.TYPE_ROTATION_VECTOR)) return SinSensor("orientation sensor")
     val v by sensorValues(Sensor.TYPE_ROTATION_VECTOR)
     // El yaw se pasa a norte REAL aqui: lo que se lee y lo que se copia son lo mismo.
@@ -339,7 +342,7 @@ private fun TiltTab(onMapHorizon: () -> Unit, location: LocationSource? = null) 
         Cifra(if (declinacion != null) "Yaw (azimuth, true N)" else "Yaw (azimuth, magnetic N)",
               a?.let { Compass.format(it.first, 1) + "  " + Compass.cardinal(it.first) } ?: "—",
               "sn-yaw")
-        NorteYDeclinacion(declinacion)
+        NorteYDeclinacion(campoMag)
         FilaDePrecision(rememberCompassAccuracy())
         Cifra("Pitch", a?.let { "%.1f°".format(it.second) } ?: "—", "sn-pitch")
         Cifra("Roll", a?.let { "%.1f°".format(it.third) } ?: "—", "sn-roll")
@@ -474,7 +477,8 @@ private fun FilaMediaMediana(rotulo: String, media: Double?, mediana: Double?, t
 
 @Composable
 private fun CompassTab(location: LocationSource? = null) {
-    val declinacion = rememberDeclination(location)
+    val campoMag = rememberMagneticField(location)
+    val declinacion = campoMag?.declination
     if (!hay(Sensor.TYPE_ROTATION_VECTOR)) return SinSensor("compass")
     val v by sensorValues(Sensor.TYPE_ROTATION_VECTOR)
     val campo by sensorValues(Sensor.TYPE_MAGNETIC_FIELD)
@@ -490,7 +494,7 @@ private fun CompassTab(location: LocationSource? = null) {
         Cifra(if (declinacion != null) "Heading (true N)" else "Heading (magnetic N)",
               rumbo?.let { Compass.format(it) + "  " + Compass.cardinal(it) } ?: "—",
               "sn-heading")
-        NorteYDeclinacion(declinacion)
+        NorteYDeclinacion(campoMag)
         FilaDePrecision(rememberCompassAccuracy())
         uT?.let {
             Text("Magnetic field %.1f µT".format(it),
@@ -498,8 +502,14 @@ private fun CompassTab(location: LocationSource? = null) {
                  modifier = Modifier.testTag("sn-field"))
         }
 
-        BotonCopiar({ rumbo?.let { SensorReport.compass(it, uT, ahora()) } ?: "" },
-                    "sn-compass-copy")
+        BotonCopiar({
+            rumbo?.let {
+                SensorReport.compass(it, uT, ahora(), trueNorth = campoMag != null,
+                                     declination = campoMag?.declination,
+                                     declinationRate = campoMag?.declinationRate,
+                                     model = campoMag?.model)
+            } ?: ""
+        }, "sn-compass-copy")
 
         // El aviso del campo va con NUMEROS porque "cerca de metal" no es accionable si uno
         // esta de pie sobre un trineo: 25-65 uT es lo normal en la superficie terrestre, y
@@ -509,6 +519,8 @@ private fun CompassTab(location: LocationSource? = null) {
              "heading is wrong no matter how well the compass is calibrated.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        DeclinationCalculator(location)
     }
 }
 
@@ -520,16 +532,32 @@ private fun CompassTab(location: LocationSource? = null) {
  * quien lo lea dentro de un ano no tiene forma de saber cual era.
  */
 @Composable
-private fun NorteYDeclinacion(declinacion: Double?) {
-    Text(declinacion?.let {
-             "True north. Magnetic declination " + Declination.describe(it) +
-             " added to what the sensor reports."
+private fun NorteYDeclinacion(campo: MagneticResult?) {
+    Text(campo?.let {
+             "True north. Magnetic declination " + Declination.describe(it.declination) +
+             ", " + Declination.describeRate(it.declinationRate) + " (" + it.model + ")" +
+             ", added to what the sensor reports."
          } ?: "Magnetic north: no position yet, so the declination is unknown and nothing " +
               "has been corrected.",
          style = MaterialTheme.typography.bodySmall,
-         color = if (declinacion != null) MaterialTheme.colorScheme.onSurfaceVariant
+         color = if (campo != null) MaterialTheme.colorScheme.onSurfaceVariant
                  else MaterialTheme.colorScheme.error,
          modifier = Modifier.testTag("sn-declination"))
+    // Cerca del polo magnetico la componente horizontal se hace pequena: la aguja apunta
+    // mal y la declinacion cambia mucho en pocos kilometros. Umbrales del informe de WMM.
+    when (campo?.reliability) {
+        Reliability.CAUTION -> Text(
+            "Near the magnetic pole (horizontal field %.0f nT): the declination changes quickly "
+                .format(campo.horizontal) + "with position and compass headings are less reliable.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.testTag("sn-declination-warning"))
+        Reliability.UNRELIABLE -> Text(
+            "At the magnetic pole (horizontal field %.0f nT): the declination and compass "
+                .format(campo.horizontal) + "headings are unreliable here.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.testTag("sn-declination-warning"))
+        else -> {}
+    }
 }
 
 /** La rosa. Gira la aguja, no el circulo: el que mira es el que gira, no el norte. */
