@@ -1,5 +1,7 @@
 package cl.umag.glaciertemp.app
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cl.umag.glaciertemp.core.fieldbook.LengthUnit
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -70,6 +72,7 @@ import cl.umag.glaciertemp.core.fieldbook.StreamGauging
 fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                   onBorrar: (Boolean) -> Unit) {
     val g = e.gauging ?: StreamGauging()
+    val u by AppSettings.gaugingLengthUnit.collectAsStateWithLifecycle()
     val tramos = remember(g.widthM, g.intervalM) { Gauging.bins(g.widthM, g.intervalM) }
     val resumen = remember(g) { Gauging.summarize(g) }
     val rango = remember(g.bins) { Gauging.velocityRange(g) }
@@ -104,10 +107,10 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(buildString {
                                  append(e.profileName.ifBlank { "(unnamed profile)" })
-                                 append("  ·  ").append(Decimals.trimmed(g.widthM ?: 0.0, 3))
-                                 append(" m  ·  bins ")
-                                 append(Decimals.trimmed(g.intervalM ?: 0.0, 3))
-                                 append(" m  ·  ")
+                                 append("  ·  ").append(u.format(g.widthM ?: 0.0, 3))
+                                 append(" ${u.suffix}  ·  bins ")
+                                 append(u.format(g.intervalM ?: 0.0, 3))
+                                 append(" ${u.suffix}  ·  ")
                                  append(if (g.depthFromBed) "from bed" else "from surface")
                              },
                              Modifier.weight(1f),
@@ -130,18 +133,19 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                     onClearAll = { vm.clearNames(NameList.PROFILES) },
                     tag = "fb-gauging-profile")
 
-                // TODO EN METROS, el intervalo incluido. Estuvo en centimetros porque asi se
-                // dice en terreno, pero era la unica casilla del aforo en otra unidad, y una
-                // tabla con x en metros y el intervalo en centimetros invita a leer mal justo
-                // el numero que decide cuantas verticales hay.
+                // TODAS LAS LONGITUDES EN LA MISMA UNIDAD, la elegida en Settings (metros o
+                // centimetros), el intervalo incluido. Estuvo el intervalo solo en centimetros
+                // y era la unica casilla distinta: una tabla con x en metros y el intervalo en
+                // centimetros invita a leer mal justo el numero que decide cuantas verticales
+                // hay. Se convierte en la entrada y en la salida; lo guardado sigue en metros.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NumberField("Section width", anchoBorrador,
-                                onValue = { anchoBorrador = it },
-                                suffix = "m", modifier = Modifier.weight(1f),
+                    NumberField("Section width", anchoBorrador?.let { u.fromMetres(it) },
+                                onValue = { anchoBorrador = it?.let(u::toMetres) },
+                                suffix = u.suffix, modifier = Modifier.weight(1f),
                                 tag = "fb-gauging-width")
-                    NumberField("Bin interval", intervaloBorrador,
-                                onValue = { intervaloBorrador = it },
-                                suffix = "m", modifier = Modifier.weight(1f),
+                    NumberField("Bin interval", intervaloBorrador?.let { u.fromMetres(it) },
+                                onValue = { intervaloBorrador = it?.let(u::toMetres) },
+                                suffix = u.suffix, modifier = Modifier.weight(1f),
                                 tag = "fb-gauging-interval")
                 }
 
@@ -163,7 +167,7 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
                 }
 
                 val previstos = Gauging.bins(anchoBorrador, intervaloBorrador)
-                CuantosTramos(anchoBorrador, intervaloBorrador, previstos, g)
+                CuantosTramos(anchoBorrador, intervaloBorrador, previstos, g, u)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
@@ -203,18 +207,19 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
         LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)) {
 
             if (tramos.isNotEmpty()) {
-                item { CabeceraDeTabla(g.depthFromBed) }
+                item { CabeceraDeTabla(g.depthFromBed, u) }
                 itemsIndexed(tramos, key = { _, t -> t.index }) { _, t ->
                     FilaDeTramo(
                         t = t,
                         b = g.bins.getOrElse(t.index) { GaugingBin() },
                         fromBed = g.depthFromBed,
+                        u = u,
                         onDepth = { vm.setBinDepth(t.index, it) },
                         onVelocity = { vm.setBinVelocity(t.index, it) },
                         onInfo = { detalle = t.index })
                 }
                 item { Spacer(Modifier.height(8.dp)) }
-                item { Estadisticas(resumen) }
+                item { Estadisticas(resumen, u) }
                 item { CopiarAforo(e) }
             } else {
                 item {
@@ -289,7 +294,7 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
     }
 
     detalle?.let { i ->
-        DetalleDelTramo(tramos.getOrNull(i), g.bins.getOrElse(i) { GaugingBin() },
+        DetalleDelTramo(tramos.getOrNull(i), g.bins.getOrElse(i) { GaugingBin() }, u,
                         onClose = { detalle = null })
     }
 }
@@ -304,7 +309,7 @@ fun GaugingScreen(vm: FieldbookViewModel, s: FieldbookUiState, e: FieldEntry,
  */
 @Composable
 private fun CuantosTramos(ancho: Double?, intervalo: Double?, previstos: List<Gauging.Bin>,
-                          g: StreamGauging) {
+                          g: StreamGauging, u: LengthUnit) {
     val cuantos = Gauging.binCount(ancho, intervalo)
     val error = MaterialTheme.colorScheme.error
     val (texto, color) = when {
@@ -313,7 +318,7 @@ private fun CuantosTramos(ancho: Double?, intervalo: Double?, previstos: List<Ga
                 MaterialTheme.colorScheme.onSurfaceVariant
         previstos.isEmpty() ->
             "That would be $cuantos bins, more than the ${Gauging.MAX_BINS} allowed. " +
-                "Check the interval — it is in metres." to error
+                "Check the interval — it is in ${u.label.lowercase()}." to error
         else -> {
             val ultimo = previstos.last()
             val corto = previstos.size > 1 && intervalo != null &&
@@ -322,7 +327,7 @@ private fun CuantosTramos(ancho: Double?, intervalo: Double?, previstos: List<Ga
             buildString {
                 append("This gives ${previstos.size} bin")
                 if (previstos.size != 1) append("s")
-                if (corto) append(", the last one ${Decimals.trimmed(ultimo.widthM, 3)} m wide")
+                if (corto) append(", the last one ${u.format(ultimo.widthM, 3)} ${u.suffix} wide")
                 append(".")
                 if (perdidos > 0) append(" $perdidos measured bin(s) at the far bank " +
                                          "would be dropped.")
@@ -493,11 +498,11 @@ private fun LeyendaDeVelocidad(rango: Pair<Double, Double>?) {
 private val PESOS = listOf(0.9f, 1.05f, 0.85f, 1.05f, 1.0f)
 
 @Composable
-private fun CabeceraDeTabla(fromBed: Boolean) {
+private fun CabeceraDeTabla(fromBed: Boolean, u: LengthUnit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        listOf("x (m)", "depth (m)",
-               if (fromBed) "meas. ↑(m)" else "meas. ↓(m)",
+        listOf("x (${u.suffix})", "depth (${u.suffix})",
+               if (fromBed) "meas. ↑(${u.suffix})" else "meas. ↓(${u.suffix})",
                "v (m/s)", "Q (m³/s)")
             .forEachIndexed { i, t ->
                 Text(t, Modifier.weight(PESOS[i]),
@@ -516,7 +521,7 @@ private fun CabeceraDeTabla(fromBed: Boolean) {
  * le corresponde-- y la que se usaria para calcular no seria necesariamente la que se ve.
  */
 @Composable
-private fun FilaDeTramo(t: Gauging.Bin, b: GaugingBin, fromBed: Boolean,
+private fun FilaDeTramo(t: Gauging.Bin, b: GaugingBin, fromBed: Boolean, u: LengthUnit,
                         onDepth: (Double?) -> Unit, onVelocity: (Double?) -> Unit,
                         onInfo: () -> Unit) {
     val q = Gauging.binDischarge(t, b)
@@ -524,12 +529,13 @@ private fun FilaDeTramo(t: Gauging.Bin, b: GaugingBin, fromBed: Boolean,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
 
-        Celda(Decimals.trimmed(t.centreM, 3), PESOS[0], "fb-gauging-x-${t.index}")
+        Celda(u.format(t.centreM, 3), PESOS[0], "fb-gauging-x-${t.index}")
 
-        CeldaEditable(b.depthM, onDepth, PESOS[1], "fb-gauging-depth-${t.index}")
+        CeldaEditable(b.depthM?.let { u.fromMetres(it) }, { onDepth(it?.let(u::toMetres)) },
+                      PESOS[1], "fb-gauging-depth-${t.index}")
 
         Celda(Gauging.measurementDepthM(b.depthM, fromBed)
-                  ?.let { Decimals.fixed(it, 2) } ?: "—",
+                  ?.let { u.format(it, 2, fixed = true) } ?: "—",
               PESOS[2], "fb-gauging-vdepth-${t.index}",
               color = MaterialTheme.colorScheme.primary)
 
@@ -582,7 +588,7 @@ private fun androidx.compose.foundation.layout.RowScope.CeldaEditable(
 
 /** Todo lo que se sabe de una vertical, incluido cuando se escribio cada casilla. */
 @Composable
-private fun DetalleDelTramo(t: Gauging.Bin?, b: GaugingBin, onClose: () -> Unit) {
+private fun DetalleDelTramo(t: Gauging.Bin?, b: GaugingBin, u: LengthUnit, onClose: () -> Unit) {
     if (t == null) { onClose(); return }
     AlertDialog(
         onDismissRequest = onClose,
@@ -590,10 +596,10 @@ private fun DetalleDelTramo(t: Gauging.Bin?, b: GaugingBin, onClose: () -> Unit)
         title = { Text("Bin ${t.index + 1}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Linea("Edges", "${Decimals.trimmed(t.startM, 3)} m " +
-                               "to ${Decimals.trimmed(t.endM, 3)} m")
-                Linea("Centre", Decimals.trimmed(t.centreM, 3) + " m")
-                Linea("Bin width", Decimals.trimmed(t.widthM, 3) + " m")
+                Linea("Edges", "${u.format(t.startM, 3)} ${u.suffix} " +
+                               "to ${u.format(t.endM, 3)} ${u.suffix}")
+                Linea("Centre", u.format(t.centreM, 3) + " " + u.suffix)
+                Linea("Bin width", u.format(t.widthM, 3) + " " + u.suffix)
                 HorizontalDivider()
                 Linea("Depth first written", cuando(b.depthFirstEditMillis))
                 Linea("Depth last written", cuando(b.depthLastEditMillis))
@@ -633,14 +639,14 @@ private fun cuando(ms: Long?): String = ms?.let { formatWhen(it) } ?: "—"
 // ----------------------------------- pie de la tabla -----------------------------------
 
 @Composable
-private fun Estadisticas(r: Gauging.Summary) {
+private fun Estadisticas(r: Gauging.Summary, u: LengthUnit) {
     Card(Modifier.fillMaxWidth().testTag("fb-gauging-stats")) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text("Summary", style = MaterialTheme.typography.titleSmall)
             Linea("Bins", "${r.completeBins} complete of ${r.binCount}")
             Linea("Wetted area", r.areaM2?.let { Decimals.fixed(it, 3) + " m²" } ?: "—")
-            Linea("Mean depth", r.meanDepthM?.let { Decimals.fixed(it, 3) + " m" } ?: "—")
-            Linea("Max depth", r.maxDepthM?.let { Decimals.fixed(it, 3) + " m" } ?: "—")
+            Linea("Mean depth", r.meanDepthM?.let { u.format(it, 3, fixed = true) + " " + u.suffix } ?: "—")
+            Linea("Max depth", r.maxDepthM?.let { u.format(it, 3, fixed = true) + " " + u.suffix } ?: "—")
             Linea("Mean velocity",
                   r.meanVelocityMps?.let { Decimals.fixed(it, 3) + " m/s" } ?: "—")
             Linea("Max velocity",

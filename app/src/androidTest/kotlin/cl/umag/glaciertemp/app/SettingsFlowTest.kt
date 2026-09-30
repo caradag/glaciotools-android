@@ -50,6 +50,19 @@ class SettingsFlowTest {
         latitude = -53.16; longitude = -70.91; altitude = alt; time = millis
     }
 
+    @Test fun el_selector_de_unidades_del_aforo_cambia_el_ajuste() {
+        rule.onNodeWithTag("home-settings").performClick()
+        rule.waitUntil(10_000) { rule.onAllNodesWithTag("st-gauging-unit-cm").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("st-gauging-unit-cm").performScrollTo().performClick()
+        rule.waitForIdle()
+        assertEquals(cl.umag.glaciertemp.core.fieldbook.LengthUnit.CENTIMETRE,
+                     AppSettings.gaugingLengthUnit.value)
+        rule.onNodeWithTag("st-gauging-unit-m").performClick()
+        rule.waitForIdle()
+        assertEquals(cl.umag.glaciertemp.core.fieldbook.LengthUnit.METRE,
+                     AppSettings.gaugingLengthUnit.value)
+    }
+
     @Test fun telefono_que_entrega_nivel_del_mar_se_detecta_y_se_corrige() {
         AppSettings.setHeightCheck(AppSettings.HeightCheckState())
         val t0 = 1_790_000_000_000L

@@ -130,6 +130,29 @@ class JournalMediaNamesTest {
     }
 }
 
+/** Dias con titulo y sin entradas: van al journal.odt aunque el diario no tenga ninguna. */
+class JournalTitledEmptyDayExportTest {
+    @Test fun `un dia solo con titulo se exporta`() {
+        val zip = ByteArrayOutputStream()
+        FieldbookExport.writeZip(zip, emptyList(), FieldbookExport.NoMedia, emptyList(),
+                                 java.time.ZoneId.of("America/Punta_Arenas"),
+                                 emptyList(), mapOf("2026-02-11" to "Temporal, no se salio"),
+                                 MediaFalsa)
+        assertTrue(FieldbookExport.JOURNAL_ODT in entradasDe(zip.toByteArray()))
+        val odt = JournalOdt.build(emptyList(), mapOf("2026-02-11" to "Temporal, no se salio"),
+                                   zone = java.time.ZoneId.of("America/Punta_Arenas"))
+        val content = ZipInputStream(ByteArrayInputStream(odt)).use { z ->
+            var e = z.nextEntry
+            var txt = ""
+            while (e != null) { if (e.name == "content.xml") txt = z.readBytes().toString(Charsets.UTF_8); e = z.nextEntry }
+            txt
+        }
+        assertTrue("Temporal, no se salio" in content, content.take(300))
+        assertTrue("No entries." in content)
+        assertTrue("February" in content || "febrero" in content, "fecha legible desde la clave")
+    }
+}
+
 /** Devuelve bytes para cualquier nombre: basta para comprobar rutas dentro del zip. */
 private object MediaFalsa : FieldbookExport.Media {
     override fun open(name: String) = ByteArrayInputStream("xx".toByteArray())

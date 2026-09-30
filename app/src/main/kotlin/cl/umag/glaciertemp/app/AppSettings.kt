@@ -2,6 +2,7 @@ package cl.umag.glaciertemp.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import cl.umag.glaciertemp.core.fieldbook.LengthUnit
 import cl.umag.glaciertemp.core.geo.HeightVerdict
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +28,15 @@ object AppSettings {
         val chipSeparation: Double? = null,
     )
 
+    private val _gaugingUnit = MutableStateFlow(LengthUnit.METRE)
+    /** Unidad de entrada de las longitudes del aforo; lo guardado sigue en metros. */
+    val gaugingLengthUnit: StateFlow<LengthUnit> = _gaugingUnit.asStateFlow()
+
+    fun setGaugingLengthUnit(u: LengthUnit) {
+        _gaugingUnit.value = u
+        prefs?.edit()?.putString("gauging_length_unit", u.name)?.apply()
+    }
+
     private val _heightCheck = MutableStateFlow(HeightCheckState())
     val heightCheck: StateFlow<HeightCheckState> = _heightCheck.asStateFlow()
 
@@ -42,6 +52,7 @@ object AppSettings {
             p.edit().remove("height_verdict").remove("height_verdict_model")
                 .remove("height_verdict_at").remove("height_verdict_sep").apply()
         }
+        _gaugingUnit.value = LengthUnit.fromName(p.getString("gauging_length_unit", null))
         _heightCheck.value = HeightCheckState(
             verdict = runCatching { HeightVerdict.valueOf(p.getString("height_verdict", "")!!) }
                 .getOrDefault(HeightVerdict.UNVERIFIED),

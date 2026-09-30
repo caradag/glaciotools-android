@@ -963,7 +963,10 @@ class FieldbookViewModel : ViewModel() {
                         else if (deQuien != null) it.list(deQuien) else emptyList()
                     } ?: emptyList()
                     // Los titulos vienen con clave "campana|dia"; el documento agrupa por dia.
-                    val campanasDelDiario = diario.map { it.campaignId }.toSet()
+                    // La campana cuenta aunque solo tenga dias con titulo y ninguna entrada.
+                    val campanasDelDiario = diario.map { it.campaignId }.toSet() +
+                        (if (todo) journal?.allDayTitles().orEmpty().keys.map { it.substringBefore("|") }
+                         else listOfNotNull(deQuien))
                     val titulos = journal?.allDayTitles().orEmpty()
                         .filterKeys { it.substringBefore("|") in campanasDelDiario }
                         .mapKeys { (k, _) -> k.substringAfter("|") }

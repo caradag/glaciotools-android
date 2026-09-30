@@ -1,5 +1,6 @@
 package cl.umag.glaciertemp.app
 
+import cl.umag.glaciertemp.core.fieldbook.JournalDays
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -198,6 +199,18 @@ private fun DiaDelDiario(vm: JournalViewModel, s: JournalUiState, dia: JournalDa
 
                 HorizontalDivider()
 
+                if (dia.entries.isEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("No entries", style = MaterialTheme.typography.bodyMedium,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                             modifier = Modifier.weight(1f).testTag("jr-day-empty-${dia.key}"))
+                        TextButton(onClick = { vm.create(vm.middayOf(dia.key)) },
+                                   modifier = Modifier.testTag("jr-day-add-${dia.key}")) {
+                            Text("Add entry")
+                        }
+                    }
+                }
+
                 dia.entries.forEach { e ->
                     Column(Modifier.fillMaxWidth().clickable { vm.open(e.id) }
                                .padding(vertical = 6.dp)
@@ -289,6 +302,27 @@ private fun EditorDeEntrada(vm: JournalViewModel, e: JournalEntry) {
                     Text("Update position")
                 }
             }
+        }
+
+        // EL TITULO DEL DIA, ENCIMA DEL DE LA ENTRADA, cuando esta es la primera de su dia.
+        // Es el momento natural de ponerlo: se esta empezando a contar el dia. Despues hay
+        // que volver a la lista, desplegar el dia y pulsar "Name this day", y eso casi no se
+        // hace. Se guarda al teclear, y sobrevive aunque la entrada se cierre vacia: un dia
+        // con titulo y sin entradas es un registro valido.
+        val claveDia = JournalDays.dayKey(e.epochMillis)
+        val primeraDelDia = sPos.days.firstOrNull { it.key == claveDia }
+            ?.entries?.none { it.id != e.id } ?: true
+        if (primeraDelDia) {
+            var tituloDia by remember(claveDia) { mutableStateOf(vm.dayTitle(claveDia)) }
+            OutlinedTextField(
+                value = tituloDia,
+                onValueChange = { v -> tituloDia = v; vm.setDayTitleFromEditor(claveDia, v) },
+                label = { Text("Title for the day, ${fechaLegible(claveDia)}") },
+                placeholder = { Text("Instalación de balizas en glaciar") },
+                supportingText = { Text("First entry of this day. The day keeps its title " +
+                                        "even if this entry is left empty.") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().testTag("jr-day-title-in-editor"))
         }
 
         OutlinedTextField(

@@ -121,6 +121,30 @@ class JournalViewModel : ViewModel() {
         refresh()
     }
 
+    /**
+     * El titulo del dia escrito desde el editor de su primera entrada. Se guarda en cada
+     * pulsacion pero SIN refrescar todo el diario: refresh() relee todas las entradas y
+     * barre las vacias, y hacerlo por cada letra seria trabajo inutil mientras se teclea.
+     */
+    fun setDayTitleFromEditor(key: String, title: String) {
+        val st = store ?: return
+        val id = _state.value.campaignId ?: return
+        st.setDayTitle(id, key, title.trim())
+        _state.value = _state.value.copy(
+            days = _state.value.days.map { if (it.key == key) it.copy(title = title.trim()) else it })
+    }
+
+    /** Si la entrada es la unica de su dia: entonces el editor ofrece titular el dia. */
+    fun isFirstOfItsDay(e: JournalEntry): Boolean {
+        val clave = JournalDays.dayKey(e.epochMillis)
+        return _state.value.days.firstOrNull { it.key == clave }
+            ?.entries?.none { it.id != e.id } ?: true
+    }
+
+    fun dayTitle(key: String): String =
+        _state.value.days.firstOrNull { it.key == key }?.title
+            ?: store?.let { st -> _state.value.campaignId?.let { st.dayTitles(it)[key] } }.orEmpty()
+
     fun editTitleFor(key: String?) {
         _state.value = _state.value.copy(editingTitleFor = key)
     }

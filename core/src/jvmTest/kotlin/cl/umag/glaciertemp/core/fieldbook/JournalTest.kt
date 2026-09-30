@@ -53,6 +53,25 @@ class JournalDaysTest {
         assertEquals(listOf("2026-02-12", "2026-02-11", "2026-02-10"), dias.map { it.key })
     }
 
+    @Test fun `un dia con titulo y sin entradas existe, en su orden`() {
+        val dias = JournalDays.group(
+            listOf(e("a", "2026-02-10T15:00:00Z"), e("c", "2026-02-12T15:00:00Z")),
+            mapOf("2026-02-11" to "Temporal, no se salio", "2026-02-12" to "Balizas",
+                  "2026-02-13" to "  "),
+            PUNTA_ARENAS)
+        assertEquals(listOf("2026-02-12", "2026-02-11", "2026-02-10"), dias.map { it.key })
+        assertEquals("Temporal, no se salio", dias[1].title)
+        assertTrue(dias[1].entries.isEmpty())
+        // un titulo en blanco no crea un dia
+        assertTrue(dias.none { it.key == "2026-02-13" })
+    }
+
+    @Test fun `un dia con solo titulo cubre el recordatorio`() {
+        val dias = JournalDays.group(emptyList(), mapOf("2026-02-10" to "Temporal"), PUNTA_ARENAS)
+        val ahora = ms("2026-02-11T15:00:00Z")
+        assertNull(JournalReminder.missingDay(dias.map { it.key }.toSet(), ahora, null, PUNTA_ARENAS))
+    }
+
     @Test fun `dentro de un dia, las entradas van en orden ascendente`() {
         val dias = JournalDays.group(
             listOf(e("tarde", "2026-02-10T20:00:00Z"),

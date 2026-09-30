@@ -205,7 +205,8 @@ object FieldbookExport {
             zip.write(FieldbookOdt.build(entries, media, campaigns, zone))
             zip.closeEntry()
 
-            if (journal.isNotEmpty()) {
+            // Tambien sin entradas si hay dias con titulo: son registros del diario.
+            if (journal.isNotEmpty() || dayTitles.values.any { it.isNotBlank() }) {
                 val deQuien = campaigns.firstOrNull { c -> journal.any { it.campaignId == c.id } }
                 zip.putNextEntry(ZipEntry(JOURNAL_ODT))
                 zip.write(JournalOdt.build(

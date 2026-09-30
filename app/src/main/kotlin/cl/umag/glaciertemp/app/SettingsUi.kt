@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -21,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cl.umag.glaciertemp.core.fieldbook.LengthUnit
 import cl.umag.glaciertemp.core.geo.HeightVerdict
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
@@ -42,6 +45,7 @@ fun SettingsScreen(location: LocationSource?, onBack: () -> Unit) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
                verticalArrangement = Arrangement.spacedBy(16.dp)) {
             AlturaDelTelefono(location)
+            UnidadesDelAforo()
         }
     }
 }
@@ -55,6 +59,25 @@ internal fun Seccion(titulo: String, explicacion: String, tag: String,
             Text(explicacion, style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
             contenido()
+        }
+    }
+}
+
+/** En que unidad se escriben las longitudes del aforo (ver LengthUnit). */
+@Composable
+private fun UnidadesDelAforo() {
+    val u by AppSettings.gaugingLengthUnit.collectAsStateWithLifecycle()
+    Seccion("Stream gauging lengths",
+            "Unit for typing and reading the section width, bin interval, positions and depths " +
+            "of a stream gauging. Velocities stay in m/s. Saved and exported data are always in " +
+            "metres, so this can be changed at any time.",
+            "st-gauging-unit") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (op in LengthUnit.entries) {
+                FilterChip(selected = u == op, onClick = { AppSettings.setGaugingLengthUnit(op) },
+                           label = { Text(op.label + " (" + op.suffix + ")") },
+                           modifier = Modifier.testTag("st-gauging-unit-" + op.suffix))
+            }
         }
     }
 }

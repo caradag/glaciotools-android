@@ -52,8 +52,9 @@ object JournalOdt {
             val cuando = dia.entries.firstOrNull()?.epochMillis
             // Fecha SIEMPRE, titulo del dia si lo tiene. El titulo es lo que uno recuerda
             // ("el dia del temporal"), la fecha es lo que permite cruzarlo con los datos.
-            doc.heading1(cuando?.let { fecha(it, zone) } ?: dia.key)
+            doc.heading1(cuando?.let { fecha(it, zone) } ?: fechaDeClave(dia.key))
             if (dia.title.isNotBlank()) doc.meta(dia.title)
+            if (dia.entries.isEmpty()) doc.body("No entries.")
 
             dia.entries.forEach { e ->
                 doc.heading2(hora(e.epochMillis, zone) +
@@ -83,6 +84,10 @@ object JournalOdt {
     private fun instante(ms: Long, zone: ZoneId) = Instant.ofEpochMilli(ms).atZone(zone)
     private fun fecha(ms: Long, zone: ZoneId) = FECHA.format(instante(ms, zone))
     private fun hora(ms: Long, zone: ZoneId) = HORA.format(instante(ms, zone))
+
+    /** La fecha de un dia sin entradas, desde su clave "AAAA-MM-DD". */
+    private fun fechaDeClave(clave: String): String =
+        runCatching { FECHA.format(java.time.LocalDate.parse(clave)) }.getOrDefault(clave)
 
     private fun duracion(ms: Long): String {
         val s = ms / 1000

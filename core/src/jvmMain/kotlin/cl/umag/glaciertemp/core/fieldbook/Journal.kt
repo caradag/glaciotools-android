@@ -99,12 +99,18 @@ object JournalDays {
      * semanas para llegar a lo de esta tarde seria cobrarle el desplazamiento a la accion
      * mas frecuente. Dentro de cada dia, en cambio, las entradas van en orden ascendente,
      * que es como se leen los acontecimientos de una jornada.
+     *
+     * UN DIA CON TITULO EXISTE AUNQUE NO TENGA ENTRADAS. "Temporal, no se salio" es un
+     * registro valido de un dia de campana, y a veces es todo lo que hay que decir de el.
      */
     fun group(entries: List<JournalEntry>, titles: Map<String, String>,
-              zone: TimeZone = TimeZone.getDefault()): List<JournalDay> =
-        entries.groupBy { dayKey(it.epochMillis, zone) }
-            .toSortedMap(compareByDescending { it })
-            .map { (k, l) -> JournalDay(k, titles[k].orEmpty(), l.sortedBy { it.epochMillis }) }
+              zone: TimeZone = TimeZone.getDefault()): List<JournalDay> {
+        val porDia = entries.groupBy { dayKey(it.epochMillis, zone) }
+        val soloTitulo = titles.filter { (k, t) -> t.isNotBlank() && k !in porDia }.keys
+        return (porDia.keys + soloTitulo).sortedDescending().map { k ->
+            JournalDay(k, titles[k].orEmpty(), porDia[k].orEmpty().sortedBy { it.epochMillis })
+        }
+    }
 }
 
 /**
@@ -120,7 +126,7 @@ object JournalReminder {
     /**
      * La fecha que falta por completar, o null si no hay nada que recordar.
      *
-     * @param dayKeys los dias que YA tienen alguna entrada
+     * @param dayKeys los dias que YA tienen alguna entrada o un titulo
      * @param dismissedKey el dia cuyo aviso se descarto, si alguno
      */
     fun missingDay(dayKeys: Set<String>, nowMillis: Long, dismissedKey: String?,
