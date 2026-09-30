@@ -58,6 +58,6 @@ class GeoidFlowTest {
         rule.onNodeWithTag("geoid-n-egm96").assertTextEquals("8.758")
         rule.onNodeWithTag("geoid-h-egm96").assertTextEquals("25.24")
         rule.onNodeWithTag("geoid-n-egm2008").assertTextEquals("—")
-        rule.onAllNodesWithText("not downloaded").assertCountEquals(2)   // EGM2008 y XGM2019e
+        rule.onAllNodesWithText("not downloaded").assertCountEquals(1)   // EGM2008 (XGM2019e no se ofrece aun)
     }
 }

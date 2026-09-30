@@ -93,7 +93,7 @@ private fun ReferenciaDeAlturas(location: LocationSource?) {
                        label = { Text("Geoid") }, modifier = Modifier.testTag("st-height-geoid"))
         }
         if (geoidal) {
-            for (m in GeoidModel.entries) {
+            for (m in GeoidModel.offered) {
                 val disponible = remember(aqui, version) { aqui?.let { Geoids.available(m, it.latitude, it.longitude) } }
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     androidx.compose.material3.RadioButton(

@@ -32,7 +32,14 @@ enum class GeoidModel(
              "in published comparisons. 1′ grid downloaded by area.");
 
     companion object {
-        fun fromId(id: String?): GeoidModel? = entries.firstOrNull { it.id == id }
+        /**
+         * Los que la app OFRECE. XGM2019e queda fuera mientras no haya teselas publicadas: el
+         * servicio de ICGEM que las calcularia no acepta trabajos ("high load", 2026-09-30), y
+         * ofrecer un geoide que no se puede descargar solo produciria un error que parece de red.
+         */
+        val offered: List<GeoidModel> get() = listOf(EGM96, EGM2008)
+
+        fun fromId(id: String?): GeoidModel? = offered.firstOrNull { it.id == id }
 
         /** La tesela de 10x10 grados que contiene el punto: su esquina SO. */
         fun tileCorner(latitude: Double, longitude: Double): Pair<Int, Int> {

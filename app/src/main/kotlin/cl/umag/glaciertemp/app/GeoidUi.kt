@@ -84,7 +84,7 @@ fun GeoidScreen(location: LocationSource?) {
             return@Column
         }
         val filas = remember(la, lo, version) {
-            GeoidModel.entries.map { m ->
+            GeoidModel.offered.map { m ->
                 val n = Geoids.undulation(m, la, lo)
                 FilaGeoide(m, n, when {
                     m.builtIn -> "built in"
@@ -161,7 +161,7 @@ private fun ChipDelTelefono(filas: List<FilaGeoide>) {
  */
 @Composable
 internal fun DescargarZona(lat: Double, lon: Double, onDone: () -> Unit) {
-    val faltan = GeoidModel.entries.filter { !it.builtIn && !Geoids.available(it, lat, lon) }
+    val faltan = GeoidModel.offered.filter { !it.builtIn && !Geoids.available(it, lat, lon) }
     for (m in faltan) DescargaDeModelo(m, lat, lon, onDone)
 }
 
