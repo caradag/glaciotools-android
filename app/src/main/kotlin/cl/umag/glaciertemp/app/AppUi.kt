@@ -463,6 +463,7 @@ private fun InfoCard(s: UiState) {
             Text("Firmware ${i.firmware}  ·  protocol ${i.protocol}")
             Text("${i.recordCount} records  ·  ${i.recordBytes} B each",
                  Modifier.testTag("record-count"))
+            i.sensorErrors?.let { SensorErrorsBlock(it) }
 
             // The raw signature said nothing to a reader. It encodes WHICH channels wrote
             // the log -- that is how the decoder recovers the record layout from the data
@@ -478,6 +479,40 @@ private fun InfoCard(s: UiState) {
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+/**
+ * Los fallos de sensores que la placa lleva contados desde el ultimo arranque en frio o RC.
+ *
+ * Se dice la diferencia entre el contador y los huecos del log porque es lo primero que uno
+ * se pregunta al ver "12 failed attempts" con un log completo: la placa reintenta, y un fallo
+ * que el reintento arregla no deja hueco. Solo sale si el firmware lleva la cuenta.
+ */
+@Composable
+private fun SensorErrorsBlock(e: cl.umag.glaciertemp.core.SensorErrorLog) {
+    if (e.isEmpty) {
+        Text("No sensor errors since the last reset", Modifier.testTag("sensor-errors"),
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    val n = if (e.saturated) "65535 or more" else e.failedAttempts.toString()
+    Text("Sensor errors: $n failed reading attempt${if (e.failedAttempts == 1) "" else "s"}",
+         Modifier.testTag("sensor-errors"),
+         style = MaterialTheme.typography.bodyMedium,
+         color = MaterialTheme.colorScheme.error)
+    if (e.codes.isNotEmpty()) {
+        Text("Latest first:", style = MaterialTheme.typography.bodySmall)
+        e.codes.forEachIndexed { k, c ->
+            Text("${k + 1}.  ${cl.umag.glaciertemp.core.SensorErrors.describe(c)}",
+                 Modifier.testTag("sensor-error-$k"),
+                 style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    Text("Each reading is retried up to three times. Only readings that failed every " +
+         "time leave a gap in the log.",
+         style = MaterialTheme.typography.bodySmall,
+         color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** Board clock, and one button to put the phone's time on it. */

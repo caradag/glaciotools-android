@@ -28,7 +28,7 @@ NORMAL_BAUD = 115200
 FAST_BAUD = 230400
 # Version de firmware y de protocolo, en UN solo sitio. Estaban escritas dos veces y ya
 # habian divergido: INFO decia fw=2.7 proto=2 y VER seguia contestando fw=2.0 proto=1.
-FW_VERSION = "3.4"
+FW_VERSION = "3.6"
 PROTOCOL = 5
 # Identidad del hardware, como en el firmware: tipo + revision de placa, NO la del firmware.
 BOARD_TYPE = "GT"
@@ -280,7 +280,10 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None):
                   f"sig=0x{board.sig:04X} "
                   f"rec={board.rec} count={board.count} flash={FLASH_BYTES} "
                   f"sid={short_id(board.uid)} "
-                  f"baud={NORMAL_BAUD} fastbaud={FAST_BAUD}")
+                  f"baud={NORMAL_BAUD} fastbaud={FAST_BAUD} "
+                  # Como printMetadata() desde 3.6: los cuatro ultimos codigos de fallo de
+                  # sensores (el mas reciente en el nibble bajo) y los intentos fallidos.
+                  f"err=0x{args.sensor_errors[0]:04X} errn={args.sensor_errors[1]}")
         return
 
     if up == "CALC":
@@ -459,6 +462,9 @@ def main():
     ap.add_argument("--boot-delay", type=float, default=0.0)
     ap.add_argument("--console-window", type=int, default=30)
     ap.add_argument("--low-voltage", action="store_true")
+    ap.add_argument("--sensor-errors", default="0,0", metavar="CODIGOS,N",
+                    type=lambda s: tuple(int(x, 0) for x in s.split(",")),
+                    help="registro de fallos que informa INFO, p. ej. 0x3218,17")
     ap.add_argument("--clock-offset", type=int, default=0, metavar="SEC",
                     help="desfase del reloj de la placa, para probar el aviso")
     ap.add_argument("--module-buffer", type=int, default=0, metavar="BYTES",

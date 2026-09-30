@@ -14,6 +14,8 @@ data class DeviceInfo(
      * esperando a divergir de la primera.
      */
     val shortId: String = "",
+    /** Registro de fallos de sensores (firmware 3.6+); null si la placa no lo informa. */
+    val sensorErrors: SensorErrorLog? = null,
 ) {
     /**
      * Se decide leyendo la placa y no por el numero de version: la cabecera se describe a si
@@ -41,6 +43,7 @@ data class DeviceInfo(
                 baud = f["baud"]?.toIntOrNull() ?: 0,
                 fastBaud = f["fastbaud"]?.toIntOrNull() ?: 0,
                 shortId = f["sid"].orEmpty(),
+                sensorErrors = SensorErrors.parse(f["err"], f["errn"]),
             )
         }
     }
