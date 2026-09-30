@@ -100,7 +100,7 @@ class AppFlowTest {
 
         // 5a. El aviso de desfase del reloj: el simulador arranca con --clock-offset.
         rule.onNodeWithTag("clock-warning").performScrollTo()
-            .assertTextContains("board clock is", substring = true)
+            .assertTextContains("Board clock is", substring = true)
 
         // 5b. El terminal, en su pestana: envia un comando y muestra lo que conteste.
         // Va dentro de este mismo test porque el simulador atiende una conexion cada vez.

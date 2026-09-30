@@ -62,7 +62,7 @@ class FieldbookFlowTest {
 
         // Volver a la lista y reabrir: lo que se lee tiene que venir del disco, no de la
         // pantalla que se acaba de dejar.
-        rule.onNodeWithTag("fb-back").performClick()
+        rule.onNodeWithTag("tool-back").performClick()
         waitForTag("fb-list")
         rule.onAllNodesWithText("Grieta nueva", substring = true).onFirst().performClick()
         waitForTag("fb-item-0-text")
@@ -224,11 +224,13 @@ class FieldbookFlowTest {
         rule.onNodeWithTag("fb-done").performScrollTo().performClick()
         waitForTag("fb-list")
 
-        rule.onNodeWithTag("fb-campaign-finish").performClick()
-        waitForTag("fb-finish-dialog")
-        rule.onNodeWithTag("fb-finish-name").performTextReplacement("Campana de prueba")
+        // Archivar exige nombre: se pone con el lapiz, y Archive archiva sin mas dialogo
+        rule.onNodeWithTag("fb-campaign-edit").performClick()
+        waitForTag("fb-campaign-name-done")
+        rule.onNodeWithTag("fb-campaign").performTextReplacement("Campana de prueba")
+        rule.onNodeWithTag("fb-campaign-name-done").performClick()
         Espresso.closeSoftKeyboard()
-        rule.onNodeWithTag("fb-finish-confirm").performClick()
+        rule.onNodeWithTag("fb-campaign-finish").performClick()
         waitForTag("fb-empty")
 
         // Y sigue estando, en archivadas.
