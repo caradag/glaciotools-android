@@ -856,11 +856,30 @@ private fun ResumenDelPunto(st: GpsPointStats, nombre: String) {
                            Modifier.weight(1f))
                 BigReading("Fixes", st.samples.toString(), "", Modifier.weight(1f))
             }
-            Text("Altitude is over the WGS84 ellipsoid, not over the sea. " +
-                 "± is the uncertainty of the estimate, not the scatter of the fixes.",
+            Text(notaDeAltura() +
+                 " ± is the uncertainty of the estimate, not the scatter of the fixes.",
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
             CopiarCoordenadas(st, nombre)
         }
+    }
+}
+
+/**
+ * Que altura es, dicho segun lo que se sabe de ESTE telefono (ver PhoneAltitude): afirmar
+ * "elipsoidal" sin haberlo comprobado es justo lo que no se puede hacer.
+ */
+@Composable
+internal fun notaDeAltura(): String {
+    val v by AppSettings.heightCheck.collectAsStateWithLifecycle()
+    return when (v.verdict) {
+        cl.umag.glaciertemp.core.geo.HeightVerdict.ELLIPSOIDAL ->
+            "Altitude is over the WGS84 ellipsoid (verified on this phone), not over the sea."
+        cl.umag.glaciertemp.core.geo.HeightVerdict.MSL ->
+            "Altitude is over the WGS84 ellipsoid: this phone reports sea level and GlacioTools " +
+            "adds its GNSS chip's geoid separation."
+        cl.umag.glaciertemp.core.geo.HeightVerdict.UNVERIFIED ->
+            "Altitude should be over the WGS84 ellipsoid, as Android specifies; not yet " +
+            "verified on this phone (see Settings)."
     }
 }

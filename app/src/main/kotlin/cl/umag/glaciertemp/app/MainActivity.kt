@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppSettings.init(this)
         vm.connectivity = AndroidConnectivity(applicationContext,
             requestPermissions = { askPermissions.launch(it) })
         vm.prefs = getSharedPreferences("glaciotools", MODE_PRIVATE)

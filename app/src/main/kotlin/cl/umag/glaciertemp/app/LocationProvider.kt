@@ -96,9 +96,9 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
     private fun Location.toFix(fromSatellites: Boolean = false): GeoFix = GeoFix(
         latitude = latitude,
         longitude = longitude,
-        // hasAltitude() y no `altitude` a secas: sin arreglo tridimensional Android
-        // devuelve 0.0, que a nivel del mar es indistinguible de una medida buena.
-        altitudeMetres = if (hasAltitude()) altitude else null,
+        // Elipsoidal, verificada contra el chip (PhoneAltitude). Null sin arreglo
+        // tridimensional: Android devuelve 0.0, indistinguible de una medida buena.
+        altitudeMetres = PhoneAltitude.ellipsoidal(this),
         accuracyMetres = if (hasAccuracy()) accuracy.toDouble() else null,
         ageSeconds = ((System.currentTimeMillis() - time) / 1000).coerceAtLeast(0),
         clockSkewSeconds = if (fromSatellites) (time - System.currentTimeMillis()) / 1000
@@ -141,15 +141,16 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
 
         return callbackFlow {
             val listener = android.location.LocationListener { loc ->
+                PhoneAltitude.observe(loc)
                 trySend(GpsSample(
                     // La marca es la del ARREGLO, no la de cuando llego: es la hora en que
                     // se midio, y es la que tiene sentido guardar.
                     epochMillis = loc.time,
                     latitude = loc.latitude,
                     longitude = loc.longitude,
-                    // hasAltitude() y no `altitude` a secas: sin arreglo tridimensional
-                    // Android devuelve 0.0, que a nivel del mar pasa por una medida buena.
-                    altitudeMetres = if (loc.hasAltitude()) loc.altitude else null,
+                    // Elipsoidal, verificada contra el chip (PhoneAltitude); null sin
+                    // arreglo tridimensional, donde Android devuelve un 0.0 que no lo es.
+                    altitudeMetres = PhoneAltitude.ellipsoidal(loc),
                     accuracyMetres = if (loc.hasAccuracy()) loc.accuracy.toDouble() else null,
                     // La vertical por separado: un GNSS la estima peor que la horizontal,
                     // tipicamente por un factor de dos. Usar el numero horizontal para
@@ -159,12 +160,13 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
                         else null,
                 ))
             }
+            val dejarNmea = PhoneAltitude.listen(m)
             runCatching {
                 m.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER, minIntervalMs, 0f,
                     listener, android.os.Looper.getMainLooper())
             }.onFailure { close(it) }
-            awaitClose { runCatching { m.removeUpdates(listener) } }
+            awaitClose { runCatching { m.removeUpdates(listener) }; dejarNmea() }
         }
     }
 
@@ -177,12 +179,14 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
             m.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
             else -> return null
         }
-        return withTimeoutOrNull(timeoutMs) {
+        val dejarNmea = if (provider == LocationManager.GPS_PROVIDER) PhoneAltitude.listen(m) else ({})
+        return try { withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { cont ->
                 val signal = CancellationSignal()
                 cont.invokeOnCancellation { signal.cancel() }
                 runCatching {
                     m.getCurrentLocation(provider, signal, context.mainExecutor) { loc ->
+                        loc?.let { PhoneAltitude.observe(it) }
                         if (cont.isActive) {
                             cont.resume(loc?.toFix(
                                 fromSatellites = provider == LocationManager.GPS_PROVIDER))
@@ -190,6 +194,6 @@ class AndroidLocationSource(private val context: Context) : LocationSource {
                     }
                 }.onFailure { if (cont.isActive) cont.resume(null) }
             }
-        }
+        } } finally { dejarNmea() }
     }
 }

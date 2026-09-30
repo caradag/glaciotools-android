@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -20,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import cl.umag.glaciertemp.BuildConfig
 
 /** Que herramienta esta abierta. */
-private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA, DIARIO, SENSORES, HORIZONTE }
+private enum class Herramienta { INICIO, PLACA, GPS, LIBRETA, DIARIO, SENSORES, HORIZONTE, AJUSTES }
 
 /**
  * La app entera: una pantalla de inicio que reparte, y las herramientas.
@@ -68,6 +69,7 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
             onGps = { donde = Herramienta.GPS },
             onFieldbook = { donde = Herramienta.LIBRETA },
             onSensors = { donde = Herramienta.SENSORES },
+            onSettings = { donde = Herramienta.AJUSTES },
             onQuickNote = {
                 fieldbook.create(cl.umag.glaciertemp.core.fieldbook.EntryType.NOTE)
                 donde = Herramienta.LIBRETA
@@ -108,6 +110,10 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
         Herramienta.DIARIO -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
             JournalScreen(journal, onBack = { donde = Herramienta.LIBRETA })
+        }
+        Herramienta.AJUSTES -> Column(Modifier.fillMaxSize()
+            .statusBarsPadding().navigationBarsPadding().imePadding()) {
+            SettingsScreen(location = fieldbook.location, onBack = { donde = Herramienta.INICIO })
         }
         Herramienta.SENSORES -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
@@ -196,7 +202,7 @@ fun ToolBar(titulo: String, onBack: () -> Unit,
 
 @Composable
 private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
-                       onFieldbook: () -> Unit, onSensors: () -> Unit,
+                       onFieldbook: () -> Unit, onSensors: () -> Unit, onSettings: () -> Unit,
                        onQuickNote: () -> Unit, onJournal: () -> Unit) {
     var info by rememberSaveable { mutableStateOf(false) }
     // SE DESPLAZA. Con cuatro herramientas la lista ya pasa del alto de un telefono, y una
@@ -209,25 +215,33 @@ private fun HomeScreen(onDevice: () -> Unit, onGps: () -> Unit,
     ) {
         val estilo = MaterialTheme.typography.headlineMedium
         val oscuro = androidx.compose.foundation.isSystemInDarkTheme()
-        Text(
-            buildAnnotatedString {
-                withStyle(SpanStyle(color = if (oscuro) WordmarkBlueDark else WordmarkBlue)) {
-                    append("Glacio")
-                }
-                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onBackground)) {
-                    append("Tools")
-                }
-                withStyle(SpanStyle(
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
-                    fontSize = estilo.fontSize * 0.45f,
-                    fontWeight = FontWeight.Normal,
-                )) { append("  v${BuildConfig.VERSION_NAME}") }
-            },
-            style = estilo,
-            modifier = Modifier.padding(top = with(LocalDensity.current) {
-                (estilo.fontSize.toPx() * 0.25f).toDp()
-            }),
-        )
+        // EL ENGRANAJE A LA ALTURA DEL NOMBRE: los ajustes cambian lo que se lee en todas
+        // las herramientas, y se buscan donde se busca en cualquier app, arriba a la derecha.
+        Row(verticalAlignment = Alignment.Top) {
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = if (oscuro) WordmarkBlueDark else WordmarkBlue)) {
+                        append("Glacio")
+                    }
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onBackground)) {
+                        append("Tools")
+                    }
+                    withStyle(SpanStyle(
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                        fontSize = estilo.fontSize * 0.45f,
+                        fontWeight = FontWeight.Normal,
+                    )) { append("  v${BuildConfig.VERSION_NAME}") }
+                },
+                style = estilo,
+                modifier = Modifier.weight(1f).padding(top = with(LocalDensity.current) {
+                    (estilo.fontSize.toPx() * 0.25f).toDp()
+                }),
+            )
+            IconButton(onClick = onSettings, modifier = Modifier.testTag("home-settings")) {
+                Icon(androidx.compose.material.icons.Icons.Outlined.Settings,
+                     contentDescription = "Settings")
+            }
+        }
         Text("Field tools for glaciology.",
              style = MaterialTheme.typography.bodyMedium,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
