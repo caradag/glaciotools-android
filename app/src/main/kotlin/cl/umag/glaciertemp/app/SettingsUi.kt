@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -77,6 +78,7 @@ private fun ReferenciaDeAlturas(location: LocationSource?) {
     val geoidal = ref is HeightReference.Orthometric
     // Donde se esta, para decir si el geoide elegido tiene datos aqui.
     var aqui by remember { mutableStateOf<cl.umag.glaciertemp.core.GeoFix?>(null) }
+    var version by remember { mutableIntStateOf(0) }
     LaunchedEffect(location) { aqui = runCatching { location?.lastKnownFix() }.getOrNull() }
 
     Seccion("Height reference",
@@ -92,7 +94,7 @@ private fun ReferenciaDeAlturas(location: LocationSource?) {
         }
         if (geoidal) {
             for (m in GeoidModel.entries) {
-                val disponible = aqui?.let { Geoids.available(m, it.latitude, it.longitude) }
+                val disponible = remember(aqui, version) { aqui?.let { Geoids.available(m, it.latitude, it.longitude) } }
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     androidx.compose.material3.RadioButton(
                         selected = modelo == m, onClick = { AppSettings.setHeightReference(true, m) },
@@ -111,6 +113,20 @@ private fun ReferenciaDeAlturas(location: LocationSource?) {
                              color = if (disponible == false) MaterialTheme.colorScheme.error
                                      else MaterialTheme.colorScheme.onSurfaceVariant,
                              modifier = Modifier.testTag("st-geoid-status-" + m.id))
+                        if (!m.builtIn) {
+                            var enDisco by remember(m, version) { mutableStateOf(Geoids.store?.onDisk(m)) }
+                            val (n, bytes) = enDisco ?: (0 to 0L)
+                            if (disponible == false) aqui?.let { f ->
+                                DescargaDeModelo(m, f.latitude, f.longitude) { version++ }
+                            }
+                            if (n > 0) Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Text("%d tile(s), %.1f MB on this phone".format(n, bytes / 1e6),
+                                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                                androidx.compose.material3.TextButton(onClick = {
+                                    Geoids.store?.delete(m); version++
+                                }, modifier = Modifier.testTag("st-geoid-delete-" + m.id)) { Text("Delete") }
+                            }
+                        }
                     }
                 }
             }

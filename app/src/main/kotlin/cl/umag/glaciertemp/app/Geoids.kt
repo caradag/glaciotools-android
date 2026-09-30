@@ -34,8 +34,13 @@ object Geoids : GeoidProvider {
         dir = File(context.filesDir, "geoid").apply { mkdirs() }
     }
 
+    /** Las descargas; las pruebas lo sustituyen por uno que no usa la red. */
+    var store: GeoidStore? = null
+        get() = field ?: dir?.let { GeoidStore(it) }?.also { field = it }
+
+    /** Siempre en la carpeta del almacen de descargas: la que usa `store`, sea cual sea. */
     fun tileFile(model: GeoidModel, south: Int, west: Int): File? =
-        dir?.let { File(File(it, model.id), GeoidModel.tileName(model, south, west)) }
+        store?.let { File(it.dir(model), GeoidModel.tileName(model, south, west)) }
 
     /** Si hay datos de ese modelo para ese punto en el telefono. */
     fun available(model: GeoidModel, latitude: Double, longitude: Double): Boolean {

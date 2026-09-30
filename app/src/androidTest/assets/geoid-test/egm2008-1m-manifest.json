@@ -1,0 +1,24 @@
+{
+ "model": "egm2008",
+ "resolution_arcmin": 1,
+ "tile_degrees": 10,
+ "source": "egm2008-1.pgm",
+ "tiles": [
+  {
+   "name": "egm2008-1m-S60W080.gtg.gz",
+   "south": -60,
+   "west": -80,
+   "bytes": 733316,
+   "gz_bytes": 404222,
+   "sha256": "69d879a310957c22de4107f42fe8fb6ec67231632e67699ca838d9e2f49334ff"
+  },
+  {
+   "name": "egm2008-1m-S60W070.gtg.gz",
+   "south": -60,
+   "west": -70,
+   "bytes": 733316,
+   "gz_bytes": 382969,
+   "sha256": "64c4ceb60003f8423fd034837fdc1859379d21743bec3818592be01965ee900d"
+  }
+ ]
+}

@@ -153,11 +153,60 @@ private fun ChipDelTelefono(filas: List<FilaGeoide>) {
          style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("geoid-chip"))
 }
 
-/** Hueco para la descarga de teselas (fase E); por ahora remite a Settings. */
+/**
+ * Bajar los geoides que faltan en esta zona (la tesela del punto y sus ocho vecinas).
+ *
+ * Dice cuanto pesa ANTES de bajar: en terreno la conexion suele ser un telefono satelital o
+ * la wifi de un refugio, y 3 MB no es lo mismo que 30.
+ */
 @Composable
 internal fun DescargarZona(lat: Double, lon: Double, onDone: () -> Unit) {
-    Text("Models marked 'not downloaded' can be downloaded for this area in Settings.",
-         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val faltan = GeoidModel.entries.filter { !it.builtIn && !Geoids.available(it, lat, lon) }
+    for (m in faltan) DescargaDeModelo(m, lat, lon, onDone)
+}
+
+@Composable
+internal fun DescargaDeModelo(model: GeoidModel, lat: Double, lon: Double, onDone: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var peso by remember(model, lat, lon) { mutableStateOf<Long?>(null) }
+    var sinManifiesto by remember(model) { mutableStateOf(false) }
+    var progreso by remember { mutableStateOf<String?>(null) }
+    var resultado by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(model, lat, lon) {
+        peso = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            Geoids.store?.pendingBytes(model, lat, lon)
+        }
+        sinManifiesto = peso == null
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            enabled = progreso == null && peso != null && peso!! > 0,
+            onClick = {
+                progreso = "starting…"; resultado = null
+                scope.launch {
+                    val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        Geoids.store?.downloadArea(model, lat, lon) { i, n -> progreso = "$i/$n" }
+                    }
+                    progreso = null
+                    resultado = when {
+                        r == null -> "No connection or no download list."
+                        r.failed > 0 -> "${r.downloaded} tile(s) downloaded, ${r.failed} failed: try again."
+                        else -> "Downloaded (%.1f MB).".format(r.bytes / 1e6)
+                    }
+                    onDone()
+                }
+            },
+            modifier = Modifier.testTag("geoid-download-" + model.id)) {
+            Text("Download ${model.title} for this area" +
+                 (peso?.let { " (%.1f MB)".format(it / 1e6) } ?: ""))
+        }
+        progreso?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+    val msg = resultado ?: if (sinManifiesto) "${model.title}: download list not reachable (no connection?)." else null
+    msg?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall,
+             modifier = Modifier.testTag("geoid-download-result-" + model.id))
+    }
 }
 
 private fun informe(lat: Double, lon: Double, h: Double?, filas: List<FilaGeoide>): String = buildString {
