@@ -24,7 +24,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cl.umag.glaciertemp.core.fieldbook.LengthUnit
+import cl.umag.glaciertemp.core.geo.HeightReference
 import cl.umag.glaciertemp.core.geo.HeightVerdict
+import cl.umag.glaciertemp.core.geo.geoid.GeoidModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -44,6 +46,7 @@ fun SettingsScreen(location: LocationSource?, onBack: () -> Unit) {
         ToolBar("Settings", onBack)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
                verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            ReferenciaDeAlturas(location)
             AlturaDelTelefono(location)
             UnidadesDelAforo()
         }
@@ -59,6 +62,58 @@ internal fun Seccion(titulo: String, explicacion: String, tag: String,
             Text(explicacion, style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
             contenido()
+        }
+    }
+}
+
+/**
+ * En que referencia se muestran las alturas. GPS Average muestra SIEMPRE la elipsoidal y
+ * ademas la del geoide elegido; lo guardado es siempre elipsoidal.
+ */
+@Composable
+private fun ReferenciaDeAlturas(location: LocationSource?) {
+    val ref by AppSettings.heightReference.collectAsStateWithLifecycle()
+    val modelo by AppSettings.geoidModel.collectAsStateWithLifecycle()
+    val geoidal = ref is HeightReference.Orthometric
+    // Donde se esta, para decir si el geoide elegido tiene datos aqui.
+    var aqui by remember { mutableStateOf<cl.umag.glaciertemp.core.GeoFix?>(null) }
+    LaunchedEffect(location) { aqui = runCatching { location?.lastKnownFix() }.getOrNull() }
+
+    Seccion("Height reference",
+            "How altitudes are shown and which extra columns go into exports. Ellipsoidal is what " +
+            "GNSS measures (above the WGS84 ellipsoid). A geoid gives heights close to 'above sea " +
+            "level'. Saved data always keeps the ellipsoidal height, so this can be changed at any time.",
+            "st-height-reference") {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !geoidal, onClick = { AppSettings.setHeightReference(false) },
+                       label = { Text("Ellipsoidal (WGS84)") }, modifier = Modifier.testTag("st-height-ellipsoidal"))
+            FilterChip(selected = geoidal, onClick = { AppSettings.setHeightReference(true) },
+                       label = { Text("Geoid") }, modifier = Modifier.testTag("st-height-geoid"))
+        }
+        if (geoidal) {
+            for (m in GeoidModel.entries) {
+                val disponible = aqui?.let { Geoids.available(m, it.latitude, it.longitude) }
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    androidx.compose.material3.RadioButton(
+                        selected = modelo == m, onClick = { AppSettings.setHeightReference(true, m) },
+                        modifier = Modifier.testTag("st-geoid-" + m.id))
+                    Column(Modifier.weight(1f)) {
+                        Text(m.title, style = MaterialTheme.typography.bodyLarge)
+                        Text(m.description, style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(when {
+                                 m.builtIn -> "Built into the app."
+                                 disponible == true -> "Downloaded for the current area."
+                                 disponible == false -> "Not downloaded for the current area."
+                                 else -> "Current position unknown."
+                             },
+                             style = MaterialTheme.typography.bodySmall,
+                             color = if (disponible == false) MaterialTheme.colorScheme.error
+                                     else MaterialTheme.colorScheme.onSurfaceVariant,
+                             modifier = Modifier.testTag("st-geoid-status-" + m.id))
+                    }
+                }
+            }
         }
     }
 }

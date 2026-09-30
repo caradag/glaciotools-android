@@ -59,14 +59,18 @@ data class FieldPosition(
     fun describe(): String = Decimals.fixed(latitude, 5) + ", " + Decimals.fixed(longitude, 5)
 
     /** Lo que permite juzgarla: de donde salio, con que exactitud y a que altura. */
-    fun detail(): String {
+    /** @param geoid si se eligio un geoide: se anade la altura sobre el, sin quitar la elipsoidal */
+    fun detail(geoid: cl.umag.glaciertemp.core.geo.GeoidTag? = null): String {
         val partes = ArrayList<String>()
         partes += when (source) {
             PositionSource.SAVED_POINT -> "saved point" + (pointName?.let { " “$it”" } ?: "")
             PositionSource.PHONE -> "phone GPS"
         }
         accuracyMetres?.let { partes += "accuracy " + Decimals.fixed(it, 0) + " m" }
-        altitudeMetres?.let { partes += Decimals.fixed(it, 0) + " m (WGS84)" }
+        altitudeMetres?.let {
+            partes += Decimals.fixed(it, 0) + " m (WGS84)" +
+                (geoid?.let { g -> ", " + Decimals.fixed(it - g.undulation, 0) + " m above " + g.model } ?: "")
+        }
         return partes.joinToString("  ·  ")
     }
 }

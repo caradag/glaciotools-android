@@ -64,6 +64,10 @@ object CsvExporter {
             // una altitud perfectamente plausible y un dato ausente disfrazado de medida.
             p.altitudeMetres?.let {
                 add("altitude: %.0f m (WGS84 ellipsoid)".format(java.util.Locale.ROOT, it))
+                meta.geoid?.let { g ->
+                    add("altitude: %.0f m above the %s geoid (N = %.2f m)".format(
+                        java.util.Locale.ROOT, it - g.undulation, g.model, g.undulation))
+                }
             }
         } else {
             meta.positionNote?.let { add("position: not recorded -- $it") }

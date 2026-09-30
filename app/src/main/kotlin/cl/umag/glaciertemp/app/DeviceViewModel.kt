@@ -838,7 +838,10 @@ class DeviceViewModel : ViewModel() {
     }
 
     private fun metaForExport(): DownloadMetadata? =
-        _state.value.metadata?.copy(note = _state.value.exportNote?.takeIf { it.isNotBlank() })
+        _state.value.metadata?.let { m ->
+            m.copy(note = _state.value.exportNote?.takeIf { it.isNotBlank() },
+                   geoid = m.position?.let { Geoids.tagAt(it.latitude, it.longitude) })
+        }
 
     fun setExportCorrected(on: Boolean) {
         _state.value = _state.value.copy(exportCorrected = on)

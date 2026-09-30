@@ -279,7 +279,7 @@ private fun EditorDeEntrada(vm: JournalViewModel, e: JournalEntry) {
                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                modifier = Modifier.testTag("jr-pos-clear")) { Text("Clear") }
                 }
-                Text(p.detail(), style = MaterialTheme.typography.bodySmall,
+                Text(p.detail(Geoids.tagAt(p.latitude, p.longitude)), style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else if (!sPos.waitingForFix) {
                 Text("Not recorded", style = MaterialTheme.typography.bodyMedium,

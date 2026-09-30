@@ -1229,7 +1229,7 @@ private fun PositionRow(vm: DeviceViewModel, s: UiState) {
         if (texto != null) {
             Text(texto, style = MaterialTheme.typography.bodySmall,
                  modifier = Modifier.testTag("export-position"))
-            meta.positionDetail()?.let {
+            meta.withGeoid().positionDetail()?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant,
                      modifier = Modifier.testTag("export-position-detail"))

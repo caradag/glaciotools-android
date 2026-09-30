@@ -701,7 +701,7 @@ private fun CopiarAforo(e: FieldEntry) {
             val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                 as? android.content.ClipboardManager
             cb?.setPrimaryClip(android.content.ClipData.newPlainText(
-                "GlacioTools", FieldbookCsv.gauging(e)))
+                "GlacioTools", FieldbookCsv.gauging(e, geoid = { p -> Geoids.tagAt(p.latitude, p.longitude) })))
             copiado = true
         },
         modifier = Modifier.fillMaxWidth().testTag("fb-gauging-copy")) {

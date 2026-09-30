@@ -1,5 +1,6 @@
 package cl.umag.glaciertemp.core.fieldbook
 
+import cl.umag.glaciertemp.core.geo.GeoidTag
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -58,6 +59,18 @@ object FieldbookCsv {
 
     private fun row(vararg cells: Any?): String = cells.joinToString(",") { cell(it) } + "\n"
 
+    /**
+     * Las columnas del geoide, AL FINAL de cada tabla con posicion y siempre presentes (vacias
+     * si no se eligio geoide o no hay datos): altitude_m_wgs84 no cambia ni de sitio ni de
+     * significado, y quien lea estos ficheros con un script no depende del ajuste del telefono.
+     */
+    private val GEOID_COLS = arrayOf<Any?>("geoid_model", "geoid_undulation_m", "altitude_m_orthometric")
+
+    private fun geoidCells(p: FieldPosition?, geoid: (FieldPosition) -> GeoidTag?): Array<Any?> {
+        val g = p?.let(geoid) ?: return arrayOf(null, null, null)
+        return arrayOf(g.model, g.undulation, p.altitudeMetres?.let { it - g.undulation })
+    }
+
     // --------------------------------- mediciones GNSS ---------------------------------
 
     /** Una ocupacion de punto, venga de una entrada GNSS o de la lectura de una baliza. */
@@ -101,13 +114,14 @@ object FieldbookCsv {
             }
         }.sortedBy { it.session.startEpochMillis ?: 0L }
 
-    fun gnss(entries: List<FieldEntry>, campaignName: (String?) -> String = { "" }): String =
+    fun gnss(entries: List<FieldEntry>, campaignName: (String?) -> String = { "" },
+             geoid: (FieldPosition) -> GeoidTag? = { null }): String =
         buildString {
             append(row("point_name", "source", "campaign", "observer", "receiver",
                        "antenna_height_cm", "start_time", "end_time", "duration_s",
                        "planned_duration_min", "latitude", "longitude", "altitude_m_wgs84",
                        "position_accuracy_m", "position_source", "associated_images",
-                       "entry_id"))
+                       "entry_id", *GEOID_COLS))
             gnssRows(entries, campaignName).forEach { r ->
                 append(row(
                     r.pointName, r.source, r.campaign, r.person, r.session.receiver,
@@ -118,7 +132,7 @@ object FieldbookCsv {
                     r.position?.latitude, r.position?.longitude,
                     r.position?.altitudeMetres, r.position?.accuracyMetres,
                     r.position?.source?.name ?: "",
-                    r.photos, r.entryId))
+                    r.photos, r.entryId, *geoidCells(r.position, geoid)))
             }
         }
 
@@ -169,12 +183,13 @@ object FieldbookCsv {
 
     // -------------------------------------- dendro --------------------------------------
 
-    fun dendro(entries: List<FieldEntry>, campaignName: (String?) -> String = { "" }): String =
+    fun dendro(entries: List<FieldEntry>, campaignName: (String?) -> String = { "" },
+             geoid: (FieldPosition) -> GeoidTag? = { null }): String =
         buildString {
             append(row("sample_label", "campaign", "collected_at", "collected_by", "species",
                        "sampling_height_cm", "trunk_perimeter_cm", "latitude", "longitude",
                        "altitude_m_wgs84", "position_source", "notes", "associated_images",
-                       "entry_id"))
+                       "entry_id", *GEOID_COLS))
             entries.filter { it.type == EntryType.DENDRO }
                 .sortedBy { it.createdEpochMillis }
                 .forEach { e ->
@@ -186,7 +201,7 @@ object FieldbookCsv {
                         e.position?.latitude, e.position?.longitude,
                         e.position?.altitudeMetres,
                         e.position?.source?.name ?: "",
-                        e.notes, e.photos.size, e.id))
+                        e.notes, e.photos.size, e.id, *geoidCells(e.position, geoid)))
                 }
         }
 
@@ -200,7 +215,8 @@ object FieldbookCsv {
      *
      * El horizonte NO cabe aqui --son setenta y dos numeros por fila-- y va en el documento.
      */
-    fun cosmo(entries: List<FieldEntry>, campaignName: (String?) -> String = { "" }): String =
+    fun cosmo(entries: List<FieldEntry>, campaignName: (String?) -> String = { "" },
+             geoid: (FieldPosition) -> GeoidTag? = { null }): String =
         buildString {
             append(row("sample_name", "campaign", "collected_at", "collected_by",
                        "latitude", "longitude", "altitude_m_wgs84", "position_source",
@@ -209,7 +225,7 @@ object FieldbookCsv {
                        "shielding_from_phone", "shielding_from_hand", "horizon_measured",
                        "horizon_points_manual",
                        "site", "place", "boulder", "surface",
-                       "associated_images", "entry_id"))
+                       "associated_images", "entry_id", *GEOID_COLS))
             entries.filter { it.type == EntryType.COSMO }
                 .sortedBy { it.createdEpochMillis }
                 .forEach { e ->
@@ -227,7 +243,7 @@ object FieldbookCsv {
                         if (c?.horizonDeg?.isNotEmpty() == true) "yes" else "no",
                         c?.manualAzimuths?.size ?: 0,
                         c?.site ?: "", c?.place ?: "", c?.boulder ?: "", c?.surface ?: "",
-                        e.photos.size, e.id))
+                        e.photos.size, e.id, *geoidCells(e.position, geoid)))
                 }
         }
 
@@ -260,6 +276,7 @@ object FieldbookCsv {
         e: FieldEntry,
         campaign: String = "",
         zone: ZoneId = ZoneId.systemDefault(),
+        geoid: (FieldPosition) -> GeoidTag? = { null },
     ): String = buildString {
         val g = e.gauging ?: StreamGauging()
         val tramos = Gauging.bins(g.widthM, g.intervalM)
@@ -281,6 +298,11 @@ object FieldbookCsv {
             c("latitude", p.latitude)
             c("longitude", p.longitude)
             c("altitude_m_wgs84", p.altitudeMetres)
+            geoid(p)?.let { g ->
+                c("geoid_model", g.model)
+                c("geoid_undulation_m", g.undulation)
+                c("altitude_m_orthometric", p.altitudeMetres?.let { it - g.undulation })
+            }
             c("position_accuracy_m", p.accuracyMetres)
             c("position_source", p.source.name)
             c("position_point", p.pointName)

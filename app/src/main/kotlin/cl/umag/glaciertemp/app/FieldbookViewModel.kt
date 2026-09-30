@@ -973,7 +973,8 @@ class FieldbookViewModel : ViewModel() {
                     out.use {
                         FieldbookExport.writeZip(it, seleccion, media, cs,
                                                  java.time.ZoneId.systemDefault(),
-                                                 diario, titulos, journalMedia)
+                                                 diario, titulos, journalMedia,
+                                                 geoid = { p -> Geoids.tagAt(p.latitude, p.longitude) })
                     }
                 }
             }

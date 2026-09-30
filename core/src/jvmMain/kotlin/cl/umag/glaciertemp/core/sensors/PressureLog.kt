@@ -120,13 +120,22 @@ object PressureTrend {
  */
 object PressureReport {
 
+    private fun geoidCeldas(lat: Double?, lon: Double?, alt: Double?,
+                            geoid: (Double, Double) -> cl.umag.glaciertemp.core.geo.GeoidTag?): String {
+        val g = if (lat != null && lon != null) geoid(lat, lon) else null
+        return "\t" + (g?.model ?: "") + "\t" +
+            (if (g != null && alt != null) "%.1f".format(java.util.Locale.ROOT, alt - g.undulation) else "")
+    }
+
+    /** @param geoid el geoide elegido en la app para cada lectura, o null: columnas al final. */
     fun clipboardText(place: PressurePlace,
-                      zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String =
+                      zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+                      geoid: (Double, Double) -> cl.umag.glaciertemp.core.geo.GeoidTag? = { _, _ -> null }): String =
         buildString {
             appendLine("GlacioTools — pressure at " + place.name.ifBlank { "(unnamed place)" })
             PressureTrend.describe(place.samples)?.let { appendLine(it) }
             appendLine()
-            appendLine("timestamp	hPa	latitude	longitude	altitude_m")
+            appendLine("timestamp	hPa	latitude	longitude	altitude_m	geoid_model	altitude_m_orthometric")
             val f = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
             place.samples.sortedBy { it.epochMillis }.forEach { s ->
                 appendLine("%s	%.2f	%s	%s	%s".format(java.util.Locale.ROOT, 
@@ -134,8 +143,10 @@ object PressureReport {
                     s.hPa,
                     s.latitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
                     s.longitude?.let { "%.6f".format(java.util.Locale.ROOT, it) } ?: "",
-                    s.altitudeMetres?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: ""))
+                    s.altitudeMetres?.let { "%.1f".format(java.util.Locale.ROOT, it) } ?: "") +
+                    geoidCeldas(s.latitude, s.longitude, s.altitudeMetres, geoid))
             }
+            append("altitude_m is above the WGS84 ellipsoid. ")
             append("Raw sensor pressure, not corrected to sea level. ")
             append("Only the change means anything, and only between readings taken at the ")
             append("same spot.")

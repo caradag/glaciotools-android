@@ -162,7 +162,7 @@ private fun StatsBlock(records: List<Record>, signature: Int, channel: String,
         // si los datos vienen de una descarga; un fichero abierto no la trae.
         metadata?.positionDescription()?.let {
             StatRow("Downloaded from", it, "stat-position")
-            metadata.positionDetail()?.let { d -> StatRow("", d, "stat-position-detail") }
+            metadata.withGeoid().positionDetail()?.let { d -> StatRow("", d, "stat-position-detail") }
         }
         if (metadata?.position == null) {
             metadata?.positionNote?.let {

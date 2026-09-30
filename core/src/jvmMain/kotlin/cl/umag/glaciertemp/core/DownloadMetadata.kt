@@ -90,6 +90,12 @@ data class DownloadMetadata(
     val positionNote: String? = null,
     /** Nota libre que el usuario escribe al exportar. */
     val note: String? = null,
+    /**
+     * El geoide elegido en la app y su N en la posicion, si hay: se anade la altura geoidal
+     * AL LADO de la elipsoidal. Al final del constructor a proposito: un campo nuevo en medio
+     * cambia en silencio el significado de las llamadas posicionales.
+     */
+    val geoid: cl.umag.glaciertemp.core.geo.GeoidTag? = null,
 ) {
     /**
      * Segundos que la placa iba adelantada (positivo) o atrasada (negativo) respecto a la
@@ -128,7 +134,10 @@ data class DownloadMetadata(
     fun positionDetail(): String? {
         val p = position ?: return null
         val partes = ArrayList<String>()
-        p.altitudeMetres?.let { partes += "%.0f m (WGS84)".format(java.util.Locale.ROOT, it) }
+        p.altitudeMetres?.let {
+            partes += "%.0f m (WGS84)".format(java.util.Locale.ROOT, it) +
+                (geoid?.let { g -> ", %.0f m above %s".format(java.util.Locale.ROOT, it - g.undulation, g.model) } ?: "")
+        }
         p.accuracyMetres?.let { partes += "accuracy %.0f m".format(java.util.Locale.ROOT, it) }
         partes += p.sourceLabel ?: "fix ${BoardClock.format(p.ageSeconds)} old"
         return partes.joinToString("  ·  ")

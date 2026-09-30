@@ -134,8 +134,8 @@ class GpsViewModel : ViewModel() {
             }
         if (listos.isEmpty()) return ByteArray(0)
         return when (format) {
-            Format.CSV -> GpsExport.csvAverages(listos)
-            Format.GPX -> GpsExport.gpxAverages(listos)
+            Format.CSV -> GpsExport.csvAverages(listos) { Geoids.tagAt(it.estimateLatitude, it.estimateLongitude) }
+            Format.GPX -> GpsExport.gpxAverages(listos) { Geoids.tagAt(it.estimateLatitude, it.estimateLongitude) }
         }.toByteArray()
     }
 
@@ -413,10 +413,11 @@ class GpsViewModel : ViewModel() {
     fun exportBytes(p: OpenPoint, scope: Scope, format: Format): ByteArray {
         val st = p.stats ?: return ByteArray(0)
         val name = p.summary.name.ifBlank { "Point" }
+        val g = Geoids.tagAt(st.estimateLatitude, st.estimateLongitude)
         val texto = when {
-            scope == Scope.AVERAGE && format == Format.CSV -> GpsExport.csvAverage(name, st)
-            scope == Scope.AVERAGE -> GpsExport.gpxAverage(name, st)
-            format == Format.CSV -> GpsExport.csvSamples(name, st, p.samples)
+            scope == Scope.AVERAGE && format == Format.CSV -> GpsExport.csvAverage(name, st, g)
+            scope == Scope.AVERAGE -> GpsExport.gpxAverage(name, st, g)
+            format == Format.CSV -> GpsExport.csvSamples(name, st, p.samples, g)
             else -> GpsExport.gpxSamples(name, p.samples)
         }
         return texto.toByteArray()

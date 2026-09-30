@@ -1049,7 +1049,7 @@ private fun BloqueDeLugar(
                      color = MaterialTheme.colorScheme.onSurfaceVariant,
                      modifier = Modifier.weight(1f))
                 if (lugar.samples.isNotEmpty()) {
-                    BotonCopiar({ PressureReport.clipboardText(lugar) }, "sn-place-copy")
+                    BotonCopiar({ PressureReport.clipboardText(lugar, geoid = { la, lo -> Geoids.tagAt(la, lo) }) }, "sn-place-copy")
                 }
             }
         }

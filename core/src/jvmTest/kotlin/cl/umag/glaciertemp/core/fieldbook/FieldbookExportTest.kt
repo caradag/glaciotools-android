@@ -134,7 +134,7 @@ class FieldbookExportTest {
 
     @Test
     fun `el csv de GNSS junta los puntos sueltos y los de baliza`() {
-        val csv = FieldbookCsv.gnss(libreta()) { "Bernal 2026" }
+        val csv = FieldbookCsv.gnss(libreta(), campaignName = { "Bernal 2026" })
         val filas = csv.trim().lines()
         assertEquals(3, filas.size, "cabecera mas dos ocupaciones")
         assertTrue(filas[0].startsWith("point_name,source,campaign"))
@@ -142,7 +142,25 @@ class FieldbookExportTest {
         assertTrue(filas[1].startsWith("BASE1,GNSS,"), filas[1])
         assertTrue(filas[2].startsWith("E12,STAKE,"), filas[2])
         assertTrue("182.5" in filas[2], "la altura de antena de la baliza: ${filas[2]}")
-        assertTrue(filas[1].endsWith(",2,e3"), "dos fotos asociadas: ${filas[1]}")
+        val cab = filas[0].split(",")
+        val fila = filas[1].split(",")
+        assertEquals("2", fila[cab.indexOf("associated_images")], "dos fotos asociadas: ${filas[1]}")
+        assertEquals("e3", fila[cab.indexOf("entry_id")])
+        // columnas del geoide al final, vacias sin geoide
+        assertEquals(listOf("geoid_model", "geoid_undulation_m", "altitude_m_orthometric"), cab.takeLast(3))
+        assertEquals(listOf("", "", ""), fila.takeLast(3))
+    }
+
+    @Test
+    fun `con geoide elegido el csv de GNSS trae la altura geoidal`() {
+        val csv = FieldbookCsv.gnss(libreta(), campaignName = { "Bernal 2026" },
+                                    geoid = { cl.umag.glaciertemp.core.geo.GeoidTag("EGM2008", 12.5) })
+        val filas = csv.trim().lines()
+        val cab = filas[0].split(",")
+        val fila = filas[1].split(",")
+        val alt = fila[cab.indexOf("altitude_m_wgs84")].toDouble()
+        assertEquals("EGM2008", fila[cab.indexOf("geoid_model")])
+        assertEquals(alt - 12.5, fila[cab.indexOf("altitude_m_orthometric")].toDouble(), 1e-9)
     }
 
     @Test

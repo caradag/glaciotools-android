@@ -72,6 +72,9 @@ object PhoneAltitude {
     @Volatile var confirmedThisSession = false
         private set
 
+    /** La separacion geoidal de la ultima GGA vista, o null. */
+    fun lastChipSeparation(): Double? = synchronized(lock) { recientes.lastOrNull()?.geoidSeparation }
+
     /** Votos acumulados en esta sesion: (elipsoidal, MSL). Para mostrar el progreso. */
     fun votes(): Pair<Int, Int> = synchronized(lock) { check.ellipsoidalVotes to check.mslVotes }
 

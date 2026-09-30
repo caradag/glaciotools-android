@@ -21,15 +21,19 @@ object GpsExport {
     private fun f(v: Double, d: Int) = "%.${d}f".format(java.util.Locale.ROOT, v)
 
     /** Todas las muestras, con su proyeccion ya hecha para no tener que repetirla fuera. */
-    fun csvSamples(name: String, stats: GpsPointStats, samples: List<GpsSample>): String =
+    fun csvSamples(name: String, stats: GpsPointStats, samples: List<GpsSample>,
+                   geoid: GeoidTag? = null): String =
         buildString {
             append("# GlacioTools GPS point: ").append(name).append('\n')
             append("# samples: ").append(samples.size)
                 .append("  sessions: ").append(stats.sessions)
                 .append("  zone: ").append(stats.zone).append(stats.band).append('\n')
             append("# projection: UTM WGS84, zone fixed by the first sample\n")
+            append("# altitude_m: above the WGS84 ellipsoid")
+            geoid?.let { append("; altitude_m_orthometric: above the ${it.model} geoid, N = ${f(it.undulation, 3)} m at the average") }
+            append('\n')
             append("index,session,time_utc,latitude,longitude,altitude_m," +
-                   "accuracy_m,vertical_accuracy_m,easting_m,northing_m\n")
+                   "accuracy_m,vertical_accuracy_m,easting_m,northing_m" + GEOID_COLS + "\n")
             val a = GpsAverager()
             samples.forEach { a.add(it) }
             val proyectadas = a.projected()
@@ -45,9 +49,21 @@ object GpsExport {
                 append(s.altitudeMetres?.let { f(it, 3) } ?: "").append(',')
                 append(s.accuracyMetres?.let { f(it, 2) } ?: "").append(',')
                 append(s.verticalAccuracyMetres?.let { f(it, 2) } ?: "").append(',')
-                append(f(e, 3)).append(',').append(f(n, 3)).append('\n')
+                append(f(e, 3)).append(',').append(f(n, 3))
+                append(geoidCells(s.altitudeMetres, geoid)).append('\n')
             }
         }
+
+    /**
+     * Las columnas del geoide van AL FINAL y siempre, vacias si no se eligio ninguno: las de
+     * antes no cambian de sitio ni de significado (altitude_m sigue siendo elipsoidal), y un
+     * script que lee estos ficheros no se rompe segun el ajuste del telefono que los exporto.
+     */
+    private const val GEOID_COLS = ",geoid_model,geoid_undulation_m,altitude_m_orthometric"
+
+    private fun geoidCells(alt: Double?, g: GeoidTag?): String =
+        if (g == null) ",,,"
+        else "," + csvQuote(g.model) + "," + f(g.undulation, 3) + "," + (alt?.let { f(it - g.undulation, 3) } ?: "")
 
     /**
      * Solo la estimacion, en una fila con cabecera.
@@ -57,8 +73,8 @@ object GpsExport {
      * descartar cuando no da la talla, y el que exporta hoy no es siempre el que usa el
      * fichero dentro de dos anos.
      */
-    fun csvAverage(name: String, stats: GpsPointStats): String =
-        csvAverageHeader() + csvAverageRow(name, stats)
+    fun csvAverage(name: String, stats: GpsPointStats, geoid: GeoidTag? = null): String =
+        csvAverageHeader() + csvAverageRow(name, stats, geoid)
 
     private fun csvAverageHeader(): String =
         "name,samples,sessions,effective_n,rejected,duration_s,zone,band,hemisphere," +
@@ -66,9 +82,9 @@ object GpsExport {
         "easting_sd_m,northing_sd_m,horizontal_sd_m," +
         "easting_se_m,northing_se_m,horizontal_se_m," +
         "altitude_m,altitude_sd_m,altitude_se_m," +
-        "easting_median_m,northing_median_m,first_utc,last_utc\n"
+        "easting_median_m,northing_median_m,first_utc,last_utc" + GEOID_COLS + "\n"
 
-    private fun csvAverageRow(name: String, stats: GpsPointStats): String = buildString {
+    private fun csvAverageRow(name: String, stats: GpsPointStats, geoid: GeoidTag?): String = buildString {
         append(csvQuote(name)).append(',')
         append(stats.samples).append(',').append(stats.sessions).append(',')
         // El n efectivo va en el fichero porque es lo que explica la incertidumbre: sin el,
@@ -96,7 +112,8 @@ object GpsExport {
         append(f(stats.easting.median, 3)).append(',')
         append(f(stats.northing.median, 3)).append(',')
         append(iso(stats.firstEpochMillis)).append(',')
-        append(iso(stats.lastEpochMillis)).append('\n')
+        append(iso(stats.lastEpochMillis))
+        append(geoidCells(stats.altitude?.median, geoid)).append('\n')
     }
 
     /**
@@ -106,26 +123,38 @@ object GpsExport {
      * decenas de miles de filas en las que la informacion que se busca --donde esta cada
      * estaca-- queda enterrada. Para eso esta la exportacion de un punto suelto.
      */
-    fun csvAverages(points: List<Pair<String, GpsPointStats>>): String = buildString {
+    fun csvAverages(points: List<Pair<String, GpsPointStats>>,
+                    geoid: (GpsPointStats) -> GeoidTag? = { null }): String = buildString {
         append(csvAverageHeader())
-        points.forEach { (name, st) -> append(csvAverageRow(name, st)) }
+        points.forEach { (name, st) -> append(csvAverageRow(name, st, geoid(st))) }
     }
 
     /** Lo mismo en GPX: un waypoint por punto, que es como se lleva un conjunto al mapa. */
-    fun gpxAverages(points: List<Pair<String, GpsPointStats>>): String = buildString {
+    fun gpxAverages(points: List<Pair<String, GpsPointStats>>,
+                    geoid: (GpsPointStats) -> GeoidTag? = { null }): String = buildString {
         append(gpxHeader())
-        points.forEach { (name, st) -> append(gpxWaypoint(name, st)) }
+        points.forEach { (name, st) -> append(gpxWaypoint(name, st, geoid(st))) }
         append("</gpx>\n")
     }
 
     /** Un solo waypoint: la estimacion. Es lo que se lleva al mapa. */
-    fun gpxAverage(name: String, stats: GpsPointStats): String =
-        gpxHeader() + gpxWaypoint(name, stats) + "</gpx>\n"
+    fun gpxAverage(name: String, stats: GpsPointStats, geoid: GeoidTag? = null): String =
+        gpxHeader() + gpxWaypoint(name, stats, geoid) + "</gpx>\n"
 
-    private fun gpxWaypoint(name: String, stats: GpsPointStats): String = buildString {
+    /**
+     * <ele> SIGUE SIENDO ELIPSOIDAL, como siempre lo fue en estos ficheros: GPX no dice en que
+     * referencia esta, y cambiarlo segun un ajuste haria dos ficheros identicos en forma con
+     * alturas distintas. La altura geoidal, si se eligio un geoide, va escrita en <cmt>.
+     */
+    private fun gpxWaypoint(name: String, stats: GpsPointStats, geoid: GeoidTag? = null): String = buildString {
         append("  <wpt lat=\"").append(f(stats.estimateLatitude, 8))
             .append("\" lon=\"").append(f(stats.estimateLongitude, 8)).append("\">\n")
         stats.altitude?.let { append("    <ele>").append(f(it.estimate, 3)).append("</ele>\n") }
+        if (geoid != null) stats.altitude?.let {
+            append("    <cmt>").append(xml("ele is above the WGS84 ellipsoid; %.3f m above the %s geoid (N = %.3f m)"
+                .format(java.util.Locale.ROOT, it.estimate - geoid.undulation, geoid.model, geoid.undulation)))
+                .append("</cmt>\n")
+        }
         append("    <time>").append(iso(stats.lastEpochMillis)).append("</time>\n")
         append("    <name>").append(xml(name)).append("</name>\n")
         // La calidad va en la descripcion porque GPX no tiene sitio para ella. Un waypoint
@@ -196,13 +225,17 @@ object GpsExport {
      * precision al lado no se puede juzgar: no es lo mismo veinte minutos de promediado que
      * una lectura suelta.
      */
-    fun clipboardText(st: GpsPointStats, name: String): String = buildString {
+    fun clipboardText(st: GpsPointStats, name: String, geoid: GeoidTag? = null): String = buildString {
         appendLine("GlacioTools — " + name.ifBlank { "GNSS point" })
         appendLine("%.6f, %.6f".format(java.util.Locale.ROOT,
                                        st.estimateLatitude, st.estimateLongitude))
         appendLine(st.estimateUtm.format())
         st.altitude?.estimate?.let {
             appendLine("Altitude %.1f m (WGS84 ellipsoid)".format(java.util.Locale.ROOT, it))
+            geoid?.let { g ->
+                appendLine("Altitude %.1f m above the %s geoid (N = %.2f m)".format(
+                    java.util.Locale.ROOT, it - g.undulation, g.model, g.undulation))
+            }
         }
         appendLine("± %.2f m horizontal".format(java.util.Locale.ROOT,
                                                 st.horizontalStandardError))

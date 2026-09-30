@@ -3,7 +3,9 @@ package cl.umag.glaciertemp.app
 import android.content.Context
 import android.content.SharedPreferences
 import cl.umag.glaciertemp.core.fieldbook.LengthUnit
+import cl.umag.glaciertemp.core.geo.HeightReference
 import cl.umag.glaciertemp.core.geo.HeightVerdict
+import cl.umag.glaciertemp.core.geo.geoid.GeoidModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +29,24 @@ object AppSettings {
         /** La separacion geoidal que usaba el chip al verificar, en m. */
         val chipSeparation: Double? = null,
     )
+
+    private val _heightReference = MutableStateFlow<HeightReference>(HeightReference.Ellipsoidal)
+    /**
+     * En que referencia se MUESTRAN las alturas (y que columnas se anaden al exportar). Lo
+     * guardado es siempre la altura elipsoidal: cambiar esto no reescribe ningun dato.
+     */
+    val heightReference: StateFlow<HeightReference> = _heightReference.asStateFlow()
+
+    /** El geoide elegido, recordado aunque la referencia sea elipsoidal. */
+    private val _geoidModel = MutableStateFlow(GeoidModel.EGM2008)
+    val geoidModel: StateFlow<GeoidModel> = _geoidModel.asStateFlow()
+
+    fun setHeightReference(geoidal: Boolean, model: GeoidModel = _geoidModel.value) {
+        _geoidModel.value = model
+        _heightReference.value = if (geoidal) HeightReference.Orthometric(model) else HeightReference.Ellipsoidal
+        prefs?.edit()?.putString("height_reference", if (geoidal) "GEOID" else "ELLIPSOIDAL")
+            ?.putString("geoid_model", model.id)?.apply()
+    }
 
     private val _gaugingUnit = MutableStateFlow(LengthUnit.METRE)
     /** Unidad de entrada de las longitudes del aforo; lo guardado sigue en metros. */
@@ -53,6 +73,9 @@ object AppSettings {
                 .remove("height_verdict_at").remove("height_verdict_sep").apply()
         }
         _gaugingUnit.value = LengthUnit.fromName(p.getString("gauging_length_unit", null))
+        _geoidModel.value = GeoidModel.fromId(p.getString("geoid_model", null)) ?: GeoidModel.EGM2008
+        _heightReference.value = if (p.getString("height_reference", null) == "GEOID")
+            HeightReference.Orthometric(_geoidModel.value) else HeightReference.Ellipsoidal
         _heightCheck.value = HeightCheckState(
             verdict = runCatching { HeightVerdict.valueOf(p.getString("height_verdict", "")!!) }
                 .getOrDefault(HeightVerdict.UNVERIFIED),

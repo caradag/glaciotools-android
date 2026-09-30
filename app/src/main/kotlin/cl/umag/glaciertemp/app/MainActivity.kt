@@ -64,6 +64,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppSettings.init(this)
+        Geoids.init(this)
+        // EGM96 son 2 MB: se lee ya, fuera del hilo principal, para que la primera altura
+        // geoidal que se muestre no congele la pantalla.
+        Thread { Geoids.undulation(cl.umag.glaciertemp.core.geo.geoid.GeoidModel.EGM96, 0.0, 0.0) }.start()
         vm.connectivity = AndroidConnectivity(applicationContext,
             requestPermissions = { askPermissions.launch(it) })
         vm.prefs = getSharedPreferences("glaciotools", MODE_PRIVATE)

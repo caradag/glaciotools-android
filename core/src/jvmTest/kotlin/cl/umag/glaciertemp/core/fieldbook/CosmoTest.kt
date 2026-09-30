@@ -99,7 +99,7 @@ class CosmoExportTest {
     }
 
     @Test fun `el csv lleva las medidas y las descripciones`() {
-        val csv = FieldbookCsv.cosmo(listOf(muestra())) { "Campana" }
+        val csv = FieldbookCsv.cosmo(listOf(muestra()), campaignName = { "Campana" })
         assertTrue(csv.contains("MOR-14"), csv)
         assertTrue(csv.contains("0.9871"), "falta el factor: $csv")
         assertTrue(csv.contains("Granodiorita"), "las descripciones van en el csv: $csv")

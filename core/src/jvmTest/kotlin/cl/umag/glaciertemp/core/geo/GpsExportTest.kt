@@ -33,6 +33,33 @@ class GpsExportTest {
     }
 
     @Test
+    fun `las columnas del geoide van al final y vacias sin geoide`() {
+        val sin = GpsExport.csvAverage("P", stats).lines()
+        val con = GpsExport.csvAverage("P", stats, GeoidTag("EGM2008", 10.151)).lines()
+        val cab = sin[0].split(',')
+        assertEquals(listOf("geoid_model", "geoid_undulation_m", "altitude_m_orthometric"), cab.takeLast(3))
+        assertEquals(sin[0], con[0])
+        assertEquals(listOf("", "", ""), sin[1].split(',').takeLast(3))
+        val fila = con[1].split(',')
+        val alt = fila[cab.indexOf("altitude_m")].toDouble()
+        assertEquals("EGM2008", fila[cab.size - 3])
+        assertEquals(alt - 10.151, fila.last().toDouble(), 1e-3)
+        // las columnas de antes no se mueven ni cambian de valor
+        assertEquals(sin[1].split(',').dropLast(3), fila.dropLast(3))
+    }
+
+    @Test
+    fun `muestras, gpx y portapapeles dicen el geoide`() {
+        val g = GeoidTag("EGM96", 8.758)
+        val csv = GpsExport.csvSamples("P", stats, muestras, g).lines()
+        assertTrue(csv.any { it.startsWith("# altitude_m: above the WGS84 ellipsoid; altitude_m_orthometric: above the EGM96 geoid") })
+        val gpx = GpsExport.gpxAverage("P", stats, g)
+        assertTrue("<cmt>ele is above the WGS84 ellipsoid;" in gpx && "EGM96 geoid (N = 8.758 m)" in gpx)
+        assertTrue("above the EGM96 geoid (N = 8.76 m)" in GpsExport.clipboardText(stats, "P", g))
+        assertTrue("geoid" !in GpsExport.clipboardText(stats, "P"))
+    }
+
+    @Test
     fun `el csv promedio lleva la calidad y no solo la posicion`() {
         // Un punto sin una medida de su calidad no se puede combinar con otro ni descartar
         // cuando no da la talla, y quien lo use dentro de dos anos no es quien lo midio.

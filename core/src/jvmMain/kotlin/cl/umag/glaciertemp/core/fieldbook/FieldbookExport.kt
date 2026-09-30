@@ -161,6 +161,8 @@ object FieldbookExport {
         dayTitles: Map<String, String> = emptyMap(),
         // El diario guarda sus medios en OTRA carpeta, asi que necesita su propia fuente.
         journalMedia: Media = NoMedia,
+        // El geoide elegido en la app para las columnas de altura geoidal (ver FieldbookCsv).
+        geoid: (FieldPosition) -> cl.umag.glaciertemp.core.geo.GeoidTag? = { null },
     ): Result {
         val nombreCampana: (String?) -> String = { id ->
             campaigns.firstOrNull { it.id == id }?.displayName() ?: ""
@@ -178,10 +180,10 @@ object FieldbookExport {
                 zip.closeEntry()
             }
 
-            texto(GNSS_CSV, FieldbookCsv.gnss(entries, nombreCampana))
+            texto(GNSS_CSV, FieldbookCsv.gnss(entries, nombreCampana, geoid))
             texto(STAKE_CSV, FieldbookCsv.stakes(entries, nombreCampana))
-            texto(DENDRO_CSV, FieldbookCsv.dendro(entries, nombreCampana))
-            texto(COSMO_CSV, FieldbookCsv.cosmo(entries, nombreCampana))
+            texto(DENDRO_CSV, FieldbookCsv.dendro(entries, nombreCampana, geoid))
+            texto(COSMO_CSV, FieldbookCsv.cosmo(entries, nombreCampana, geoid))
 
             // Un fichero por aforo. Se desempatan los nombres repetidos igual que las
             // carpetas de fotos: el mismo perfil aforado dos veces el mismo dia daria el
@@ -198,7 +200,7 @@ object FieldbookExport {
                     var n = 2
                     while (!usados.add(nombre)) { nombre = "$base ($n)"; n++ }
                     texto("$GAUGING_DIR/$nombre.csv",
-                          FieldbookCsv.gauging(e, nombreCampana(e.campaignId), zone))
+                          FieldbookCsv.gauging(e, nombreCampana(e.campaignId), zone, geoid))
                 }
 
             zip.putNextEntry(ZipEntry(NOTEBOOK_ODT))

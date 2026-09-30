@@ -316,7 +316,7 @@ fun PositionField(
                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                            modifier = Modifier.testTag("fb-pos-clear")) { Text("Clear") }
             }
-            Text(position.detail(), style = MaterialTheme.typography.bodySmall,
+            Text(position.detail(Geoids.tagAt(position.latitude, position.longitude)), style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant,
                  modifier = Modifier.testTag("fb-position-detail"))
         } else if (request?.waiting != true) {

@@ -84,7 +84,8 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
         }
         Herramienta.GPS -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {
-            GpsToolScreen(gps, almanac, onBack = { donde = Herramienta.INICIO })
+            GpsToolScreen(gps, almanac, onBack = { donde = Herramienta.INICIO },
+                          location = fieldbook.location)
         }
         Herramienta.LIBRETA -> Column(Modifier.fillMaxSize()
             .statusBarsPadding().navigationBarsPadding().imePadding()) {

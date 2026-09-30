@@ -32,7 +32,8 @@ private fun duracion(s: Long): String = when {
 
 /** La herramienta entera: lista, promediado y detalle de un punto. */
 @Composable
-fun GpsToolScreen(vm: GpsViewModel, almanac: AlmanacViewModel, onBack: () -> Unit) {
+fun GpsToolScreen(vm: GpsViewModel, almanac: AlmanacViewModel, onBack: () -> Unit,
+                  location: LocationSource? = null) {
     val s by vm.state.collectAsStateWithLifecycle()
     // ENTRAR SIEMPRE POR LA LISTA. Un punto que quedo abierto la vez anterior hacia que
     // pulsar "GPS tools" aterrizara dentro de el, que no es lo que nadie pide al abrir la
@@ -68,6 +69,8 @@ fun GpsToolScreen(vm: GpsViewModel, almanac: AlmanacViewModel, onBack: () -> Uni
                 text = { Text("GPS time") }, modifier = Modifier.testTag("gps-tab-time"))
             Tab(selected = tab == 2, onClick = { tab = 2 },
                 text = { Text("Planner") }, modifier = Modifier.testTag("gps-tab-planner"))
+            Tab(selected = tab == 3, onClick = { tab = 3 },
+                text = { Text("Geoid") }, modifier = Modifier.testTag("gps-tab-geoid"))
         }
 
         Box(Modifier.weight(1f)) {
@@ -78,7 +81,8 @@ fun GpsToolScreen(vm: GpsViewModel, almanac: AlmanacViewModel, onBack: () -> Uni
                     else -> PointListScreen(vm, s)
                 }
                 1 -> GpsTimeScreen()
-                else -> PlannerScreen(almanac)
+                2 -> PlannerScreen(almanac)
+                else -> GeoidScreen(location)
             }
         }
     }
@@ -573,7 +577,8 @@ private fun CopiarCoordenadas(st: GpsPointStats, nombre: String) {
     LaunchedEffect(copiado) { if (copiado) { kotlinx.coroutines.delay(1500); copiado = false } }
     OutlinedButton(
         onClick = {
-            val texto = cl.umag.glaciertemp.core.geo.GpsExport.clipboardText(st, nombre)
+            val texto = cl.umag.glaciertemp.core.geo.GpsExport.clipboardText(
+                st, nombre, Geoids.tagAt(st.estimateLatitude, st.estimateLongitude))
             val cb = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                 as? android.content.ClipboardManager
             cb?.setPrimaryClip(android.content.ClipData.newPlainText("GlacioTools", texto))
@@ -647,10 +652,36 @@ private fun GraficosYCifras(
                      Modifier.fillMaxWidth().height(180.dp)
                          .then(if (etiquetar) Modifier.testTag("gps-altitude") else Modifier))
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            BigReading("Altitude", f(alt.estimate, 1), "m", Modifier.weight(1f))
+            BigReading("Ellipsoidal", f(alt.estimate, 1), "m", Modifier.weight(1f))
             BigReading("sd", f(alt.sd, 2), "m", Modifier.weight(1f))
             BigReading("± est.", f(alt.standardError, 2), "m", Modifier.weight(1f))
         }
+        AlturaGeoidal(alt.estimate, st.estimateLatitude, st.estimateLongitude)
+    }
+}
+
+/**
+ * La altura sobre el geoide elegido en Settings, DEBAJO de la elipsoidal y sin sustituirla:
+ * en GPS Average la elipsoidal va siempre, porque es la que mide el GNSS y la que se guarda.
+ * Si el geoide elegido no tiene datos para este punto se dice, en vez de mostrar otro.
+ */
+@Composable
+internal fun AlturaGeoidal(elipsoidal: Double, lat: Double, lon: Double) {
+    val ref by AppSettings.heightReference.collectAsStateWithLifecycle()
+    val modelo = (ref as? cl.umag.glaciertemp.core.geo.HeightReference.Orthometric)?.model ?: return
+    val n = remember(modelo, lat, lon) { Geoids.undulation(modelo, lat, lon) }
+    if (n == null) {
+        Text("${modelo.title} geoid not available for this area: download it in Settings.",
+             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+             modifier = Modifier.testTag("gps-geoid-missing"))
+        return
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Bottom) {
+        BigReading(modelo.title, f(elipsoidal - n, 1), "m", Modifier.weight(1f)
+            .testTag("gps-geoid-height"))
+        Text("above the ${modelo.title} geoid (N = ${f(n, 2)} m)",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(2f))
     }
 }
 
@@ -849,13 +880,14 @@ private fun ResumenDelPunto(st: GpsPointStats, nombre: String) {
                  modifier = Modifier.testTag("gps-point-utm"))
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                BigReading("Altitude",
+                BigReading("Ellipsoidal",
                            st.altitude?.estimate?.let { f(it, 1) } ?: "—", "m",
                            Modifier.weight(1f))
                 BigReading("± horizontal", f(st.horizontalStandardError, 2), "m",
                            Modifier.weight(1f))
                 BigReading("Fixes", st.samples.toString(), "", Modifier.weight(1f))
             }
+            st.altitude?.estimate?.let { AlturaGeoidal(it, st.estimateLatitude, st.estimateLongitude) }
             Text(notaDeAltura() +
                  " ± is the uncertainty of the estimate, not the scatter of the fixes.",
                  style = MaterialTheme.typography.bodySmall,
