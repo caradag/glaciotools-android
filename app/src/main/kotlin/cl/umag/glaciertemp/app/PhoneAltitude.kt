@@ -43,6 +43,7 @@ object PhoneAltitude {
     fun onNmea(sentence: String) {
         val g = Nmea.parseGga(sentence) ?: return
         synchronized(lock) {
+            ggaSeen++
             recientes.addLast(g)
             while (recientes.size > 20) recientes.removeFirst()
         }
@@ -63,9 +64,31 @@ object PhoneAltitude {
         }
     }
 
+    private var ggaSeen = 0
+
     /** Para las pruebas: empezar de cero, como al arrancar la app. */
     internal fun resetForTest() = synchronized(lock) {
         check = HeightCheck(required = 10); recientes.clear(); confirmedThisSession = false
+        ggaSeen = 0
+    }
+
+    /**
+     * Empezar una comprobacion desde cero (boton "Check now" de Settings): los votos que se
+     * muestran son los de ESTA comprobacion, y el veredicto se vuelve a guardar al alcanzarse.
+     */
+    fun restartCheck() = synchronized(lock) {
+        check = HeightCheck(required = check.required); confirmedThisSession = false; ggaSeen = 0
+    }
+
+    /** Como va la comprobacion en curso. */
+    data class Progress(val ggaSeen: Int, val pairs: Int, val smallSeparation: Int,
+                        val ellipsoidal: Int, val msl: Int, val required: Int) {
+        val contradictory get() = ellipsoidal > 0 && msl > 0
+    }
+
+    fun progress(): Progress = synchronized(lock) {
+        Progress(ggaSeen, check.pairs, check.smallSeparation, check.ellipsoidalVotes,
+                 check.mslVotes, check.required)
     }
 
     /** Si ya hubo veredicto desde que arranco la app. */

@@ -60,6 +60,16 @@ class HeightCheckTest {
     }
 
     @Test
+    fun cuentaLosParesAunqueNoVoten() {
+        val c = HeightCheck(required = 3)
+        repeat(4) { c.offer(101.0, gga(100.0, 1.0)) }
+        c.offer(34.3, gga(24.1, 10.2))
+        assertEquals(5, c.pairs)
+        assertEquals(4, c.smallSeparation)
+        assertEquals(1, c.ellipsoidalVotes)
+    }
+
+    @Test
     fun unaContradiccionAnulaElVeredicto() {
         val c = HeightCheck(required = 3)
         repeat(5) { c.offer(34.3, gga(24.1, 10.2)) }

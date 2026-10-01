@@ -8,6 +8,7 @@ import cl.umag.glaciertemp.core.geo.HeightVerdict
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -94,5 +95,38 @@ class SettingsFlowTest {
         rule.onNodeWithTag("st-height-verdict")
             .assertTextContains("Verified: this phone reports ellipsoidal heights", substring = true)
         rule.onNodeWithTag("st-height-verdict").assertTextContains("10.2 m", substring = true)
+    }
+
+    @Test fun la_comprobacion_siempre_termina_con_un_mensaje() {
+        val t0 = 1_790_000_000_000L
+        PhoneAltitude.restartCheck()
+        // sin NMEA
+        var r = resultadoDeComprobacion(PhoneAltitude.progress(), false, HeightVerdict.UNVERIFIED)
+        assertTrue(r.second); assertTrue(r.first, r.first.contains("no NMEA"))
+        // tres de diez y se acabo el tiempo
+        for (i in 0 until 3) {
+            val t = t0 + i * 1000L
+            PhoneAltitude.onNmea(gga(t, 24.1, 10.2)); PhoneAltitude.observe(loc(t, 34.3))
+        }
+        val p = PhoneAltitude.progress()
+        assertEquals(3, p.ellipsoidal); assertEquals(3, p.ggaSeen)
+        assertTrue(textoDeProgreso(p, 30).startsWith("3 of 10 fixes agree: ellipsoidal."))
+        assertTrue(textoDeProgreso(p, 30).endsWith("in 1:30."))
+        r = resultadoDeComprobacion(p, false, HeightVerdict.UNVERIFIED)
+        assertTrue(r.first, r.first.contains("only 3 of 10"))
+        // una contradiccion
+        PhoneAltitude.onNmea(gga(t0 + 5000L, 24.1, 10.2)); PhoneAltitude.observe(loc(t0 + 5000L, 24.1))
+        r = resultadoDeComprobacion(PhoneAltitude.progress(), false, HeightVerdict.UNVERIFIED)
+        assertTrue(r.first, r.first.contains("disagree (3 ellipsoidal, 1 sea level)"))
+        // empezar de nuevo y llegar a diez
+        PhoneAltitude.restartCheck()
+        for (i in 10 until 20) {
+            val t = t0 + i * 1000L
+            PhoneAltitude.onNmea(gga(t, 24.1, 10.2)); PhoneAltitude.observe(loc(t, 34.3))
+        }
+        assertTrue(PhoneAltitude.confirmedThisSession)
+        r = resultadoDeComprobacion(PhoneAltitude.progress(), true, AppSettings.heightCheck.value.verdict)
+        assertEquals(false, r.second)
+        assertTrue(r.first, r.first.startsWith("Check finished: 10 of 10 fixes agree. This phone reports ellipsoidal"))
     }
 }

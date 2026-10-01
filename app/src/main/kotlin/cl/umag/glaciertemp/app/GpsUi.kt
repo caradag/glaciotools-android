@@ -619,7 +619,7 @@ private fun GraficosYCifras(
     val vistaAltura = rememberChartView()
 
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Horizontal", style = MaterialTheme.typography.titleSmall)
+        Text("Horizontal position", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.weight(1f))
         if (vistaNube.moved) {
             TextButton(onClick = { vistaNube.reset() },
@@ -634,10 +634,10 @@ private fun GraficosYCifras(
          color = MaterialTheme.colorScheme.onSurfaceVariant)
     Cifras(st)
 
-    Spacer(Modifier.height(4.dp))
+    HorizontalDivider(Modifier.padding(vertical = 4.dp))
     val alt = st.altitude
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Altitude", style = MaterialTheme.typography.titleSmall)
+        Text("Altitude", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.weight(1f))
         if (vistaAltura.moved) {
             TextButton(onClick = { vistaAltura.reset() }) { Text("Reset view") }
@@ -651,37 +651,43 @@ private fun GraficosYCifras(
         AltitudePlot(alturas, alt, vistaAltura,
                      Modifier.fillMaxWidth().height(180.dp)
                          .then(if (etiquetar) Modifier.testTag("gps-altitude") else Modifier))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            BigReading("Ellipsoidal", f(alt.estimate, 1), "m", Modifier.weight(1f))
-            BigReading("sd", f(alt.sd, 2), "m", Modifier.weight(1f))
-            BigReading("± est.", f(alt.standardError, 2), "m", Modifier.weight(1f))
-        }
-        AlturaGeoidal(alt.estimate, st.estimateLatitude, st.estimateLongitude)
+        CifrasDeAltitud(alt.estimate, alt.standardError, st.estimateLatitude, st.estimateLongitude,
+                        sd = alt.sd)
     }
 }
 
 /**
- * La altura sobre el geoide elegido en Settings, DEBAJO de la elipsoidal y sin sustituirla:
- * en GPS Average la elipsoidal va siempre, porque es la que mide el GNSS y la que se guarda.
- * Si el geoide elegido no tiene datos para este punto se dice, en vez de mostrar otro.
+ * Las cifras de altitud, juntas y aparte de las horizontales: la elipsoidal SIEMPRE (es la
+ * que mide el GNSS y la que se guarda), al lado la del geoide elegido en Settings si se eligio
+ * uno, y la incerteza, que vale para las dos (N es la misma para todas las muestras). Si el
+ * geoide elegido no tiene datos para este punto se dice, en vez de mostrar otro.
  */
 @Composable
-internal fun AlturaGeoidal(elipsoidal: Double, lat: Double, lon: Double) {
+internal fun CifrasDeAltitud(elipsoidal: Double, incerteza: Double, lat: Double, lon: Double,
+                             sd: Double? = null) {
     val ref by AppSettings.heightReference.collectAsStateWithLifecycle()
-    val modelo = (ref as? cl.umag.glaciertemp.core.geo.HeightReference.Orthometric)?.model ?: return
-    val n = remember(modelo, lat, lon) { Geoids.undulation(modelo, lat, lon) }
-    if (n == null) {
+    val modelo = (ref as? cl.umag.glaciertemp.core.geo.HeightReference.Orthometric)?.model
+    val n = remember(modelo, lat, lon) { modelo?.let { Geoids.undulation(it, lat, lon) } }
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        BigReading("Ellipsoidal", f(elipsoidal, 1), "m",
+                   Modifier.weight(1f).testTag("gps-ellipsoidal-height"))
+        if (modelo != null) {
+            BigReading("${modelo.title} geoid", n?.let { f(elipsoidal - it, 1) } ?: "—", "m",
+                       Modifier.weight(1f).testTag("gps-geoid-height"))
+        }
+        BigReading("± est.", f(incerteza, 2), "m", Modifier.weight(1f).testTag("gps-altitude-se"))
+    }
+    if (modelo != null && n == null) {
         Text("${modelo.title} geoid not available for this area: download it in Settings.",
              style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
              modifier = Modifier.testTag("gps-geoid-missing"))
-        return
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Bottom) {
-        BigReading(modelo.title, f(elipsoidal - n, 1), "m", Modifier.weight(1f)
-            .testTag("gps-geoid-height"))
-        Text("above the ${modelo.title} geoid (N = ${f(n, 2)} m)",
-             style = MaterialTheme.typography.bodySmall,
-             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(2f))
+    val detalle = listOfNotNull(
+        n?.let { "${modelo!!.title} geoid = ellipsoidal − N, with N = ${f(it, 2)} m" },
+        sd?.let { "sd ${f(it, 2)} m" })
+    if (detalle.isNotEmpty()) {
+        Text(detalle.joinToString("  ·  "), style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -867,8 +873,7 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
 private fun ResumenDelPunto(st: GpsPointStats, nombre: String) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Position", style = MaterialTheme.typography.labelMedium,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Horizontal position", style = MaterialTheme.typography.titleSmall)
             Text("${f(st.estimateLatitude, 6)}, ${f(st.estimateLongitude, 6)}",
                  style = MaterialTheme.typography.titleLarge,
                  fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
@@ -878,16 +883,22 @@ private fun ResumenDelPunto(st: GpsPointStats, nombre: String) {
                  fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                  color = MaterialTheme.colorScheme.onSurfaceVariant,
                  modifier = Modifier.testTag("gps-point-utm"))
-            Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                BigReading("Ellipsoidal",
-                           st.altitude?.estimate?.let { f(it, 1) } ?: "—", "m",
-                           Modifier.weight(1f))
-                BigReading("± horizontal", f(st.horizontalStandardError, 2), "m",
-                           Modifier.weight(1f))
+                BigReading("± est.", f(st.horizontalStandardError, 2), "m",
+                           Modifier.weight(1f).testTag("gps-point-horizontal-se"))
                 BigReading("Fixes", st.samples.toString(), "", Modifier.weight(1f))
             }
-            st.altitude?.estimate?.let { AlturaGeoidal(it, st.estimateLatitude, st.estimateLongitude) }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("Altitude", style = MaterialTheme.typography.titleSmall)
+            val alt = st.altitude
+            if (alt == null) {
+                Text("No altitude in these fixes (2D solution).",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                CifrasDeAltitud(alt.estimate, alt.standardError, st.estimateLatitude, st.estimateLongitude)
+            }
+            Spacer(Modifier.height(4.dp))
             Text(notaDeAltura() +
                  " ± is the uncertainty of the estimate, not the scatter of the fixes.",
                  style = MaterialTheme.typography.bodySmall,

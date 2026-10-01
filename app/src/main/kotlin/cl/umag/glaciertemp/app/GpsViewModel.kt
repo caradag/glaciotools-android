@@ -231,6 +231,9 @@ class GpsViewModel : ViewModel() {
                     publicar()
                 }
             }.onFailure { e ->
+                // Guardar, pausar o salir cancelan la recogida: eso no es un fallo del GPS, y
+                // tragarse la cancelacion la pintaba como "Error: ... was cancelled".
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 _state.value = _state.value.copy(
                     error = e.message ?: "the receiver stopped",
                     averaging = _state.value.averaging?.copy(running = false))
@@ -345,7 +348,7 @@ class GpsViewModel : ViewModel() {
         averager = GpsAverager()
         _state.value = _state.value.copy(
             points = s.list(),
-            note = "Saved “${name.ifBlank { a.name }}”: ${a.samples.size} fixes",
+            note = "Saved “${name.ifBlank { a.name }.ifBlank { "Point" }}”: ${a.samples.size} fixes",
             averaging = null)
     }
 

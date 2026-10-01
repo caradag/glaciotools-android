@@ -12,7 +12,9 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,7 +33,6 @@ import cl.umag.glaciertemp.core.geo.geoid.GeoidModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import java.text.DateFormat
 import java.util.Date
 
@@ -157,20 +158,25 @@ private fun UnidadesDelAforo() {
  * Si la altura del GPS de ESTE telefono es de verdad elipsoidal (ver PhoneAltitude).
  *
  * La verificacion ocurre sola cada vez que la app usa el GPS; el boton solo sirve para no
- * tener que esperar a promediar un punto.
+ * tener que esperar a promediar un punto. "Check now" EMPIEZA DE CERO y SIEMPRE TERMINA CON
+ * UN MENSAJE: con veredicto, o diciendo por que no lo hubo. Un contador que sube sin decir
+ * hasta donde, y un boton que vuelve a "Check now" sin mas, no dejan saber si termino.
  */
 @Composable
 private fun AlturaDelTelefono(location: LocationSource?) {
     val estado by AppSettings.heightCheck.collectAsStateWithLifecycle()
     var comprobando by remember { mutableStateOf(false) }
-    var progreso by remember { mutableStateOf("") }
+    var progreso by remember { mutableStateOf<PhoneAltitude.Progress?>(null) }
+    var segundos by remember { mutableIntStateOf(0) }
+    var resultado by remember { mutableStateOf<Pair<String, Boolean>?>(null) }   // texto, es error
 
     Seccion("This phone's GPS altitude",
             "Android should report heights above the WGS84 ellipsoid, but some phones report " +
             "heights above sea level instead. GlacioTools checks it against the phone's own GNSS " +
             "chip (its NMEA GGA sentences) whenever the GPS is on, and corrects it if needed.",
             "st-height-check") {
-        val fecha = estado.checkedAtMillis?.let { DateFormat.getDateInstance().format(Date(it)) }
+        val fecha = estado.checkedAtMillis?.let {
+            DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) }
         Text(when (estado.verdict) {
                  HeightVerdict.ELLIPSOIDAL ->
                      "Verified: this phone reports ellipsoidal heights (checked $fecha; the chip " +
@@ -179,37 +185,105 @@ private fun AlturaDelTelefono(location: LocationSource?) {
                      "This phone reports heights above sea level. GlacioTools adds the chip's own " +
                      "geoid separation to get ellipsoidal heights (checked $fecha)."
                  HeightVerdict.UNVERIFIED ->
-                     "Not verified yet. It needs about ten 3D fixes with the GPS on, where the " +
-                     "geoid separation is larger than 2 m (true in Patagonia). Some phones do not " +
-                     "provide NMEA; then it cannot be verified."
+                     "Not verified yet. It needs ${PhoneAltitude.progress().required} GPS fixes " +
+                     "that agree, where the geoid separation is larger than 2 m (true in " +
+                     "Patagonia). Some phones do not provide NMEA; then it cannot be verified."
              },
              style = MaterialTheme.typography.bodyMedium,
              color = if (estado.verdict == HeightVerdict.UNVERIFIED) MaterialTheme.colorScheme.error
                      else MaterialTheme.colorScheme.onSurface,
              modifier = Modifier.testTag("st-height-verdict"))
+
+        val p = progreso
+        if (comprobando && p != null) {
+            val hechos = maxOf(p.ellipsoidal, p.msl)
+            LinearProgressIndicator(progress = { hechos.toFloat() / p.required },
+                                    modifier = Modifier.fillMaxWidth().testTag("st-height-progress"))
+            Text(textoDeProgreso(p, segundos), style = MaterialTheme.typography.bodySmall,
+                 modifier = Modifier.testTag("st-height-progress-text"))
+        }
+        resultado?.let { (texto, error) ->
+            Text(texto, style = MaterialTheme.typography.bodyMedium,
+                 color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                 modifier = Modifier.testTag("st-height-result"))
+        }
         if (location != null) {
-            OutlinedButton(enabled = !comprobando, onClick = { comprobando = true },
-                           modifier = Modifier.testTag("st-height-check-now")) {
-                Text(if (comprobando) "Checking… $progreso" else "Check now")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(enabled = !comprobando,
+                               onClick = { resultado = null; comprobando = true },
+                               modifier = Modifier.testTag("st-height-check-now")) {
+                    Text(if (comprobando) "Checking…" else "Check now")
+                }
+                if (comprobando) {
+                    TextButton(onClick = {
+                                   comprobando = false
+                                   resultado = "Check cancelled." to true
+                               },
+                               modifier = Modifier.testTag("st-height-check-stop")) { Text("Stop") }
+                }
             }
         }
     }
 
-    // La comprobacion: GPS encendido hasta 2 minutos o hasta que haya veredicto.
+    // La comprobacion: GPS encendido hasta que haya veredicto, se contradiga o pasen 2 minutos.
     LaunchedEffect(comprobando) {
         if (!comprobando || location == null) return@LaunchedEffect
-        withTimeoutOrNull(120_000) {
-            coroutineScope {
-                val gps = launch { location.samples(1000L).collect {} }
-                while (!PhoneAltitude.confirmedThisSession) {
-                    val (e, m) = PhoneAltitude.votes()
-                    progreso = "($e ellipsoidal, $m sea level)"
-                    delay(1000)
-                }
-                gps.cancel()
+        PhoneAltitude.restartCheck()
+        segundos = 0
+        coroutineScope {
+            val gps = launch { location.samples(1000L).collect {} }
+            while (segundos < LIMITE_DE_COMPROBACION_S) {
+                val p = PhoneAltitude.progress()
+                progreso = p
+                if (PhoneAltitude.confirmedThisSession || p.contradictory) break
+                delay(1000)
+                segundos++
             }
+            gps.cancel()
         }
+        resultado = resultadoDeComprobacion(PhoneAltitude.progress(), PhoneAltitude.confirmedThisSession,
+                                            AppSettings.heightCheck.value.verdict)
         comprobando = false
-        progreso = ""
+        progreso = null
     }
+}
+
+private const val LIMITE_DE_COMPROBACION_S = 120
+
+internal fun textoDeProgreso(p: PhoneAltitude.Progress, segundos: Int): String {
+    val queda = LIMITE_DE_COMPROBACION_S - segundos
+    val cuenta = when {
+        p.ggaSeen == 0 -> "Waiting for the GNSS chip (no NMEA data yet)."
+        p.pairs == 0 -> "Waiting for a 3D fix…"
+        p.ellipsoidal == 0 && p.msl == 0 && p.smallSeparation > 0 ->
+            "The geoid separation here is under 2 m: these fixes cannot tell the two apart."
+        p.msl > p.ellipsoidal -> "${p.msl} of ${p.required} fixes agree: sea level."
+        else -> "${p.ellipsoidal} of ${p.required} fixes agree: ellipsoidal."
+    }
+    return "$cuenta  It stops by itself at ${p.required}, or in ${queda / 60}:%02d.".format(queda % 60)
+}
+
+/** El mensaje final: siempre uno, con el veredicto o con la razon por la que no lo hubo. */
+internal fun resultadoDeComprobacion(p: PhoneAltitude.Progress, confirmado: Boolean,
+                                     verdict: HeightVerdict): Pair<String, Boolean> = when {
+    confirmado && verdict == HeightVerdict.ELLIPSOIDAL ->
+        "Check finished: ${p.ellipsoidal} of ${p.required} fixes agree. This phone reports " +
+        "ellipsoidal heights." to false
+    confirmado && verdict == HeightVerdict.MSL ->
+        "Check finished: ${p.msl} of ${p.required} fixes agree. This phone reports heights " +
+        "above sea level; GlacioTools corrects them." to false
+    p.contradictory ->
+        "Check stopped: the fixes disagree (${p.ellipsoidal} ellipsoidal, ${p.msl} sea level), " +
+        "so nothing was concluded. Try again outdoors, with the phone still." to true
+    p.ggaSeen == 0 ->
+        "Check finished without a result: this phone sent no NMEA data in 2 minutes, so its " +
+        "altitude cannot be verified." to true
+    p.pairs == 0 ->
+        "Check finished without a result: no 3D GPS fix in 2 minutes. Try again outdoors." to true
+    p.ellipsoidal == 0 && p.msl == 0 && p.smallSeparation > 0 ->
+        "Check finished without a result: the geoid separation here is under 2 m, so the test " +
+        "cannot tell ellipsoidal from sea level at this place." to true
+    else ->
+        "Check finished without a result: only ${maxOf(p.ellipsoidal, p.msl)} of ${p.required} " +
+        "fixes agreed in 2 minutes. Try again with open sky." to true
 }

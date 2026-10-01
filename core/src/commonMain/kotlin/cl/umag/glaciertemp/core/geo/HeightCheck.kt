@@ -61,7 +61,13 @@ enum class HeightVerdict { ELLIPSOIDAL, MSL, UNVERIFIED }
  * de emparejar mal la hora de una GGA con la de una posicion. Una contradiccion anula el
  * veredicto: es preferible "no verificado" a afirmar algo falso sobre todas las alturas.
  */
-class HeightCheck(private val required: Int = 10) {
+class HeightCheck(val required: Int = 10) {
+    /** Pares ofrecidos, voten o no: para saber si el chip esta mandando GGA utilizables. */
+    var pairs = 0
+        private set
+    /** Pares que no votaron porque |N| < 2 m: alli la prueba no discrimina. */
+    var smallSeparation = 0
+        private set
     var ellipsoidalVotes = 0
         private set
     var mslVotes = 0
@@ -83,7 +89,9 @@ class HeightCheck(private val required: Int = 10) {
     /** Un par (altura de Location, GGA de la misma epoca). Devuelve el veredicto actual. */
     fun offer(locationAltitude: Double, gga: Gga): HeightVerdict {
         lastSeparation = gga.geoidSeparation
-        if (abs(gga.geoidSeparation) >= 2.0) {
+        pairs++
+        if (abs(gga.geoidSeparation) < 2.0) smallSeparation++
+        else {
             val aElipsoidal = abs(locationAltitude - (gga.mslAltitude + gga.geoidSeparation))
             val aMsl = abs(locationAltitude - gga.mslAltitude)
             when {
