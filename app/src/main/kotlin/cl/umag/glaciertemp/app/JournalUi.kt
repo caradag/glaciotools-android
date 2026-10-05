@@ -45,6 +45,19 @@ fun JournalScreen(vm: JournalViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refresh() }
 
+    // EL PERMISO DE AVISOS SE PIDE AQUI, al entrar en el diario, y no al arrancar: es cuando
+    // se entiende para que es. Sin el, la notificacion de "ayer esta vacio" no sale nunca.
+    val permisoAvisos = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            permisoAvisos.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     // Lo tecleado se agrupa medio segundo antes de tocar el disco, asi que al irse la app a
     // segundo plano puede quedar algo sin escribir. ON_STOP es el momento a partir del cual
     // Android puede matar el proceso sin avisar: aqui se fuerza el volcado.
@@ -140,7 +153,16 @@ private fun DiasDelDiario(vm: JournalViewModel, s: JournalUiState) {
 @Composable
 private fun DiaDelDiario(vm: JournalViewModel, s: JournalUiState, dia: JournalDay) {
     val plegado = dia.key in s.collapsed
-    Card(Modifier.fillMaxWidth()) {
+    // UN DIA QUE FALTA, EN EL ROJO DEL RECORDATORIO. Es el mismo aviso --"de este dia no
+    // hay nada"-- y tiene que leerse igual, aunque aqui no se pueda descartar: desaparece
+    // solo, en cuanto se escribe algo ese dia o se le pone titulo.
+    val colores = if (dia.missing)
+        CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer)
+    else CardDefaults.cardColors()
+    Card(Modifier.fillMaxWidth().then(
+             if (dia.missing) Modifier.testTag("jr-missing-${dia.key}") else Modifier),
+         colors = colores) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
 
             Row(verticalAlignment = Alignment.CenterVertically,
@@ -157,12 +179,17 @@ private fun DiaDelDiario(vm: JournalViewModel, s: JournalUiState, dia: JournalDa
                     // lo que permite recorrer una campana larga. Si esta vacio se dice, para
                     // que se note que falta: un dia sin titulo en un diario de seis semanas
                     // es un dia que habra que abrir para saber que hay dentro.
-                    Text(dia.title.ifBlank { "Untitled day" },
+                    Text(when {
+                             dia.missing -> "Nothing written this day"
+                             else -> dia.title.ifBlank { "Untitled day" }
+                         },
                          style = MaterialTheme.typography.titleSmall,
                          fontWeight = FontWeight.Bold,
-                         color = if (dia.title.isBlank())
-                             MaterialTheme.colorScheme.onSurfaceVariant
-                         else MaterialTheme.colorScheme.onSurface)
+                         color = when {
+                             dia.missing -> MaterialTheme.colorScheme.onTertiaryContainer
+                             dia.title.isBlank() -> MaterialTheme.colorScheme.onSurfaceVariant
+                             else -> MaterialTheme.colorScheme.onSurface
+                         })
                 }
                 Text("${dia.entries.size}",
                      style = MaterialTheme.typography.bodySmall,

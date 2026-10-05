@@ -19,8 +19,23 @@ import cl.umag.glaciertemp.core.fieldbook.GaugingBin
 /** Cual de las dos listas de nombres reutilizables se esta tocando. */
 enum class NameList { PEOPLE, RECEIVERS, SPECIES, PROFILES }
 
-/** Una peticion de posicion en curso. */
-data class PositionRequest(val waiting: Boolean = false, val note: String? = null)
+/** A donde va la posicion que se esta pidiendo. */
+enum class PositionTarget {
+    /** La de la entrada: donde se anoto, o el perfil en un aforo. */
+    ENTRY,
+    /** El punto de inyeccion de un aforo por dilucion de sal. */
+    INJECTION,
+}
+
+/**
+ * Una peticion de posicion en curso.
+ *
+ * Lleva su DESTINO porque un aforo por dilucion tiene dos posiciones en la misma pantalla --el
+ * perfil y el punto de inyeccion-- y la espera de una no puede pintarse en la otra ni, sobre
+ * todo, el arreglo que llega caer en la que no se pidio.
+ */
+data class PositionRequest(val waiting: Boolean = false, val note: String? = null,
+                           val target: PositionTarget = PositionTarget.ENTRY)
 
 data class FieldbookUiState(
     /** Ya filtradas por campana y por tipo: es lo que la lista pinta tal cual. */
@@ -408,9 +423,12 @@ class FieldbookViewModel : ViewModel() {
             EntryType.COSMO -> e.copy(cosmo = CosmoSample())
             // Con el ultimo perfil ya escrito: casi siempre se vuelve al mismo, y tenerlo
             // puesto es lo que hace que dos aforos del mismo sitio se llamen igual de verdad.
+            // La hora de inyeccion nace con la de la nota, como pide la especificacion: es
+            // un valor razonable que se corrige con "Set now" en el momento de echar la sal.
             EntryType.GAUGING -> e.copy(
                 profileName = profiles?.mostRecent() ?: "",
-                gauging = cl.umag.glaciertemp.core.fieldbook.StreamGauging())
+                gauging = StreamGauging(
+                    salt = SaltDilution(injectionEpochMillis = e.createdEpochMillis)))
         }
         s.save(inicial)
         _state.value = _state.value.copy(open = inicial, error = null, filter = null)
@@ -480,7 +498,13 @@ class FieldbookViewModel : ViewModel() {
      */
     fun update(immediate: Boolean = true, transform: (FieldEntry) -> FieldEntry) {
         val actual = _state.value.open ?: return
-        val nueva = transform(actual).copy(updatedEpochMillis = System.currentTimeMillis())
+        val transformada = transform(actual)
+        // UN AFORO BLOQUEADO NO SE TOCA. La pantalla ya no deja escribir, pero un cambio que
+        // llega por otro camino --una posicion que se pidio antes de bloquear y aterriza
+        // despues, un campo con el foco puesto que se suelta al cerrar-- tampoco. Lo unico
+        // que pasa es lo que desbloquea.
+        if (actual.gauging?.locked == true && transformada.gauging?.locked == true) return
+        val nueva = transformada.copy(updatedEpochMillis = System.currentTimeMillis())
         _state.value = _state.value.copy(open = nueva)
         pendiente = nueva
         guardadoJob?.cancel()
@@ -580,6 +604,172 @@ class FieldbookViewModel : ViewModel() {
         }
     }
 
+    // -------------------------------- dilucion de sal --------------------------------
+
+    /**
+     * Cambia la ficha de la dilucion.
+     *
+     * Si el cambio toca algo que entra en la cuenta --masa, factor, lecturas, base o
+     * ventana-- el caudal calculado deja de valer y se BORRA. Un numero que se queda en
+     * pantalla despues de cambiar la base dice algo que ya no corresponde a lo que se ve, y es
+     * exactamente el numero que alguien apunta.
+     */
+    fun updateSalt(immediate: Boolean = false, f: (SaltDilution) -> SaltDilution) {
+        updateGauging(immediate) { g ->
+            val antes = g.salt ?: SaltDilution()
+            var despues = f(antes)
+            if (despues.saltMassG != antes.saltMassG ||
+                despues.calibrationFactor != antes.calibrationFactor ||
+                despues.readings != antes.readings ||
+                despues.baseConductivity != antes.baseConductivity ||
+                despues.windowStartMillis != antes.windowStartMillis ||
+                despues.windowEndMillis != antes.windowEndMillis) {
+                despues = despues.copy(calculated = false)
+            }
+            g.copy(salt = despues)
+        }
+    }
+
+    /** La pestana que se mira. Solo se recuerda si la nota esta abierta a la edicion. */
+    fun setGaugingMethod(m: GaugingMethod) {
+        if (_state.value.open?.gauging?.locked == true) return
+        updateGauging(immediate = true) { it.copy(method = m) }
+    }
+
+    /** Una lectura tecleada, con la hora de ESTE instante: la del momento de pulsar Enter. */
+    fun addConductivity(microSiemensPerCm: Double) {
+        val r = ConductivityReading(System.currentTimeMillis(), microSiemensPerCm)
+        updateSalt(immediate = true) {
+            it.copy(readings = SaltDilutionMath.addReading(it.readings, r),
+                    readingsSource = ReadingsSource.MANUAL, importedFile = null)
+        }
+    }
+
+    fun removeConductivity(atEpochMillis: Long) {
+        updateSalt(immediate = true) { s ->
+            s.copy(readings = s.readings.filterNot { it.atEpochMillis == atEpochMillis })
+        }
+    }
+
+    /**
+     * Las lecturas de un fichero, EN LUGAR de las que hubiera. Mezclar las de un logger con
+     * las tecleadas daria una serie con dos muestreos y dos conductimetros, que no se
+     * pueden integrar juntas. La ventana se borra: era de la serie anterior.
+     */
+    fun importConductivity(readings: List<ConductivityReading>, fileName: String?) {
+        updateSalt(immediate = true) {
+            it.copy(readings = readings, readingsSource = ReadingsSource.IMPORTED,
+                    importedFile = fileName, windowStartMillis = null, windowEndMillis = null,
+                    baseConductivity = null)
+        }
+    }
+
+    fun setInjectionNow() { updateSalt(immediate = true) { it.copy(injectionEpochMillis = System.currentTimeMillis()) } }
+
+    fun useInjectionPoint(solution: SavedPoint.Solution) {
+        updateSalt(immediate = true) { it.copy(injectionPosition = solution.toFieldPosition()) }
+    }
+
+    fun clearInjectionPosition() { updateSalt(immediate = true) { it.copy(injectionPosition = null) } }
+
+    /**
+     * Una calibracion nueva con estas cantidades. Las conductividades se conservan si la
+     * tabla tiene las mismas filas que antes --cambiar el volumen de agua con la tabla a
+     * medias no tiene por que tirarla-- y se vacian si cambia el numero de puntos.
+     */
+    fun setCalibration(c: SaltCalibration) {
+        updateSalt(immediate = true) { s ->
+            val previa = s.calibration
+            val ec = if (previa != null && previa.points == c.points) previa.conductivities else emptyList()
+            s.copy(calibration = c.copy(conductivities = ec))
+        }
+    }
+
+    fun setCalibrationConductivity(index: Int, v: Double?) {
+        updateSalt(immediate = false) { s ->
+            val c = s.calibration ?: SaltCalibration()
+            val l = c.conductivities.toMutableList()
+            while (l.size <= index) l.add(null)
+            l[index] = v
+            s.copy(calibration = c.copy(conductivities = l))
+        }
+    }
+
+    /**
+     * Rehace la recta y pone su factor. Se llama al SALIR de una casilla, no en cada
+     * pulsacion: con "1", "12", "125" el factor saltaria tres veces, y cada salto borraria el
+     * caudal calculado.
+     */
+    fun refitCalibration() {
+        val s = _state.value.open?.gauging?.salt ?: return
+        val c = s.calibration ?: return
+        val f = SaltDilutionMath.fit(SaltDilutionMath.calibrationRows(c))?.calibrationFactor ?: return
+        if (f != s.calibrationFactor) updateSalt(immediate = true) { it.copy(calibrationFactor = f) }
+    }
+
+    fun setBaseConductivity(v: Double) { updateSalt(immediate = true) { it.copy(baseConductivity = v) } }
+
+    fun setWindowStart(ms: Long?) { updateSalt(immediate = true) { s ->
+        // Un principio despues del final los intercambia: es lo que se queria decir.
+        val fin = s.windowEndMillis
+        if (ms != null && fin != null && ms > fin) s.copy(windowStartMillis = fin, windowEndMillis = ms)
+        else s.copy(windowStartMillis = ms)
+    } }
+
+    fun setWindowEnd(ms: Long?) { updateSalt(immediate = true) { s ->
+        val ini = s.windowStartMillis
+        if (ms != null && ini != null && ms < ini) s.copy(windowStartMillis = ms, windowEndMillis = ini)
+        else s.copy(windowEndMillis = ms)
+    } }
+
+    fun calculateDischarge() {
+        val s = _state.value.open?.gauging?.salt ?: return
+        if (SaltDilutionMath.missing(s).isNotEmpty()) return
+        updateSalt(immediate = true) { it.copy(calculated = true) }
+    }
+
+    // ------------------------------------ bloqueo ------------------------------------
+
+    /**
+     * Done en un aforo: lo bloquea y lo cierra. Un aforo terminado es un dato, y la tabla de
+     * treinta y cinco casillas se toca sin querer al hojear la libreta con guantes.
+     */
+    fun lockAndClose() {
+        val e = _state.value.open
+        if (e != null && e.type == EntryType.GAUGING && e.gauging?.locked != true) {
+            update(immediate = true) { it.copy(gauging = (it.gauging ?: StreamGauging()).copy(locked = true)) }
+        }
+        close()
+    }
+
+    fun unlockGauging() {
+        update(immediate = true) { it.copy(gauging = (it.gauging ?: StreamGauging()).copy(locked = false)) }
+    }
+
+    /**
+     * Una medicion nueva del mismo perfil, con lo que describe el sitio ya puesto.
+     *
+     * La posicion NO se pide sola, al reves que en una nota nueva: la que hereda es la del
+     * perfil, que es donde se va a medir, y un arreglo que llegara despues la pisaria con una
+     * lectura suelta del telefono.
+     */
+    fun newMeasurementFrom(id: String) {
+        val s = store ?: return
+        val src = s.load(id) ?: run {
+            _state.value = _state.value.copy(error = "That entry could not be read"); return
+        }
+        val campana = campaigns?.openOrCurrent()
+        val quien = people?.mostRecent() ?: ""
+        val base = s.create(EntryType.GAUGING, System.currentTimeMillis(), quien)
+            .copy(campaignId = campana?.id)
+        val nueva = Gauging.newMeasurementFrom(src, base)
+        s.save(nueva)
+        _state.value = _state.value.copy(open = nueva, error = null, filter = null,
+            note = "New measurement of “${src.profileName.ifBlank { "unnamed profile" }}”: the " +
+                   "site settings were copied, nothing measured was.")
+        refresh()
+    }
+
     /** Escribe ya lo que estuviera pendiente. Es idempotente y barato si no hay nada. */
     fun flush() {
         guardadoJob?.cancel(); guardadoJob = null
@@ -659,7 +849,8 @@ class FieldbookViewModel : ViewModel() {
      * el arreglo puede no llegar nunca, y una espera de la que no se puede salir obliga a
      * matar la app -- que aqui significa perder lo que se estuviera anotando.
      */
-    fun requestPhonePosition(automatica: Boolean = false) {
+    fun requestPhonePosition(automatica: Boolean = false,
+                             target: PositionTarget = PositionTarget.ENTRY) {
         val loc = location
         if (loc == null) {
             // La automatica no protesta: nadie la pidio, y un aviso sobre cada nota creada
@@ -668,7 +859,7 @@ class FieldbookViewModel : ViewModel() {
             return
         }
         requestLocationPermission?.invoke()
-        _state.value = _state.value.copy(positionRequest = PositionRequest(waiting = true))
+        _state.value = _state.value.copy(positionRequest = PositionRequest(waiting = true, target = target))
         posJob?.cancel()
         posJob = viewModelScope.launch {
             val fix = runCatching {
@@ -684,7 +875,7 @@ class FieldbookViewModel : ViewModel() {
                             else "No position arrived. Try again in the open, or pick a saved point.")
                 return@launch
             }
-            update { it.copy(position = FieldPosition(
+            val p = FieldPosition(
                 latitude = fix.latitude,
                 longitude = fix.longitude,
                 altitudeMetres = fix.altitudeMetres,
@@ -692,7 +883,24 @@ class FieldbookViewModel : ViewModel() {
                 source = PositionSource.PHONE,
                 // El instante del ARREGLO, no el de ahora: es cuando se midio.
                 atEpochMillis = System.currentTimeMillis() - fix.ageSeconds * 1000,
-            )) }
+            )
+            update { e ->
+                when (target) {
+                    PositionTarget.INJECTION -> e.copy(gauging = (e.gauging ?: StreamGauging()).let { g ->
+                        g.copy(salt = (g.salt ?: SaltDilution()).copy(injectionPosition = p)) })
+                    PositionTarget.ENTRY -> {
+                        // EN UN AFORO, LA PRIMERA POSICION SIRVE PARA LOS DOS PUNTOS. Al crear
+                        // la nota no se sabe todavia donde se echara la sal, y el primer
+                        // arreglo es mejor punto de partida que nada; se actualiza al llegar
+                        // a la inyeccion. Solo si estaba vacia: nunca pisa una ya puesta.
+                        val g = e.gauging
+                        val s = g?.salt
+                        if (automatica && g != null && s?.injectionPosition == null)
+                            e.copy(position = p, gauging = g.copy(salt = (s ?: SaltDilution()).copy(injectionPosition = p)))
+                        else e.copy(position = p)
+                    }
+                }
+            }
             _state.value = _state.value.copy(positionRequest = null)
         }
     }
@@ -942,6 +1150,7 @@ class FieldbookViewModel : ViewModel() {
         media: FieldbookExport.Media,
         todo: Boolean,
         journalMedia: FieldbookExport.Media = FieldbookExport.NoMedia,
+        onDone: (Boolean) -> Unit = {},
     ) {
         val s = store ?: return
         _state.value = _state.value.copy(exporting = true, error = null, note = null)
@@ -982,6 +1191,7 @@ class FieldbookViewModel : ViewModel() {
                 onSuccess = { _state.value.copy(exporting = false, note = "Exported ${it.describe()}") },
                 onFailure = { _state.value.copy(exporting = false,
                                                 error = "Export failed: ${it.message ?: "unknown"}") })
+            onDone(r.isSuccess)
         }
     }
 

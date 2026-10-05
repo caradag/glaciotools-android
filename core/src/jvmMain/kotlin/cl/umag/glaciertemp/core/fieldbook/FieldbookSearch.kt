@@ -88,6 +88,7 @@ object FieldbookSearch {
                 EntryType.GAUGING -> {
                     campos += "Profile" to e.profileName
                     e.gauging?.let { campos += "Comments" to it.comments }
+                    e.gauging?.salt?.let { campos += "Injection point" to it.injectionNotes }
                 }
                 EntryType.COSMO -> {
                     campos += "Sample" to e.cosmoName

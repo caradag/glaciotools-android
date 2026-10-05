@@ -79,7 +79,9 @@ class JournalViewModel : ViewModel() {
         }
 
         val entradas = st.list(activa.id)
-        val dias = JournalDays.group(entradas, st.dayTitles(activa.id))
+        // Con los HUECOS: los dias saltados entre dos dias escritos aparecen vacios y en
+        // rojo, para que se vea que falta algo y se pueda escribir ahi mismo.
+        val dias = JournalDays.withGaps(JournalDays.group(entradas, st.dayTitles(activa.id)))
 
         // Al abrir, solo el dia mas reciente queda desplegado. Con una campana de seis
         // semanas, desplegarlo todo obliga a recorrer un muro de texto para llegar a lo de
@@ -104,7 +106,8 @@ class JournalViewModel : ViewModel() {
             days = dias,
             collapsed = plegados,
             reminderDay = JournalReminder.missingDay(
-                claves, System.currentTimeMillis(), descartado),
+                dias.filter { !it.missing }.map { it.key }.toSet(),
+                System.currentTimeMillis(), descartado),
         )
     }
 
@@ -305,4 +308,11 @@ class JournalViewModel : ViewModel() {
     }
 
     fun clearNote() { _state.value = _state.value.copy(note = null) }
+
+    /** Un dia que hay que abrir porque se toco la notificacion del diario. */
+    private val _openDay = MutableStateFlow<String?>(null)
+    val openDay: StateFlow<String?> = _openDay
+
+    fun requestOpenDay(dayKey: String) { _openDay.value = dayKey }
+    fun consumeOpenDay() { _openDay.value = null }
 }

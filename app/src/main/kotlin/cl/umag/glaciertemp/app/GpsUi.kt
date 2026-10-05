@@ -225,17 +225,28 @@ private fun PointListScreen(vm: GpsViewModel, s: GpsUiState) {
                     OutlinedTextField(nombre, { nombre = it }, singleLine = true,
                                       label = { Text("File name") },
                                       modifier = Modifier.testTag("gps-sel-name"))
-                    Text("You pick the folder in the next screen.",
+                    Text("Save to device asks for a folder; Share sends it to another app.",
                          style = MaterialTheme.typography.bodySmall,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {
-                TextButton(onClick = { exportar = false; guardador.launch(nombre) },
-                           modifier = Modifier.testTag("gps-sel-go")) { Text("Choose folder") }
-            },
-            dismissButton = {
-                TextButton(onClick = { exportar = false }) { Text("Cancel") }
+                Row {
+                    TextButton(onClick = { exportar = false }) { Text("Cancel") }
+                    // COMPARTIR, al lado de guardar: en terreno lo normal es mandarlo ya.
+                    TextButton(onClick = {
+                                   exportar = false
+                                   val datos = vm.exportSelectedBytes(formato)
+                                   val cuantos = "${s.selected.size} point(s)"
+                                   val f = if (datos.isEmpty()) null
+                                           else prepareShare(ctx, nombre) { it.write(datos) }
+                                   if (f == null) vm.onExported(false, cuantos)
+                                   else { launchShare(ctx, f, mimeDe(formato)); vm.clearSelection() }
+                               },
+                               modifier = Modifier.testTag("gps-sel-share")) { Text("Share") }
+                    TextButton(onClick = { exportar = false; guardador.launch(nombre) },
+                               modifier = Modifier.testTag("gps-sel-go")) { Text("Save to device") }
+                }
             })
     }
 
@@ -731,18 +742,7 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
     var alcance by remember { mutableStateOf(GpsViewModel.Scope.AVERAGE) }
     var formato by remember { mutableStateOf(GpsViewModel.Format.CSV) }
 
-    val guardador = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("*/*")
-    ) { uri ->
-        val nombre = vm.exportName(p, alcance, formato)
-        if (uri == null) return@rememberLauncherForActivityResult
-        runCatching {
-            ctx.contentResolver.openOutputStream(uri)?.use {
-                it.write(vm.exportBytes(p, alcance, formato))
-            }
-        }.onSuccess { vm.onExported(true, nombre) }
-         .onFailure { vm.onExported(false, nombre) }
-    }
+    val exportarPunto = rememberSaveOrShare("*/*", "gps-export")
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
            verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -802,7 +802,13 @@ private fun PointScreen(vm: GpsViewModel, s: GpsUiState, p: OpenPoint) {
                        label = { Text("GPX") },
                        modifier = Modifier.testTag("gps-fmt-gpx"))
         }
-        Button(onClick = { guardador.launch(vm.exportName(p, alcance, formato)) },
+        Button(onClick = {
+                   val nombre = vm.exportName(p, alcance, formato)
+                   val datos = vm.exportBytes(p, alcance, formato)
+                   exportarPunto.offer(nombre, mimeDe(formato), { it.write(datos) }) { ok, _ ->
+                       vm.onExported(ok, nombre)
+                   }
+               },
                enabled = st != null,
                modifier = Modifier.testTag("gps-export")) { Text("Export") }
 
@@ -925,4 +931,10 @@ internal fun notaDeAltura(): String {
             "Altitude should be over the WGS84 ellipsoid, as Android specifies; not yet " +
             "verified on this phone (see Settings)."
     }
+}
+
+/** El tipo de fichero de cada formato, para el menu de compartir. */
+private fun mimeDe(f: GpsViewModel.Format): String = when (f) {
+    GpsViewModel.Format.CSV -> "text/csv"
+    GpsViewModel.Format.GPX -> "application/gpx+xml"
 }

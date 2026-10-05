@@ -78,4 +78,52 @@ class ChartTest {
         assertTrue(reducida.isReduced)
         assertTrue(reducida.bucket > 1)
     }
+
+    // ------------------------------ marcas de tiempo redondas ------------------------------
+
+    private fun t(d: Int, mo: Int, h: Int, mi: Int, s: Int = 0) = LocalDateTime.of(2026, mo, d, h, mi, s)
+
+    @Test fun `el caso del usuario cae en horas enteras y en medianoches`() {
+        // Antes: "29/09 21:40" y "01/10 11:10", repartidas desde el primer registro.
+        val m = Chart.roundTimeTicks(t(29, 9, 21, 40), t(1, 10, 11, 10))
+        assertTrue(m.size in 2..5, m.toString())
+        m.forEach { assertEquals(0, it.time.minute); assertEquals(0, it.time.second) }
+        assertTrue(m.all { it.time.hour % 12 == 0 }, "paso de 12 h: medianoche y mediodia")
+        assertEquals("30/09", m.first { it.time == t(30, 9, 0, 0) }.label)
+        assertTrue(m.all { !it.time.isBefore(t(29, 9, 21, 40)) && !it.time.isAfter(t(1, 10, 11, 10)) })
+    }
+
+    @Test fun `media hora se marca en minutos redondos`() {
+        val m = Chart.roundTimeTicks(t(14, 10, 10, 3, 17), t(14, 10, 10, 33, 2))
+        // 30 min en 5 marcas como mucho: cada 5 min serian 6, asi que cada 10.
+        assertEquals(listOf("10:10", "10:20", "10:30"), m.map { it.label })
+    }
+
+    @Test fun `un minuto se marca en segundos y lleva los segundos escritos`() {
+        val m = Chart.roundTimeTicks(t(14, 10, 10, 0, 3), t(14, 10, 10, 1, 1))
+        m.forEach { assertEquals(0, it.time.second % 15) }
+        assertTrue(m.all { it.label.count { c -> c == ':' } == 2 }, m.toString())
+    }
+
+    @Test fun `semanas en dias y meses en meses`() {
+        val d = Chart.roundTimeTicks(t(3, 9, 8, 0), t(28, 9, 8, 0))
+        d.forEach { assertEquals(0, it.time.hour); assertTrue((it.time.dayOfMonth - 1) % 5 == 0 || (it.time.dayOfMonth - 1) % 10 == 0) }
+        val mm = Chart.roundTimeTicks(t(15, 1, 0, 0), t(20, 9, 0, 0))
+        mm.forEach { assertEquals(1, it.time.dayOfMonth) }
+        assertTrue(mm.size in 2..5, mm.toString())
+    }
+
+    @Test fun `nunca mas marcas de las pedidas`() {
+        val desde = t(1, 1, 0, 0)
+        for (seg in listOf(7L, 61L, 999L, 3601L, 50_000L, 200_000L, 2_000_000L, 20_000_000L, 90_000_000L)) {
+            val m = Chart.roundTimeTicks(desde.plusSeconds(13), desde.plusSeconds(13 + seg), target = 5)
+            assertTrue(m.size <= 5, "$seg s -> ${m.size}")
+        }
+    }
+
+    @Test fun `el cero del eje vertical no sale como menos cero`() {
+        val t = Chart.yTicks(-160.0, 2160.0)
+        assertTrue(t.any { it.label == "0" }, t.toString())
+        assertTrue(t.none { it.label.startsWith("-0") }, t.toString())
+    }
 }

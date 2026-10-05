@@ -357,6 +357,109 @@ object FieldbookCsv {
         }
     }
 
+    /**
+     * Un aforo por dilucion de sal, en su propio fichero: cabecera comentada con todo lo de
+     * la medicion y la calibracion, y una fila por lectura de conductividad.
+     *
+     * APARTE del de area-velocidad aunque sean la misma nota. Son tablas sin una sola columna
+     * en comun --tramos de un perfil frente a una serie temporal-- y juntarlas obligaria a
+     * separarlas antes de poder hacer nada con ninguna.
+     *
+     * Cada fila dice si entro en la integral (`in_window`) y su exceso sobre la base ya
+     * recortado a cero, que es exactamente lo que se integra: quien rehaga la cuenta en una
+     * hoja de calculo tiene que poder llegar al mismo Sigma sin adivinar nada.
+     */
+    fun saltDilution(
+        e: FieldEntry,
+        campaign: String = "",
+        zone: ZoneId = ZoneId.systemDefault(),
+        geoid: (FieldPosition) -> GeoidTag? = { null },
+    ): String = buildString {
+        val s = e.gauging?.salt ?: SaltDilution()
+        val r = SaltDilutionMath.compute(s)
+
+        fun c(clave: String, valor: Any?) {
+            val v = when (valor) { null -> ""; is Double -> num(valor); else -> valor.toString() }
+            if (v.isNotBlank()) append("# ").append(clave).append(": ").append(v).append('\n')
+        }
+        fun hora(ms: Long?) = ms?.let { time(it, zone) }
+        fun posicion(prefijo: String, p: FieldPosition) {
+            c("${prefijo}latitude", p.latitude)
+            c("${prefijo}longitude", p.longitude)
+            c("${prefijo}altitude_m_wgs84", p.altitudeMetres)
+            geoid(p)?.let { g ->
+                c("${prefijo}geoid_model", g.model)
+                c("${prefijo}altitude_m_orthometric", p.altitudeMetres?.let { it - g.undulation })
+            }
+            c("${prefijo}position_accuracy_m", p.accuracyMetres)
+            c("${prefijo}position_source", p.source.name)
+            c("${prefijo}position_point", p.pointName)
+        }
+
+        append("# GlacioTools stream gauging -- salt dilution\n")
+        c("profile", e.profileName)
+        c("campaign", campaign)
+        c("observer", e.person)
+        c("created", hora(e.createdEpochMillis))
+        c("entry_id", e.id)
+        e.position?.let { posicion("measurement_", it) }
+        c("method", "slug injection, Q = M / (Cal * Sigma) (Merz & Doppmann 2006)")
+        c("salt_mass_g", s.saltMassG)
+        c("injection_time", hora(s.injectionEpochMillis))
+        s.injectionPosition?.let { posicion("injection_", it) }
+        c("injection_to_measurement_m", s.injectionDistanceM)
+        c("calibration_factor_mgl_per_uscm", s.calibrationFactor)
+        c("base_conductivity_uscm", s.baseConductivity)
+        c("integration_start", hora(s.windowStartMillis))
+        c("integration_end", hora(s.windowEndMillis))
+        c("readings_source", s.readingsSource.name.lowercase())
+        c("imported_file", s.importedFile)
+        c("readings", s.readings.size)
+        c("readings_integrated", r.readings)
+        c("sigma_uscm_s", r.sigma.takeIf { s.baseConductivity != null })
+        c("peak_excess_uscm", r.peakExcess)
+        c("peak_time", hora(r.peakAtMillis))
+        c("passage_s", r.passageSeconds)
+        c("discharge_m3s", r.dischargeM3s)
+        c("discharge_ls", r.dischargeM3s?.let { it * 1000.0 })
+        if (s.injectionNotes.isNotBlank()) {
+            append("# injection_notes:\n")
+            s.injectionNotes.lineSequence().forEach { append("#   ").append(it).append('\n') }
+        }
+        s.calibration?.let { cal ->
+            val filas = SaltDilutionMath.calibrationRows(cal)
+            val ajuste = SaltDilutionMath.fit(filas)
+            c("calibration_water_ml", cal.waterVolumeMl)
+            c("calibration_reference_ml", cal.referenceVolumeMl)
+            c("calibration_reference_salt_g", cal.referenceSaltG)
+            c("calibration_increment_ml", cal.incrementMl)
+            ajuste?.let {
+                c("calibration_slope_uscm_per_gl", it.slope)
+                c("calibration_intercept_uscm", it.intercept)
+                c("calibration_r2", it.r2)
+                c("calibration_points_used", it.n)
+            }
+            append("# calibration table: sample_volume_ml, salt_concentration_gl, conductivity_uscm\n")
+            filas.forEach { f ->
+                append("#   ").append(num(f.volumeMl)).append(", ")
+                    .append(num(f.concentrationGL)).append(", ")
+                    .append(f.conductivity?.let { num(it) } ?: "").append('\n')
+            }
+        }
+
+        append(row("time", "seconds_after_injection", "conductivity_uscm",
+                   "excess_uscm", "in_window"))
+        s.readings.sortedBy { it.atEpochMillis }.forEach { l ->
+            val dentro = (s.windowStartMillis == null || l.atEpochMillis >= s.windowStartMillis) &&
+                         (s.windowEndMillis == null || l.atEpochMillis <= s.windowEndMillis)
+            append(row(hora(l.atEpochMillis),
+                       s.injectionEpochMillis?.let { (l.atEpochMillis - it) / 1000.0 },
+                       l.microSiemensPerCm,
+                       s.baseConductivity?.let { maxOf(l.microSiemensPerCm - it, 0.0) },
+                       if (dentro) 1 else 0))
+        }
+    }
+
     fun folderName(raw: String): String {
         val limpio = raw.trim()
             .replace(Regex("""[\\/:*?"<>|\u0000-\u001F]"""), "_")

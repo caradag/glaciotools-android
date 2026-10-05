@@ -263,4 +263,23 @@ class JournalPositionTest {
                                 position = conPosicion().position).isEmpty(),
                    "solo con coordenada sigue estando vacia: se abrio y no se escribio")
     }
+
+    @Test fun `los dias saltados aparecen como huecos y solo entre dias escritos`() {
+        val d = listOf(JournalDay("2026-10-05", "", emptyList()),
+                       JournalDay("2026-10-02", "Temporal", emptyList()),
+                       JournalDay("2026-10-01", "", emptyList()))
+        val r = JournalDays.withGaps(d)
+        assertEquals(listOf("2026-10-05", "2026-10-04", "2026-10-03", "2026-10-02", "2026-10-01"),
+                     r.map { it.key })
+        assertEquals(listOf(false, true, true, false, false), r.map { it.missing })
+        assertEquals("Temporal", r[3].title)
+        // Un solo dia, o ninguno: nada que rellenar.
+        assertEquals(d.take(1), JournalDays.withGaps(d.take(1)))
+    }
+
+    @Test fun `los huecos cruzan meses y anos sin perder un dia`() {
+        val r = JournalDays.withGaps(listOf(JournalDay("2027-01-02", "", emptyList()),
+                                            JournalDay("2026-12-30", "", emptyList())))
+        assertEquals(listOf("2027-01-02", "2027-01-01", "2026-12-31", "2026-12-30"), r.map { it.key })
+    }
 }

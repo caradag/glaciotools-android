@@ -164,15 +164,8 @@ private fun TerminalTab(vm: DeviceViewModel, s: UiState, listState: LazyListStat
     var command by remember { mutableStateOf("") }
     var historyAt by remember { mutableStateOf(-1) }
     val hScroll = rememberScrollState()
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    // SAF, igual que el CSV: el usuario elige donde y no hacen falta permisos.
-    val saver = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri ->
-        if (uri != null) runCatching {
-            ctx.contentResolver.openOutputStream(uri)?.use { it.write(vm.terminalText()) }
-        }
-    }
+    // Guardar con SAF, igual que el CSV, o compartirlo directamente.
+    val exportar = rememberSaveOrShare("text/plain", "terminal-export")
 
     // Al entrar en la pestana se salta al final SIN animar. Animar desde la posicion cero
     // era el barrido de arriba abajo; y saltar es ademas lo que uno quiere al abrir un
@@ -271,7 +264,10 @@ private fun TerminalTab(vm: DeviceViewModel, s: UiState, listState: LazyListStat
                 // que es justo lo que le falta al terminal con el teclado abierto.
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     TextButton(
-                        onClick = { saver.launch(vm.terminalFileName()) },
+                        onClick = {
+                            val texto = vm.terminalText()
+                            exportar.offer(vm.terminalFileName(), "text/plain", { it.write(texto) })
+                        },
                         enabled = s.terminal.isNotEmpty(),
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                         modifier = Modifier.testTag("terminal-save"),
@@ -1258,16 +1254,8 @@ private fun PositionRow(vm: DeviceViewModel, s: UiState) {
 private fun PreviewCard(vm: DeviceViewModel, s: UiState) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val name = remember(s.records) { vm.exportName() }
-    // SAF: the user picks where to save and no storage permission is needed.
-    val saver = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/csv")
-    ) { uri ->
-        if (uri == null) vm.onExported(false, name)
-        else runCatching {
-            ctx.contentResolver.openOutputStream(uri)?.use { it.write(vm.csvBytes()) }
-        }.onSuccess { vm.onExported(true, name) }
-         .onFailure { vm.onExported(false, name) }
-    }
+    // Save via SAF (the user picks where, no storage permission) or share straight away.
+    val exportar = rememberSaveOrShare("text/csv", "export")
 
     val sig = s.signature
     // NO se formatean las filas por adelantado. Con cien mil registros eran cien mil cadenas
@@ -1326,8 +1314,12 @@ private fun PreviewCard(vm: DeviceViewModel, s: UiState) {
                     minLines = 2,
                 )
             }
-            Button(onClick = { saver.launch(name) }, enabled = !s.busy,
-                   modifier = Modifier.testTag("export")) { Text("Save CSV") }
+            Button(onClick = {
+                       exportar.offer(name, "text/csv", { it.write(vm.csvBytes()) }) { ok, _ ->
+                           vm.onExported(ok, name)
+                       }
+                   }, enabled = !s.busy,
+                   modifier = Modifier.testTag("export")) { Text("Export CSV") }
 
             // The header stays put while the rows scroll under it: without it, a column of
             // bare numbers says nothing once the first line is out of view.

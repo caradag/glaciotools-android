@@ -42,6 +42,14 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         atenderCableEnchufado(intent)
+        atenderAvisoDelDiario(intent)
+    }
+
+    /** Llegar desde la notificacion del diario: se abre el dia que falta. */
+    private fun atenderAvisoDelDiario(intent: android.content.Intent?) {
+        val dia = intent?.getStringExtra(JournalReminderAlarm.EXTRA_DAY) ?: return
+        intent.removeExtra(JournalReminderAlarm.EXTRA_DAY)
+        journal.requestOpenDay(dia)
     }
 
     private fun atenderCableEnchufado(intent: android.content.Intent?) {
@@ -127,6 +135,10 @@ class MainActivity : ComponentActivity() {
         vm.runningOnEmulator = isEmulator()
         vm.refreshUsb()
         atenderCableEnchufado(intent)
+        atenderAvisoDelDiario(intent)
+        // El aviso diario del diario. Se reprograma en cada arranque: es idempotente, y asi
+        // sobrevive a una actualizacion de la app aunque el receptor de arranque no llegue.
+        JournalReminderAlarm.schedule(applicationContext)
         setContent {
             GlacioToolsTheme {
                 // Las testTag como resource-id: uiautomator (tools/ui.py) las encuentra asi. Las

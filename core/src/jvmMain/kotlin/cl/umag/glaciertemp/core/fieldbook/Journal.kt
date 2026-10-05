@@ -54,6 +54,11 @@ data class JournalDay(
     val key: String,
     val title: String,
     val entries: List<JournalEntry>,
+    /**
+     * Un hueco: un dia ENTRE dos dias escritos del que no hay nada. No existe en disco --es
+     * un aviso de la lista, no un registro-- y por eso nunca llega a una exportacion.
+     */
+    val missing: Boolean = false,
 )
 
 /**
@@ -64,6 +69,34 @@ data class JournalDay(
  * nadie reproduce a mano.
  */
 object JournalDays {
+
+    /**
+     * La lista de dias con los HUECOS rellenos: cada dia que falta entre el mas antiguo y el
+     * mas reciente aparece vacio y marcado como [JournalDay.missing].
+     *
+     * Se calcula al mostrar y no se guarda. Guardado seria un dia "escrito" sin que nadie lo
+     * escribiera, y llegaria al documento exportado como si fuera un registro de terreno;
+     * calculado, desaparece solo en cuanto se anota algo en el o se le pone titulo. Y cada
+     * vez que se anade un dia nuevo --casi siempre el de hoy-- los que se saltaron hasta el
+     * aparecen solos, que es justo lo que se quiere ver.
+     *
+     * @param days los dias tal como los devuelve [group]: del mas reciente al mas antiguo.
+     */
+    fun withGaps(days: List<JournalDay>): List<JournalDay> {
+        if (days.size < 2) return days
+        val porClave = days.associateBy { it.key }
+        val desde = java.time.LocalDate.parse(days.last().key)
+        val hasta = java.time.LocalDate.parse(days.first().key)
+        // Una campana de anos con dos dias escritos no deberia generar setecientos
+        // avisos: mas de un ano de hueco se deja como esta.
+        if (java.time.temporal.ChronoUnit.DAYS.between(desde, hasta) > 366) return days
+        return generateSequence(hasta) { it.minusDays(1) }
+            .takeWhile { !it.isBefore(desde) }
+            .map { d ->
+                val k = d.toString()
+                porClave[k] ?: JournalDay(k, "", emptyList(), missing = true)
+            }.toList()
+    }
 
     /**
      * La clave del dia, en hora LOCAL.

@@ -9,6 +9,8 @@ Tres herramientas detras de una pantalla de inicio:
   lectura suelta. Exporta a CSV o GPX.
 - **Fieldbook** -- libreta de terreno: notas generales con fotos y audio, mediciones de baliza
   con su tasa de ablacion, puntos GNSS con cronometro y alarma, y muestras dendrocronologicas.
+  Aforos de caudal por area-velocidad y por dilucion de sal (Merz y Doppmann 2006: calibracion,
+  lecturas a mano o importadas de un logger, base y ventana sobre el grafico, Q = M/(Cal*Sigma)).
 
 Requiere **firmware 3.0 o posterior** (protocolo 4):
 https://github.com/caradag/glaciertemp-firmware

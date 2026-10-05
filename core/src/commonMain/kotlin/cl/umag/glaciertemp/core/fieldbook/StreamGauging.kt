@@ -66,10 +66,27 @@ data class StreamGauging(
     val depthFromBed: Boolean = false,
     val bins: List<GaugingBin> = emptyList(),
     val comments: String = "",
+    /**
+     * La pestana que se estaba mirando. No excluye nada: un mismo perfil se puede aforar por
+     * los dos metodos en la misma nota, y compararlos es justo para lo que sirve tenerlos
+     * juntos. Se guarda solo para reabrir la nota donde se dejo.
+     */
+    val method: GaugingMethod = GaugingMethod.VELOCITY_AREA,
+    val salt: SaltDilution? = null,
+    /**
+     * Si la nota esta cerrada a la edicion. Se pone al pulsar Done: un aforo terminado es un
+     * dato, y una casilla que se toca sin querer al hojear la libreta --con el telefono en el
+     * bolsillo, con guantes-- lo cambia sin que nadie se entere.
+     */
+    val locked: Boolean = false,
 ) {
     fun isEmpty(): Boolean =
-        widthM == null && intervalM == null && comments.isBlank() && bins.all { it.isEmpty }
+        widthM == null && intervalM == null && comments.isBlank() && bins.all { it.isEmpty } &&
+        (salt == null || salt.isEmpty()) && method == GaugingMethod.VELOCITY_AREA && !locked
 }
+
+/** Los dos metodos de aforo. El nombre va tal cual al fichero, asi que no se renombra. */
+enum class GaugingMethod { VELOCITY_AREA, SALT_DILUTION }
 
 /** La geometria y la aritmetica del aforo. Sin nada de plataforma: se prueba sin telefono. */
 object Gauging {
@@ -301,4 +318,43 @@ object Gauging {
     /** Cuantos tramos con datos se perderian al reducir la tabla a n. */
     fun wouldLose(bins: List<GaugingBin>, n: Int): Int =
         if (n >= bins.size) 0 else bins.drop(max(n, 0)).count { !it.isEmpty }
+
+    /**
+     * Lo que hereda una medicion nueva de un perfil ya aforado.
+     *
+     * Pasa lo que describe el SITIO y el equipo, que no cambia de una visita a otra: el
+     * nombre y la posicion del perfil, su ancho, el intervalo de tramos y como se lee la
+     * barra; el punto de inyeccion, su distancia y el factor de calibracion; y las cantidades
+     * de la herramienta de calibracion (volumenes y solucion), que son las del equipo que se
+     * lleva. NO pasa nada que sea una medida: ni profundidades, ni velocidades, ni lecturas
+     * de conductividad, ni la base, ni la masa de sal --que depende del caudal del dia--, ni
+     * las conductividades de la calibracion, ni comentarios ni fotos. La nota nace
+     * desbloqueada: es una medicion que todavia no se ha hecho.
+     *
+     * La tabla de tramos se crea ya, vacia y con su tamano, para empezar a medir sin pasar
+     * por la cabecera.
+     */
+    fun newMeasurementFrom(src: FieldEntry, base: FieldEntry): FieldEntry {
+        val g = src.gauging ?: StreamGauging()
+        val n = bins(g.widthM, g.intervalM).size
+        val sal = g.salt
+        return base.copy(
+            profileName = src.profileName,
+            position = src.position,
+            gauging = StreamGauging(
+                widthM = g.widthM,
+                intervalM = g.intervalM,
+                depthFromBed = g.depthFromBed,
+                bins = List(n) { GaugingBin() },
+                method = g.method,
+                salt = SaltDilution(
+                    injectionPosition = sal?.injectionPosition,
+                    injectionEpochMillis = base.createdEpochMillis,
+                    injectionDistanceM = sal?.injectionDistanceM,
+                    calibrationFactor = sal?.calibrationFactor,
+                    calibration = sal?.calibration?.let { it.copy(conductivities = emptyList()) },
+                ),
+            ),
+        )
+    }
 }

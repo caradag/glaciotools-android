@@ -218,6 +218,27 @@ object FieldbookOdt {
                     if (g.comments.isNotBlank()) {
                         doc.body("Comments"); doc.multiline(g.comments)
                     }
+
+                    // LA DILUCION, si se midio. El mismo perfil por los dos metodos es justo
+                    // lo que se quiere poder comparar, asi que van uno debajo del otro.
+                    val s = g.salt
+                    if (s != null && s.readings.isNotEmpty()) {
+                        val rs = SaltDilutionMath.compute(s)
+                        doc.body("Salt dilution: " + (rs.dischargeM3s?.let {
+                            "discharge ${FieldbookCsv.num(it)} m3/s"
+                        } ?: "discharge not calculated"))
+                        val det = ArrayList<String>()
+                        s.saltMassG?.let { det += "salt ${FieldbookCsv.num(it)} g" }
+                        s.calibrationFactor?.let { det += "Cal ${FieldbookCsv.num(it)} (mg/L)/(µS/cm)" }
+                        s.baseConductivity?.let { det += "base ${FieldbookCsv.num(it)} µS/cm" }
+                        rs.peakExcess?.let { det += "peak +${FieldbookCsv.num(it)} µS/cm" }
+                        s.injectionDistanceM?.let { det += "injected ${FieldbookCsv.num(it)} m upstream" }
+                        if (det.isNotEmpty()) doc.meta(det.joinToString(", "))
+                        doc.meta("${s.readings.size} conductivity reading(s), in their own CSV file.")
+                        if (s.injectionNotes.isNotBlank()) {
+                            doc.body("Injection point"); doc.multiline(s.injectionNotes)
+                        }
+                    }
                 }
                 e.photos.forEach { foto(doc, media, it, it) }
             }

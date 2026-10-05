@@ -16,6 +16,8 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
@@ -54,8 +56,9 @@ private fun typeBlurb(t: EntryType): String = when (t) {
                         "perimeter."
     EntryType.COSMO -> "A boulder sampled for exposure dating: site and boulder " +
                        "description, dimensions, and the topographic shielding."
-    EntryType.GAUGING -> "Discharge of a river by the area-velocity method: depth and " +
-                         "velocity across the section, bin by bin, with the total."
+    EntryType.GAUGING -> "Discharge of a stream, by velocity × area (depth and velocity " +
+                         "across the section, bin by bin) or by salt dilution (calibration " +
+                         "and conductivity over time), or both on the same profile."
 }
 
 /**
@@ -133,7 +136,8 @@ fun FieldbookScreen(vm: FieldbookViewModel, onJournal: () -> Unit, onBack: () ->
                         val pendiente = vm.missingInGnss()
                         if (pendiente.isNotEmpty()) { faltaEnBarra = pendiente; return@Button }
                     }
-                    vm.close()
+                    // En un aforo, el Done de arriba hace lo mismo que el de abajo: bloquea.
+                    if (abierta.type == EntryType.GAUGING) vm.lockAndClose() else vm.close()
                 },
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                 modifier = Modifier.testTag("fb-save-top")) {
@@ -249,7 +253,9 @@ private fun EntryListScreen(vm: FieldbookViewModel, s: FieldbookUiState,
         } else {
             LazyColumn(Modifier.weight(1f).testTag("fb-list"),
                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(s.entries, key = { it.id }) { e -> EntryCard(e) { vm.open(e.id) } }
+                items(s.entries, key = { it.id }) { e ->
+                    EntryCard(e, onNewMeasurement = { vm.newMeasurementFrom(e.id) }) { vm.open(e.id) }
+                }
             }
         }
     }
@@ -599,12 +605,17 @@ private fun ArchivedCampaignsDialog(
 
 /** Una entrada en la lista: lo justo para reconocerla sin abrirla. */
 @Composable
-private fun EntryCard(e: FieldEntry, onOpen: () -> Unit) {
+private fun EntryCard(e: FieldEntry, onNewMeasurement: () -> Unit = {}, onOpen: () -> Unit) {
     Card(onClick = onOpen, modifier = Modifier.fillMaxWidth().testTag("fb-card-${e.id}")) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+        Column(Modifier.weight(1f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(e.title(), style = MaterialTheme.typography.titleSmall,
                      modifier = Modifier.weight(1f))
+                if (e.gauging?.locked == true) {
+                    Icon(Icons.Outlined.Lock, contentDescription = "Locked",
+                         Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 // Una medicion en marcha se ve desde la LISTA. Es lo unico de la libreta que
                 // sigue ocurriendo mientras nadie mira, y encontrarla obliga a recordar en
                 // que entrada estaba.
@@ -626,6 +637,25 @@ private fun EntryCard(e: FieldEntry, onOpen: () -> Unit) {
                 e.position?.let { append("  ·  ${it.describe()}") }
             }, style = MaterialTheme.typography.bodySmall,
                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        // UNA MEDICION NUEVA DEL MISMO PERFIL, desde la lista. Volver a aforar un perfil es
+        // lo normal --es para lo que existe un perfil-- y rehacer su configuracion en cada
+        // visita es justo donde un ancho o un factor se teclea distinto sin que nadie lo vea.
+        if (e.type == EntryType.GAUGING) {
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { menu = true },
+                           modifier = Modifier.testTag("fb-card-menu-${e.id}")) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "More")
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("New Measurement") },
+                        onClick = { menu = false; onNewMeasurement() },
+                        modifier = Modifier.testTag("fb-card-new-measurement-${e.id}"))
+                }
+            }
+        }
         }
     }
 }
@@ -877,16 +907,34 @@ private fun ExportDialog(vm: FieldbookViewModel, s: FieldbookUiState, onClose: (
                      "time it belongs to.",
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("You pick the folder in the next screen.",
+                Text("Save to device asks for a folder; Share sends the ZIP to another app " +
+                     "(e-mail, WhatsApp, a cloud drive).",
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
-            TextButton(onClick = { guardador.launch(vm.exportName(todo)) },
-                       modifier = Modifier.testTag("fb-export-go")) { Text("Choose folder") }
-        },
-        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } })
+            Row {
+                TextButton(onClick = onClose) { Text("Cancel") }
+                // COMPARTIR EL ZIP. Se escribe en el buzon de la cache con el mismo export
+                // de siempre y el menu del sistema se abre AL TERMINAR: con doscientas fotos
+                // son segundos, y abrirlo antes entregaria un fichero a medias.
+                TextButton(onClick = {
+                               onClose()
+                               val dir = java.io.File(ctx.cacheDir, "exports")
+                               dir.mkdirs(); dir.listFiles()?.forEach { it.delete() }
+                               val f = java.io.File(dir, vm.exportName(todo))
+                               val salida = runCatching { f.outputStream() }.getOrNull()
+                               if (salida == null) vm.report("Could not prepare the file to share.")
+                               else vm.export(salida, FieldbookMedia(vm.store!!), todo,
+                                              vm.journal?.let { FieldbookMedia(it) } ?: FieldbookExport.NoMedia,
+                                              onDone = { ok -> if (ok) launchShare(ctx, f, "application/zip") })
+                           },
+                           modifier = Modifier.testTag("fb-export-share")) { Text("Share") }
+                TextButton(onClick = { guardador.launch(vm.exportName(todo)) },
+                           modifier = Modifier.testTag("fb-export-go")) { Text("Save to device") }
+            }
+        })
 }
 
 // ------------------------------------- nota general -------------------------------------

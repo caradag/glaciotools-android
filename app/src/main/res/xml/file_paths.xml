@@ -21,4 +21,7 @@
     <files-path name="fieldbook-media" path="fieldbook/media/" />
     <files-path name="journal-media" path="journal/media/" />
     <files-path name="gps-media" path="gps-points/media/" />
+    <!-- El buzon de lo que se COMPARTE al exportar (SaveOrShare): un fichero de paso en la
+         cache, que se vacia en cada exportacion. Solo lectura para quien lo recibe. -->
+    <cache-path name="exports" path="exports/" />
 </paths>

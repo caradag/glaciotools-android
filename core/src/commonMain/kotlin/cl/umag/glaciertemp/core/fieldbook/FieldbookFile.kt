@@ -207,7 +207,14 @@ object FieldbookFile {
                     kvNum("width_m", g.widthM)
                     kvNum("interval_m", g.intervalM)
                     kv("depth_from_bed", if (g.depthFromBed) "1" else "0")
+                    kv("method", g.method.name)
+                    if (g.locked) kv("locked", "1")
                     kv("comments", g.comments)
+                    // LAS FOTOS VAN AQUI, DENTRO DE [gauging], y no al final. Estuvieron al
+                    // final, detras de los [bin], y entonces caian en el bloque del ULTIMO
+                    // tramo: al releer se buscaban en [gauging], no aparecian, y el barrido
+                    // de medios sueltos borraba los ficheros por no citarlos ninguna nota.
+                    e.photos.forEach { kv("photo", it) }
                     // UN BLOQUE POR TRAMO, y TODOS, incluidos los vacios. El indice del
                     // tramo es su posicion en el perfil, asi que saltarse los vacios
                     // correria todos los de despues al releer: el dato de la vertical 30
@@ -221,10 +228,112 @@ object FieldbookFile {
                         kv("v_first", b.velocityFirstEditMillis)
                         kv("v_last", b.velocityLastEditMillis)
                     }
+                    g.salt?.let { writeSalt(it) }
                 }
-                e.photos.forEach { kv("photo", it) }
+                // Sin ficha de aforo no hay donde colgarlas: van en [gauging] igual.
+                if (e.gauging == null) e.photos.forEach { kv("photo", it) }
             }
         }
+    }
+
+    /**
+     * La dilucion de sal, en dos bloques: `[salt]` con lo de la medicion y sus lecturas, y
+     * `[salt_cal]` con la herramienta de calibracion.
+     *
+     * UNA LINEA POR LECTURA, `r=<milisegundos> <uS/cm>`. Un logger a un segundo durante media
+     * hora son 1.800 lineas, unos 40 kB: nada, y cada lectura se sigue leyendo a ojo.
+     */
+    private fun StringBuilder.writeSalt(s: SaltDilution) {
+        append("[salt]\n")
+        kvNum("mass_g", s.saltMassG)
+        s.injectionPosition?.let { p ->
+            kvNum("inj.lat", p.latitude)
+            kvNum("inj.lon", p.longitude)
+            kvNum("inj.alt", p.altitudeMetres)
+            kvNum("inj.acc", p.accuracyMetres)
+            kv("inj.source", p.source.name)
+            kv("inj.point_name", p.pointName)
+            kv("inj.point_id", p.pointId)
+            kv("inj.at", p.atEpochMillis)
+        }
+        kv("inj.time", s.injectionEpochMillis)
+        kvNum("inj.distance_m", s.injectionDistanceM)
+        kv("inj.notes", s.injectionNotes)
+        kvNum("cal_factor", s.calibrationFactor)
+        kv("source", s.readingsSource.name)
+        kv("imported_file", s.importedFile)
+        kvNum("base", s.baseConductivity)
+        kv("window_start", s.windowStartMillis)
+        kv("window_end", s.windowEndMillis)
+        if (s.calculated) kv("calculated", "1")
+        s.readings.forEach { r ->
+            if (r.microSiemensPerCm.isFinite())
+                kv("r", "${r.atEpochMillis} ${r.microSiemensPerCm}")
+        }
+        s.calibration?.let { c ->
+            append("[salt_cal]\n")
+            kvNum("water_ml", c.waterVolumeMl)
+            kvNum("ref_ml", c.referenceVolumeMl)
+            kvNum("ref_salt_g", c.referenceSaltG)
+            kvNum("increment_ml", c.incrementMl)
+            kv("points", c.points)
+            // Una sola linea, con "_" donde no se midio: el indice ES la cantidad de
+            // solucion anadida, y saltarse los huecos correria todo lo de despues.
+            if (c.conductivities.any { it != null })
+                kv("ec", c.conductivities.joinToString(" ") { it?.toString() ?: "_" })
+        }
+    }
+
+    private fun readSalt(bloques: List<Block>): SaltDilution? {
+        val b = bloques.firstOrNull { it.name == "salt" } ?: return null
+        val cal = bloques.firstOrNull { it.name == "salt_cal" }?.let { c ->
+            val d = SaltCalibration()
+            SaltCalibration(
+                waterVolumeMl = c.num("water_ml") ?: d.waterVolumeMl,
+                referenceVolumeMl = c.num("ref_ml") ?: d.referenceVolumeMl,
+                referenceSaltG = c.num("ref_salt_g") ?: d.referenceSaltG,
+                incrementMl = c.num("increment_ml") ?: d.incrementMl,
+                points = c.int("points") ?: d.points,
+                conductivities = c.one("ec")?.split(" ")?.filter { it.isNotEmpty() }
+                    ?.map { it.toDoubleOrNull() } ?: emptyList(),
+            )
+        }
+        val inj = b.num("inj.lat")?.let { lat ->
+            b.num("inj.lon")?.let { lon ->
+                FieldPosition(
+                    latitude = lat, longitude = lon,
+                    altitudeMetres = b.num("inj.alt"),
+                    accuracyMetres = b.num("inj.acc"),
+                    source = runCatching { PositionSource.valueOf(b.one("inj.source") ?: "") }
+                        .getOrDefault(PositionSource.PHONE),
+                    pointName = b.one("inj.point_name"),
+                    pointId = b.one("inj.point_id"),
+                    atEpochMillis = b.long("inj.at") ?: 0L,
+                )
+            }
+        }
+        return SaltDilution(
+            saltMassG = b.num("mass_g"),
+            injectionPosition = inj,
+            injectionEpochMillis = b.long("inj.time"),
+            injectionDistanceM = b.num("inj.distance_m"),
+            injectionNotes = b.one("inj.notes") ?: "",
+            calibrationFactor = b.num("cal_factor"),
+            calibration = cal,
+            readings = b.all("r").mapNotNull { l ->
+                val partes = l.trim().split(" ")
+                val t = partes.getOrNull(0)?.toLongOrNull()
+                val v = partes.getOrNull(1)?.toDoubleOrNull()
+                if (t == null || v == null) null else ConductivityReading(t, v)
+            }.sortedBy { it.atEpochMillis },
+            readingsSource = runCatching { ReadingsSource.valueOf(b.one("source") ?: "") }
+                .getOrDefault(ReadingsSource.MANUAL),
+            importedFile = b.one("imported_file"),
+            baseConductivity = b.num("base"),
+            windowStartMillis = b.long("window_start"),
+            windowEndMillis = b.long("window_end"),
+            calculated = b.one("calculated") == "1",
+        )
     }
 
     // ------------------------------------ lectura ------------------------------------
@@ -426,11 +535,18 @@ object FieldbookFile {
                     depthFromBed = g?.one("depth_from_bed") == "1",
                     bins = tramos,
                     comments = g?.one("comments") ?: "",
+                    method = runCatching { GaugingMethod.valueOf(g?.one("method") ?: "") }
+                        .getOrDefault(GaugingMethod.VELOCITY_AREA),
+                    salt = readSalt(bloques),
+                    locked = g?.one("locked") == "1",
                 )
                 base.copy(
                     profileName = g?.one("profile") ?: "",
                     gauging = aforo.takeIf { !it.isEmpty() },
-                    photos = g?.all("photo") ?: emptyList(),
+                    // De todos los bloques del aforo y no solo de [gauging]: los ficheros
+                    // escritos antes de la 2.37 las tienen en el ultimo [bin].
+                    photos = bloques.filter { it.name in setOf("gauging", "bin", "salt", "salt_cal") }
+                        .flatMap { it.all("photo") }.distinct(),
                 )
             }
         }

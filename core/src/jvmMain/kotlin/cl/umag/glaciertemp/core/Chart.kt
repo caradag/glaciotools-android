@@ -131,6 +131,9 @@ object Chart {
         val out = ArrayList<Tick>()
         var v = first
         while (v <= max + step * 1e-9) {
+            // El cero que llega por acumulacion o por ceil de un negativo puede ser -0.0, y
+            // "%.0f" lo escribe "-0" en el eje.
+            if (abs(v) < step * 1e-9) v = 0.0
             out.add(Tick(v, formatTick(v, step)))
             v += step
         }
@@ -147,6 +150,89 @@ object Chart {
         }
         return String.format("%.${decimals}f", v)
     }
+
+    /** Una marca del eje de tiempo: donde cae y que se escribe. */
+    data class TimeTick(val time: LocalDateTime, val label: String)
+
+    /** Pasos posibles de menos de un dia, en segundos. */
+    private val PASOS_CORTOS = longArrayOf(
+        1, 2, 5, 10, 15, 30,
+        60, 2 * 60, 5 * 60, 10 * 60, 15 * 60, 30 * 60,
+        3600, 2 * 3600, 3 * 3600, 6 * 3600, 12 * 3600)
+    private val PASOS_DIAS = intArrayOf(1, 2, 5, 10, 15)
+    private val PASOS_MESES = intArrayOf(1, 2, 3, 6, 12, 24, 60, 120)
+
+    /**
+     * Marcas del eje de tiempo en instantes REDONDOS: minutos, horas, dias o meses enteros.
+     *
+     * Las anteriores ([timeTicks]) repartian el tramo en partes iguales a partir del primer
+     * registro, y salian marcas como "29/09 21:40" y "01/10 11:10": correctas y casi inutiles,
+     * porque para saber donde cae la medianoche habia que hacer la cuenta. Aqui se elige el
+     * paso mas pequeno de una lista de pasos redondos que no da mas de [target] marcas, y las
+     * marcas caen en sus multiplos: las 12:00, las 18:00, el dia 1.
+     *
+     * La etiqueta lleva la fecha solo donde hace falta: en la primera marca y en las que caen
+     * a medianoche. Las demas, solo la hora. Asi caben cinco en el ancho de un telefono y no
+     * hay ninguna ambigua.
+     */
+    fun roundTimeTicks(from: LocalDateTime, to: LocalDateTime, target: Int = 5): List<TimeTick> {
+        if (!to.isAfter(from) || target < 1) return emptyList()
+        val span = Duration.between(from, to).seconds.coerceAtLeast(1)
+
+        PASOS_CORTOS.firstOrNull { span.toDouble() / it <= target }?.let { paso ->
+            val dia0 = from.toLocalDate().atStartOfDay()
+            val desde = Duration.between(dia0, from).seconds
+            var t = dia0.plusSeconds(ceilDiv(desde, paso) * paso)
+            val out = ArrayList<TimeTick>()
+            val conSegundos = paso < 60
+            val varios = from.toLocalDate() != to.toLocalDate()
+            while (!t.isAfter(to)) {
+                val medianoche = t.toLocalTime() == java.time.LocalTime.MIDNIGHT
+                val patron = when {
+                    medianoche && !conSegundos -> "dd/MM"
+                    out.isEmpty() && varios -> if (conSegundos) "dd/MM HH:mm:ss" else "dd/MM HH:mm"
+                    conSegundos -> "HH:mm:ss"
+                    else -> "HH:mm"
+                }
+                out += TimeTick(t, DateTimeFormatter.ofPattern(patron).format(t))
+                t = t.plusSeconds(paso)
+            }
+            return out
+        }
+
+        val dias = span / 86_400.0
+        PASOS_DIAS.firstOrNull { dias / it <= target }?.let { paso ->
+            // Dias 1, 1+paso, 1+2*paso... de cada mes: el 1 y el 15 se leen; un multiplo
+            // contado desde 1970 cae en cualquier dia y no le dice nada a nadie.
+            val out = ArrayList<TimeTick>()
+            var d = from.toLocalDate()
+            if (from.toLocalTime() != java.time.LocalTime.MIDNIGHT) d = d.plusDays(1)
+            val varios = from.year != to.year
+            while (!d.atStartOfDay().isAfter(to)) {
+                if ((d.dayOfMonth - 1) % paso == 0 && d.dayOfMonth <= 31 - paso / 2) {
+                    val patron = if (out.isEmpty() && varios || d.dayOfYear == 1) "dd/MM/yy" else "dd/MM"
+                    out += TimeTick(d.atStartOfDay(), DateTimeFormatter.ofPattern(patron).format(d))
+                }
+                d = d.plusDays(1)
+            }
+            return out
+        }
+
+        val meses = dias / 30.44
+        val paso = PASOS_MESES.firstOrNull { meses / it <= target } ?: PASOS_MESES.last()
+        val out = ArrayList<TimeTick>()
+        var m = java.time.YearMonth.from(from)
+        if (from != m.atDay(1).atStartOfDay()) m = m.plusMonths(1)
+        val fmt = DateTimeFormatter.ofPattern(if (paso >= 12) "yyyy" else "MMM yy", java.util.Locale.ENGLISH)
+        while (!m.atDay(1).atStartOfDay().isAfter(to)) {
+            if ((m.year * 12 + m.monthValue - 1) % paso == 0)
+                out += TimeTick(m.atDay(1).atStartOfDay(), fmt.format(m))
+            m = m.plusMonths(1)
+        }
+        return out
+    }
+
+    private fun ceilDiv(a: Long, b: Long): Long = -Math.floorDiv(-a, b)
 
     /**
      * Marcas del eje horizontal. El formato se elige segun el tramo cubierto: para menos

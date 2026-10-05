@@ -28,6 +28,7 @@ import cl.umag.glaciertemp.core.Sampling
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.calculatePan
 import cl.umag.glaciertemp.core.Chart
+import cl.umag.glaciertemp.core.LogDecoder
 import cl.umag.glaciertemp.core.LogFormat
 import cl.umag.glaciertemp.core.Record
 import cl.umag.glaciertemp.core.Series
@@ -64,40 +65,7 @@ fun ChartCard(records: List<Record>, signature: Int,
                 Text("No valid readings in $selected", Modifier.testTag("chart-empty"),
                      style = MaterialTheme.typography.bodySmall)
             } else {
-                // Zoom y desplazamiento con los dedos. El desplazamiento se acota a la
-                // ventana visible para que no se pueda arrastrar el grafico fuera de vista.
-                var zoom by remember(series.channel) { mutableFloatStateOf(1f) }
-                var pan by remember(series.channel) { mutableFloatStateOf(0f) }
-                // El grafico NO puede tragarse el arrastre vertical: si lo hace, la pagina
-                // deja de poder desplazarse mas alla de el. Solo se consume el pellizco --que
-                // siempre lleva dos dedos-- y el arrastre de un dedo cuando ya hay zoom, que
-                // es cuando el usuario espera mover la vista y no la pagina.
-                val gestos = Modifier.pointerInput(series.channel) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val evento = awaitPointerEvent()
-                            val dedos = evento.changes.count { it.pressed }
-                            val zoomChange = evento.calculateZoom()
-                            val panChange = evento.calculatePan()
-                            val pellizco = dedos >= 2
-                            if (!pellizco && zoom <= 1f) continue   // se deja pasar
-
-                            val nuevoZoom = (zoom * zoomChange).coerceIn(1f, 200f)
-                            val nuevoPan = pan - panChange.x / (size.width * nuevoZoom)
-                            zoom = nuevoZoom
-                            pan = nuevoPan.coerceIn(0f, 1f - 1f / nuevoZoom)
-                            evento.changes.forEach { it.consume() }
-                        }
-                    }
-                }
-                SeriesPlot(series, zoom, pan,
-                           Modifier.fillMaxWidth().height(220.dp).then(gestos).testTag("chart"))
-                if (zoom > 1f) {
-                    TextButton(onClick = { zoom = 1f; pan = 0f },
-                               modifier = Modifier.testTag("chart-reset")) {
-                        Text("Reset view (%.0fx)".format(zoom))
-                    }
-                }
+                DeviceChart(records, signature, selected)
                 Text(
                     buildString {
                         append("${records.size} records")
@@ -116,9 +84,10 @@ fun ChartCard(records: List<Record>, signature: Int,
                 // Sin esta frase la banda parece una media movil o un margen de error, que
                 // es justo lo que NO es.
                 if (series.isReduced) {
-                    Text("The band is the min-max range of the ${series.bucket} records in each " +
-                         "column; the line is their midpoint. No smoothing: there is no " +
-                         "room for one pixel per record.",
+                    Text("The band is the min-max range of the records in each column; the " +
+                         "line is their midpoint. No smoothing: there is no room for one pixel " +
+                         "per record. Zooming in recomputes the columns over what is visible, " +
+                         "down to single records.",
                          Modifier.testTag("chart-legend"),
                          style = MaterialTheme.typography.bodySmall)
                 }
@@ -195,104 +164,81 @@ private fun StatRow(label: String, value: String, tag: String) {
     }
 }
 
+/**
+ * El grafico de la placa: zoom por ejes, cursor y la serie REDUCIDA SOBRE LO QUE SE VE.
+ *
+ * Antes la serie se reducia una sola vez a 480 columnas sobre el log entero y el zoom
+ * ampliaba esas columnas: con 700.000 registros, acercar 200 veces mostraba dos columnas y
+ * media del mismo tamano que antes, y ni un registro mas de detalle. Ahora cada ventana se
+ * vuelve a reducir con los registros que caen dentro, asi que acercar llega hasta el registro
+ * suelto. Es barato: la reduccion es un recorrido lineal y la ventana se busca por biseccion.
+ */
 @Composable
-private fun SeriesPlot(
-    series: Series,
-    zoom: Float,
-    pan: Float,
-    modifier: Modifier = Modifier,
-) {
-    val measurer = rememberTextMeasurer()
-    val line = MaterialTheme.colorScheme.primary
-    val band = line.copy(alpha = 0.28f)
-    val axis = MaterialTheme.colorScheme.outline
-    val labelStyle = TextStyle(fontSize = 9.sp, color = axis)
-
-    Canvas(modifier) {
-        val ticks = Chart.yTicks(series.yMin, series.yMax)
-        val labelW = ticks.maxOfOrNull {
-            measurer.measure(it.label, labelStyle).size.width.toFloat()
-        } ?: 0f
-        val left = labelW + 10f
-        val bottom = size.height - 18f
-        val plot = Rect(left, 6f, size.width, bottom)
-        if (plot.width <= 0f || plot.height <= 0f) return@Canvas
-
-        fun yOf(v: Double): Float {
-            val f = (v - series.yMin) / (series.yMax - series.yMin)
-            return plot.bottom - (f.toFloat() * plot.height)
-        }
-        // La X sale del TIEMPO de cada muestra, no de su indice: con el indice, una noche
-        // entera sin registrar ocupaba lo mismo que un intervalo de muestreo y el hueco no
-        // se veia. zoom y pan son la ventana que el usuario tiene abierta.
-        val fracciones = series.xFractions
-        fun xOf(i: Int): Float {
-            val f = fracciones.getOrElse(i) { 0f }
-            return plot.left + plot.width * ((f - pan) * zoom)
-        }
-
-        ticks.forEach { t ->
-            val y = yOf(t.value)
-            drawLine(axis.copy(alpha = 0.25f), Offset(plot.left, y), Offset(plot.right, y), 1f)
-            val l = measurer.measure(t.label, labelStyle)
-            drawText(l, topLeft = Offset(plot.left - l.size.width - 6f, y - l.size.height / 2f))
-        }
-        drawLine(axis, Offset(plot.left, plot.top), Offset(plot.left, plot.bottom), 1.5f)
-        drawLine(axis, Offset(plot.left, plot.bottom), Offset(plot.right, plot.bottom), 1.5f)
-
-        clipRect(plot.left, plot.top, plot.right, plot.bottom) {
-            // Los huecos parten la serie en tramos: unirlos dibujaria datos inexistentes.
-            val cuts = series.gaps.toSet()
-            var start = 0
-            while (start < series.samples.size) {
-                var end = start + 1
-                while (end < series.samples.size && end !in cuts) end++
-                drawSegment(series, start, end, ::xOf, ::yOf, line, band)
-                start = end
-            }
-        }
-
-        // Marcas temporales, calculadas sobre la ventana visible y no sobre el total.
-        val t0 = series.samples.first().time
-        val t1 = series.samples.last().time
-        val totalSec = java.time.Duration.between(t0, t1).seconds
-        val desde = t0.plusSeconds((totalSec * pan).toLong())
-        val hasta = t0.plusSeconds((totalSec * (pan + 1f / zoom)).toLong().coerceAtMost(totalSec))
-        val labels = Chart.timeTicks(desde, hasta)
-        labels.forEachIndexed { k, s2 ->
-            val l = measurer.measure(s2, labelStyle)
-            val x = plot.left + plot.width * k / (labels.size - 1).coerceAtLeast(1)
-            val tx = (x - l.size.width / 2f).coerceIn(0f, size.width - l.size.width)
-            drawText(l, topLeft = Offset(tx, bottom + 3f))
-        }
+private fun DeviceChart(records: List<Record>, signature: Int, channel: String) {
+    val estado = remember(channel, records) { TimePlotState() }
+    val origen = records.first().time
+    // Segundos de cada registro desde el primero, para buscar la ventana por biseccion.
+    val segundos = remember(records) {
+        LongArray(records.size) { java.time.Duration.between(origen, records[it].time).seconds }
     }
-}
+    val total = segundos.last().toDouble().coerceAtLeast(1.0)
+    val x0 = estado.x0 ?: 0.0
+    val x1 = estado.x1 ?: total
 
-/** Banda min/max cuando hubo reduccion; linea simple cuando cada punto es un registro. */
-private fun DrawScope.drawSegment(
-    s: Series, from: Int, to: Int,
-    xOf: (Int) -> Float, yOf: (Double) -> Float,
-    line: Color, band: Color,
-) {
-    if (to - from <= 0) return
-    val hasBand = (from until to).any { s.samples[it].hi > s.samples[it].lo }
-    if (hasBand) {
-        val p = Path()
-        p.moveTo(xOf(from), yOf(s.samples[from].hi))
-        for (i in from until to) p.lineTo(xOf(i), yOf(s.samples[i].hi))
-        for (i in to - 1 downTo from) p.lineTo(xOf(i), yOf(s.samples[i].lo))
-        p.close()
-        drawPath(p, band)
+    val serie = remember(records, channel, x0, x1) {
+        fun buscar(s: Long): Int {
+            var lo = 0; var hi = segundos.size
+            while (lo < hi) { val m = (lo + hi) / 2; if (segundos[m] < s) lo = m + 1 else hi = m }
+            return lo
+        }
+        // Un registro de mas a cada lado, para que la linea llegue hasta el borde.
+        val a = (buscar(kotlin.math.floor(x0).toLong()) - 1).coerceAtLeast(0)
+        val b = (buscar(kotlin.math.ceil(x1).toLong()) + 1).coerceAtMost(records.size)
+        runCatching { Chart.series(records.subList(a, b), signature, channel) }.getOrNull()
     }
-    if (to - from == 1) {
-        val x = xOf(from)
-        drawCircle(line, 2.5f, Offset(x, yOf(s.samples[from].lo)))
-        return
+    val puntos = remember(serie) {
+        serie?.samples?.map {
+            PlotPoint(java.time.Duration.between(origen, it.time).seconds.toDouble(), it.lo, it.hi)
+        } ?: emptyList()
     }
-    val p = Path()
-    p.moveTo(xOf(from), yOf((s.samples[from].lo + s.samples[from].hi) / 2))
-    for (i in from + 1 until to) {
-        p.lineTo(xOf(i), yOf((s.samples[i].lo + s.samples[i].hi) / 2))
+    val idx = remember(signature, channel) {
+        LogFormat.fields(signature).indexOfFirst { it.name == channel }
     }
-    drawPath(p, line, style = Stroke(width = 2f))
+    val decimales = remember(signature, channel) {
+        LogFormat.fields(signature).getOrNull(idx)?.decimals ?: 2
+    }
+
+    TimePlotControls(estado, "chart")
+    TimePlot(points = puntos, origin = origen, state = estado,
+             cuts = serie?.gaps?.toSet() ?: emptySet(),
+             autoY = serie?.let { it.yMin to it.yMax },
+             modifier = Modifier.fillMaxWidth().height(220.dp).testTag("chart"))
+
+    // EL VALOR DEL REGISTRO DE VERDAD, no el de la columna. Con la serie reducida el punto
+    // dibujado es el centro de una banda que resume cientos de registros; lo que se quiere
+    // leer al senalar es un dato, asi que se busca el registro valido mas cercano en el log.
+    val cursor = estado.cursorX
+    if (cursor != null && idx >= 0) {
+        val reg = remember(cursor, records, idx) {
+            var lo = 0; var hi = segundos.size
+            val s = cursor.toLong()
+            while (lo < hi) { val m = (lo + hi) / 2; if (segundos[m] < s) lo = m + 1 else hi = m }
+            // El mas cercano CON lectura: un registro sin valor en este canal no se senala.
+            (0 until 2000).asSequence().flatMap { d -> sequenceOf(lo - d, lo + d - 1) }
+                .filter { it in records.indices && records[it].values.getOrNull(idx) != null }
+                .minByOrNull { kotlin.math.abs(segundos[it] - cursor) }
+        }
+        reg?.let { i ->
+            val r = records[i]
+            Text("${Stats.formatInstant(r.time)}   $channel = " +
+                 LogDecoder.formatValue(r.values[idx], decimales) + " " + LogFormat.unitOf(channel),
+                 style = MaterialTheme.typography.bodyMedium,
+                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                 modifier = Modifier.testTag("chart-cursor"))
+        }
+    } else if (!estado.zoomMode) {
+        Text("Drag sideways on the chart to read a value. Turn zoom on to stretch the axes.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }

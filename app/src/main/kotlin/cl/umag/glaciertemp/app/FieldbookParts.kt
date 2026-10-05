@@ -299,11 +299,14 @@ fun PositionField(
     onUsePoint: (SavedPoint.Solution) -> Unit,
     onClear: () -> Unit,
     onNeedPoints: () -> Unit,
+    label: String = "Position",
+    /** Prefijo de los testTag: una pantalla con dos posiciones no puede repetirlos. */
+    tag: String = "fb",
 ) {
     var elegir by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Position", style = MaterialTheme.typography.labelMedium,
+        Text(label, style = MaterialTheme.typography.labelMedium,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (position != null) {
             // CLEAR VA AQUI, pegado a lo que borra. Al final de la fila de botones quedaba
@@ -311,18 +314,18 @@ fun PositionField(
             // una tercera forma de poner la posicion en vez de como lo contrario.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(position.describe(), style = MaterialTheme.typography.bodyMedium,
-                     modifier = Modifier.weight(1f).testTag("fb-position"))
+                     modifier = Modifier.weight(1f).testTag("$tag-position"))
                 TextButton(onClick = onClear,
                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                           modifier = Modifier.testTag("fb-pos-clear")) { Text("Clear") }
+                           modifier = Modifier.testTag("$tag-pos-clear")) { Text("Clear") }
             }
             Text(position.detail(Geoids.tagAt(position.latitude, position.longitude)), style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                 modifier = Modifier.testTag("fb-position-detail"))
+                 modifier = Modifier.testTag("$tag-position-detail"))
         } else if (request?.waiting != true) {
             Text("Not recorded", style = MaterialTheme.typography.bodyMedium,
                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                 modifier = Modifier.testTag("fb-position"))
+                 modifier = Modifier.testTag("$tag-position"))
         }
 
         if (request?.waiting == true) {
@@ -331,17 +334,17 @@ fun PositionField(
                 Text("Waiting for a fix…", style = MaterialTheme.typography.bodySmall,
                      modifier = Modifier.weight(1f))
                 TextButton(onClick = onCancelPhone,
-                           modifier = Modifier.testTag("fb-pos-cancel")) { Text("Cancel") }
+                           modifier = Modifier.testTag("$tag-pos-cancel")) { Text("Cancel") }
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onUsePhone, modifier = Modifier.testTag("fb-pos-phone")) {
+                TextButton(onClick = onUsePhone, modifier = Modifier.testTag("$tag-pos-phone")) {
                     Icon(Icons.Outlined.MyLocation, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Update position")
                 }
                 TextButton(onClick = { onNeedPoints(); elegir = true },
-                           modifier = Modifier.testTag("fb-pos-saved")) {
+                           modifier = Modifier.testTag("$tag-pos-saved")) {
                     Icon(Icons.Outlined.Place, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Saved point")

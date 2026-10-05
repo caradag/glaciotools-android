@@ -201,6 +201,11 @@ object FieldbookExport {
                     while (!usados.add(nombre)) { nombre = "$base ($n)"; n++ }
                     texto("$GAUGING_DIR/$nombre.csv",
                           FieldbookCsv.gauging(e, nombreCampana(e.campaignId), zone, geoid))
+                    // La dilucion va en un fichero hermano, solo si se midio algo: un CSV de
+                    // sal vacio en cada aforo de molinete seria ruido en la carpeta.
+                    if (!e.gauging?.salt?.readings.isNullOrEmpty())
+                        texto("$GAUGING_DIR/$nombre salt dilution.csv",
+                              FieldbookCsv.saltDilution(e, nombreCampana(e.campaignId), zone, geoid))
                 }
 
             zip.putNextEntry(ZipEntry(NOTEBOOK_ODT))

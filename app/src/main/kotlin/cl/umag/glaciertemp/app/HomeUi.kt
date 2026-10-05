@@ -55,6 +55,17 @@ fun GlacioToolsApp(device: DeviceViewModel, gps: GpsViewModel,
     val sDiario by journal.state.collectAsStateWithLifecycle()
     LaunchedEffect(donde) { journal.refresh() }
 
+    // DESDE LA NOTIFICACION: se abre el diario en una entrada nueva del dia que falta, que
+    // es lo mismo que hace el "Write" del recordatorio de arriba.
+    val diaPedido by journal.openDay.collectAsStateWithLifecycle()
+    LaunchedEffect(diaPedido) {
+        val dia = diaPedido ?: return@LaunchedEffect
+        journal.consumeOpenDay()
+        journal.refresh()
+        if (journal.state.value.campaignId != null) journal.create(journal.middayOf(dia))
+        donde = Herramienta.DIARIO
+    }
+
     Column(Modifier.fillMaxSize()) {
         sDiario.reminderDay?.let { dia ->
             RecordatorioDeDiario(
