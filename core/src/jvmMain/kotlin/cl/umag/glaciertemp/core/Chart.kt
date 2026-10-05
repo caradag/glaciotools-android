@@ -151,6 +151,40 @@ object Chart {
         return String.format("%.${decimals}f", v)
     }
 
+    /** Los registros que se dibujan, y cuantos se dejaron fuera y por que. */
+    data class ChartRecords(
+        val records: List<Record>,
+        /** Fechados a mas de [farDays] dias de la mediana: un reloj sin poner. */
+        val farDated: Int,
+        /** Si el log no venia en orden de tiempo y hubo que ordenarlo para dibujarlo. */
+        val reordered: Boolean,
+    )
+
+    /**
+     * Los registros en el orden y con el alcance en que se pueden dibujar.
+     *
+     * UN RELOJ SIN PONER. Una placa que arranca sin hora graba desde su fecha de fabrica (el
+     * 1 de enero de 2000) hasta que alguien la sincroniza. Esos registros, metidos en el
+     * grafico, estiran el eje del tiempo veintitantos anos: el log entero cabe en la ultima
+     * columna, el eje empieza en el ano 2000 y los valores del arranque --que no son los del
+     * despliegue-- deciden la escala vertical. Al acercarse todo parece arreglarse, porque la
+     * ventana ya no los incluye. Se apartan del GRAFICO, no de los datos: el CSV y las
+     * estadisticas siguen viendolos, y la pantalla dice cuantos son.
+     *
+     * Y SE ORDENA POR HORA si hace falta. El log va en orden de escritura, y si el reloj se
+     * atraso a mitad de campana una busqueda por tiempo sobre el orden de escritura encuentra
+     * una ventana que no es la que se mira.
+     */
+    fun chartRecords(records: List<Record>, farDays: Long = 180): ChartRecords {
+        if (records.size < 3) return ChartRecords(records, 0, false)
+        val ordenado = records.zipWithNext().all { (a, b) -> !b.time.isBefore(a.time) }
+        val porHora = if (ordenado) records else records.sortedBy { it.time }
+        val mediana = porHora[porHora.size / 2].time
+        val lejos = Duration.ofDays(farDays)
+        val cerca = porHora.filter { abs(Duration.between(mediana, it.time).seconds) <= lejos.seconds }
+        return ChartRecords(cerca, porHora.size - cerca.size, !ordenado)
+    }
+
     /** Una marca del eje de tiempo: donde cae y que se escribe. */
     data class TimeTick(val time: LocalDateTime, val label: String)
 

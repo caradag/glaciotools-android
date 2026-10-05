@@ -174,8 +174,12 @@ private fun StatRow(label: String, value: String, tag: String) {
  * suelto. Es barato: la reduccion es un recorrido lineal y la ventana se busca por biseccion.
  */
 @Composable
-private fun DeviceChart(records: List<Record>, signature: Int, channel: String) {
-    val estado = remember(channel, records) { TimePlotState() }
+private fun DeviceChart(todos: List<Record>, signature: Int, channel: String) {
+    val estado = remember(channel, todos) { TimePlotState() }
+    // Ordenados por hora y sin los registros con el reloj sin poner (ver Chart.chartRecords).
+    val preparados = remember(todos) { Chart.chartRecords(todos) }
+    val records = preparados.records
+    if (records.isEmpty()) return
     val origen = records.first().time
     // Segundos de cada registro desde el primero, para buscar la ventana por biseccion.
     val segundos = remember(records) {
@@ -208,11 +212,31 @@ private fun DeviceChart(records: List<Record>, signature: Int, channel: String) 
         LogFormat.fields(signature).getOrNull(idx)?.decimals ?: 2
     }
 
+    // El alcance vertical del registro entero, para acotar el zoom.
+    val serieCompleta = remember(records, channel) {
+        runCatching { Chart.series(records, signature, channel) }.getOrNull()
+    }
+
     TimePlotControls(estado, "chart")
     TimePlot(points = puntos, origin = origen, state = estado,
              cuts = serie?.gaps?.toSet() ?: emptySet(),
              autoY = serie?.let { it.yMin to it.yMax },
+             xLimits = 0.0 to total,
+             yLimits = serieCompleta?.let { it.yMin to it.yMax },
              modifier = Modifier.fillMaxWidth().height(220.dp).testTag("chart"))
+    if (preparados.farDated > 0) {
+        Text("${preparados.farDated} record(s) dated far from the rest (the board clock was " +
+             "not set yet) are left out of the chart. They are still in the data and the CSV.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.error,
+             modifier = Modifier.testTag("chart-far-dated"))
+    }
+    if (preparados.reordered) {
+        Text("The log is not in time order (the board clock was changed while logging); the " +
+             "chart shows it sorted by time.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 
     // EL VALOR DEL REGISTRO DE VERDAD, no el de la columna. Con la serie reducida el punto
     // dibujado es el centro de una banda que resume cientos de registros; lo que se quiere

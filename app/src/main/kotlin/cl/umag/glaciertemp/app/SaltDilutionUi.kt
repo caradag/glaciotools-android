@@ -42,6 +42,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
@@ -451,8 +452,14 @@ private fun GraficoDeCalibracion(filas: List<SaltDilutionMath.CalibrationRow>,
         drawLine(ejes, Offset(izq, abajo), Offset(size.width, abajo), 1.5f)
         val etiqueta = medir.measure("salt concentration, g/L (max ${Decimals.fixed(xMax, 4)})", estilo)
         drawText(etiqueta, topLeft = Offset(size.width - etiqueta.size.width, abajo + 2f))
+        // LA RECTA, RECORTADA AL GRAFICO. El eje vertical sale de los puntos medidos, y con
+        // un punto disparatado la recta ajustada pasa por fuera: sin recorte cruzaba la
+        // pantalla entera por encima de la tabla.
         ajuste?.let { a ->
-            drawLine(recta, Offset(x(0.0), y(a.intercept)), Offset(x(xMax), y(a.intercept + a.slope * xMax)), 2f)
+            clipRect(izq, 4f, size.width, abajo) {
+                drawLine(recta, Offset(x(0.0), y(a.intercept)),
+                         Offset(x(xMax), y(a.intercept + a.slope * xMax)), 2f)
+            }
         }
         pts.forEach { (c, v) -> drawCircle(punto, 4f, Offset(x(c), y(v))) }
     }

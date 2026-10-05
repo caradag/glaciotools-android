@@ -126,4 +126,25 @@ class ChartTest {
         assertTrue(t.any { it.label == "0" }, t.toString())
         assertTrue(t.none { it.label.startsWith("-0") }, t.toString())
     }
+
+    @Test fun `los registros con el reloj sin poner no entran en el grafico`() {
+        val buenos = recs(100) { (it % 10).toDouble() }
+        val reloj0 = LocalDateTime.of(2000, 1, 1, 0, 0)
+        val arranque = (0 until 5).map { Record(reloj0.plusSeconds(it * 600L), listOf(99.0, 1.0, 2.0, 3.0)) }
+        val c = Chart.chartRecords(arranque + buenos)
+        assertEquals(5, c.farDated)
+        assertEquals(buenos, c.records)
+        assertFalse(c.reordered)
+        // Y con ellos fuera, el eje vertical sale de los datos del despliegue.
+        val s = Chart.series(c.records, sig, "Volt")
+        assertTrue(s.yMax < 99.0)
+    }
+
+    @Test fun `un log desordenado se ordena para dibujarlo`() {
+        val r = recs(10) { it.toDouble() }
+        val c = Chart.chartRecords(r.reversed())
+        assertTrue(c.reordered)
+        assertEquals(r, c.records)
+        assertEquals(0, c.farDated)
+    }
 }

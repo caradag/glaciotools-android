@@ -139,6 +139,14 @@ fun TimePlot(
     hLines: List<PlotHLine> = emptyList(),
     vLines: List<PlotVLine> = emptyList(),
     showDots: Boolean = false,
+    /**
+     * El alcance ENTERO de los datos en x (segundos desde [origin]) y en y. Hace falta cuando
+     * [points] es solo lo que se ve --la placa reduce por ventana--: sin el, los limites del
+     * zoom se calculaban sobre la ventana visible, y cada gesto podia llevarla un poco mas
+     * alla, hasta horas antes del primer registro.
+     */
+    xLimits: Pair<Double, Double>? = null,
+    yLimits: Pair<Double, Double>? = null,
 ) {
     val measurer = rememberTextMeasurer()
     val line = MaterialTheme.colorScheme.primary
@@ -148,8 +156,9 @@ fun TimePlot(
     val labelStyle = TextStyle(fontSize = 9.sp, color = axis)
 
     // Los extremos de los datos, para acotar el zoom y para "verlo todo".
-    val fullX0 = points.firstOrNull()?.x ?: 0.0
-    val fullX1 = (points.lastOrNull()?.x ?: 1.0).let { if (it <= fullX0) fullX0 + 1.0 else it }
+    val fullX0 = xLimits?.first ?: points.firstOrNull()?.x ?: 0.0
+    val fullX1 = (xLimits?.second ?: points.lastOrNull()?.x ?: 1.0)
+        .let { if (it <= fullX0) fullX0 + 1.0 else it }
     val dataY = autoY ?: run {
         if (points.isEmpty()) 0.0 to 1.0 else {
             var lo = points.minOf { it.lo }; var hi = points.maxOf { it.hi }
@@ -169,8 +178,11 @@ fun TimePlot(
     // necesitan el rectangulo del grafico, asi que se guarda aqui.
     var plotRect by androidx.compose.runtime.remember { mutableStateOf(Rect.Zero) }
 
+    // El alcance vertical entero, para no poder alejarse sin limite ni perder los datos.
+    val limY = yLimits ?: dataY
+
     val gestos = if (state.zoomMode) {
-        Modifier.pointerInput(points, dataY) {
+        Modifier.pointerInput(points, dataY, fullX0, fullX1, limY) {
             awaitPointerEventScope {
                 while (true) {
                     val ev = awaitPointerEvent()
@@ -178,6 +190,11 @@ fun TimePlot(
                     val r = plotRect
                     if (vivos.isEmpty() || r.width <= 0f || r.height <= 0f) continue
                     var x0 = vx0(); var x1 = vx1(); var y0 = vy0(); var y1 = vy1()
+                    // El eje vertical sigue a los datos (automatico) hasta que se estira con
+                    // dos dedos. Antes cualquier arrastre lo congelaba en la escala de la
+                    // vista completa, y al acercarse en el tiempo los datos de esa ventana
+                    // podian quedar aplastados en una franja o fuera del grafico.
+                    var tocaY = state.y0 != null
 
                     if (vivos.size >= 2) {
                         val a = vivos[0]; val b = vivos[1]
@@ -195,6 +212,7 @@ fun TimePlot(
                             x0 = anclaX - (anclaX - x0) * f; x1 = anclaX + (x1 - anclaX) * f
                         }
                         if (abs(antes.y) > 40f && abs(ahora.y) > 40f) {
+                            tocaY = true
                             val f = (abs(antes.y) / abs(ahora.y)).toDouble()
                             val anclaY = y1 - (cy - r.top) / r.height * (y1 - y0)
                             y0 = anclaY - (anclaY - y0) * f; y1 = anclaY + (y1 - anclaY) * f
@@ -208,12 +226,30 @@ fun TimePlot(
                     x0 -= dx * sx; x1 -= dx * sx
                     y0 += dy * sy; y1 += dy * sy
 
-                    // Nunca mas alla de un segundo de ancho ni de lo que hay mas un margen.
-                    if (x1 - x0 < 1.0) { val c = (x0 + x1) / 2; x0 = c - 0.5; x1 = c + 0.5 }
+                    // DENTRO DE LOS DATOS. Ni mas estrecho que un segundo, ni mas ancho que el
+                    // registro entero, ni desplazado fuera de el. Llegar al ancho entero
+                    // devuelve el eje a automatico, que es lo que es "verlo todo".
                     val full = fullX1 - fullX0
-                    if (x1 - x0 > full * 1.5) { x0 = fullX0 - full * 0.25; x1 = fullX1 + full * 0.25 }
-                    state.x0 = x0; state.x1 = x1
-                    if (y1 - y0 > 1e-9) { state.y0 = y0; state.y1 = y1 }
+                    if (x1 - x0 < 1.0) { val c = (x0 + x1) / 2; x0 = c - 0.5; x1 = c + 0.5 }
+                    if (x1 - x0 >= full) {
+                        state.x0 = null; state.x1 = null
+                    } else {
+                        if (x0 < fullX0) { x1 += fullX0 - x0; x0 = fullX0 }
+                        if (x1 > fullX1) { x0 -= x1 - fullX1; x1 = fullX1 }
+                        state.x0 = x0; state.x1 = x1
+                    }
+                    if (tocaY) {
+                        // Lo mismo en vertical, con holgura: el doble del alcance de los datos
+                        // como maximo, y el centro siempre dentro de ellos.
+                        val rango = (limY.second - limY.first).coerceAtLeast(1e-9)
+                        if (y1 - y0 > 2 * rango) {
+                            state.y0 = null; state.y1 = null
+                        } else if (y1 - y0 > 1e-9) {
+                            val c = ((y0 + y1) / 2).coerceIn(limY.first, limY.second)
+                            val h = (y1 - y0) / 2
+                            state.y0 = c - h; state.y1 = c + h
+                        }
+                    }
                     ev.changes.forEach { it.consume() }
                 }
             }
