@@ -75,7 +75,9 @@ object Chart {
         // Un salto en el tiempo mayor que este umbral es un hueco de verdad: el logger
         // estuvo parado. Se compara contra el intervalo TIPICO de los propios datos, no
         // contra el que tenga configurado la placa hoy, que puede haber cambiado.
-        val typical = Sampling.typicalIntervalSeconds(records)
+        // En milisegundos: una captura continua (CONT) lleva un registro cada ~140 ms, y en
+        // segundos enteros el intervalo tipico daba 0 y la deteccion de huecos se apagaba.
+        val typical = typicalIntervalMs(records)
         val gapThreshold = typical * GAP_FACTOR
 
         var i = 0
@@ -97,7 +99,7 @@ object Chart {
                 // instantes separados por un apagon.
                 val prev = lastTime
                 if (prev != null && typical > 0 &&
-                    Duration.between(prev, t).seconds > gapThreshold) {
+                    Duration.between(prev, t).toMillis() > gapThreshold) {
                     gaps.add(samples.size)
                 }
                 samples.add(Sample(t, lo, hi))
@@ -267,6 +269,16 @@ object Chart {
     }
 
     private fun ceilDiv(a: Long, b: Long): Long = -Math.floorDiv(-a, b)
+
+    /** Intervalo mediano entre registros, en ms (0 con menos de dos registros). */
+    private fun typicalIntervalMs(records: List<Record>): Long {
+        if (records.size < 2) return 0
+        val d = LongArray(records.size - 1) {
+            Duration.between(records[it].time, records[it + 1].time).toMillis()
+        }
+        d.sort()
+        return d[d.size / 2].coerceAtLeast(0)
+    }
 
     /**
      * Marcas del eje horizontal. El formato se elige segun el tramo cubierto: para menos

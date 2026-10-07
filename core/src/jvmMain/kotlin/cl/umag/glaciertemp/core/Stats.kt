@@ -154,6 +154,29 @@ object Stats {
 
     fun formatInstant(t: LocalDateTime): String = DATE.format(t)
 
+    private val DATE_S: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")
+    private val DATE_MS: DateTimeFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss.SSS")
+
+    /**
+     * El formato de una hora con la resolucion que tienen los datos: hasta el minuto para un
+     * log normal, con segundos si se midio mas de una vez por minuto, y con milisegundos para
+     * una captura continua (CONT, ~140 ms). Se decide por el intervalo MEDIANO entre
+     * registros: un hueco suelto o un par de registros seguidos no cambian el formato.
+     */
+    fun instantFormat(records: List<Record>): DateTimeFormatter {
+        if (records.size < 2) return DATE
+        val n = minOf(records.size - 1, 1000)
+        val pasos = LongArray(n) { Duration.between(records[it].time, records[it + 1].time).toMillis() }
+            .filter { it > 0 }.sorted()
+        if (pasos.isEmpty()) return DATE
+        val mediano = pasos[pasos.size / 2]
+        return when {
+            mediano < 1_000 -> DATE_MS
+            mediano < 60_000 -> DATE_S
+            else -> DATE
+        }
+    }
+
     /**
      * Duracion en la unidad que le corresponde a su tamano. Un despliegue de dos meses
      * medido en horas no se lee; uno de seis horas medido en dias tampoco.

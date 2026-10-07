@@ -147,4 +147,17 @@ class ChartTest {
         assertEquals(r, c.records)
         assertEquals(0, c.farDated)
     }
+
+    @Test
+    fun `en una captura continua un hueco de un segundo se marca`() {
+        // Registros cada 142 ms con un corte de 1 s en medio: en segundos enteros el
+        // intervalo tipico era 0 y el corte no se veia.
+        val t0 = java.time.LocalDateTime.of(2026, 10, 7, 12, 0, 0)
+        val recs = List(20) { i ->
+            val ms = i * 142L + if (i >= 10) 1_000L else 0L
+            Record(t0.plusNanos(ms * 1_000_000), listOf(1.5, 10.0 + i, 50.0, 9.0))
+        }
+        val s = Chart.series(recs, 0x200F, "Temp", maxColumns = 100)
+        assertEquals(listOf(10), s.gaps)
+    }
 }

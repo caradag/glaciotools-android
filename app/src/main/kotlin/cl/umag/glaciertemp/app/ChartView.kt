@@ -181,28 +181,34 @@ private fun DeviceChart(todos: List<Record>, signature: Int, channel: String) {
     val records = preparados.records
     if (records.isEmpty()) return
     val origen = records.first().time
-    // Segundos de cada registro desde el primero, para buscar la ventana por biseccion.
+    // Segundos de cada registro desde el primero, CON fraccion: una captura continua lleva un
+    // registro cada ~140 ms, y en segundos enteros siete caian en la misma x y el cursor no
+    // podia separarlos. Sirven para buscar la ventana y el registro senalado por biseccion.
     val segundos = remember(records) {
-        LongArray(records.size) { java.time.Duration.between(origen, records[it].time).seconds }
+        DoubleArray(records.size) {
+            java.time.Duration.between(origen, records[it].time).toMillis() / 1000.0
+        }
     }
-    val total = segundos.last().toDouble().coerceAtLeast(1.0)
+    // La hora del cursor con la resolucion de los datos (minuto, segundo o milisegundo).
+    val formatoHora = remember(records) { Stats.instantFormat(records) }
+    val total = segundos.last().coerceAtLeast(1.0)
     val x0 = estado.x0 ?: 0.0
     val x1 = estado.x1 ?: total
 
     val serie = remember(records, channel, x0, x1) {
-        fun buscar(s: Long): Int {
+        fun buscar(s: Double): Int {
             var lo = 0; var hi = segundos.size
             while (lo < hi) { val m = (lo + hi) / 2; if (segundos[m] < s) lo = m + 1 else hi = m }
             return lo
         }
         // Un registro de mas a cada lado, para que la linea llegue hasta el borde.
-        val a = (buscar(kotlin.math.floor(x0).toLong()) - 1).coerceAtLeast(0)
-        val b = (buscar(kotlin.math.ceil(x1).toLong()) + 1).coerceAtMost(records.size)
+        val a = (buscar(x0) - 1).coerceAtLeast(0)
+        val b = (buscar(x1) + 1).coerceAtMost(records.size)
         runCatching { Chart.series(records.subList(a, b), signature, channel) }.getOrNull()
     }
     val puntos = remember(serie) {
         serie?.samples?.map {
-            PlotPoint(java.time.Duration.between(origen, it.time).seconds.toDouble(), it.lo, it.hi)
+            PlotPoint(java.time.Duration.between(origen, it.time).toMillis() / 1000.0, it.lo, it.hi)
         } ?: emptyList()
     }
     val idx = remember(signature, channel) {
@@ -245,8 +251,7 @@ private fun DeviceChart(todos: List<Record>, signature: Int, channel: String) {
     if (cursor != null && idx >= 0) {
         val reg = remember(cursor, records, idx) {
             var lo = 0; var hi = segundos.size
-            val s = cursor.toLong()
-            while (lo < hi) { val m = (lo + hi) / 2; if (segundos[m] < s) lo = m + 1 else hi = m }
+            while (lo < hi) { val m = (lo + hi) / 2; if (segundos[m] < cursor) lo = m + 1 else hi = m }
             // El mas cercano CON lectura: un registro sin valor en este canal no se senala.
             (0 until 2000).asSequence().flatMap { d -> sequenceOf(lo - d, lo + d - 1) }
                 .filter { it in records.indices && records[it].values.getOrNull(idx) != null }
@@ -254,7 +259,7 @@ private fun DeviceChart(todos: List<Record>, signature: Int, channel: String) {
         }
         reg?.let { i ->
             val r = records[i]
-            Text("${Stats.formatInstant(r.time)}   $channel = " +
+            Text("${formatoHora.format(r.time)}   $channel = " +
                  LogDecoder.formatValue(r.values[idx], decimales) + " " + LogFormat.unitOf(channel),
                  style = MaterialTheme.typography.bodyMedium,
                  fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,

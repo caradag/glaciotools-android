@@ -1,5 +1,6 @@
 package cl.umag.glaciertemp.app
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -71,6 +72,17 @@ class ContFlowTest {
             .joinToString("\n")
         assert(Regex("""\d{2}:\d{2}:\d{2}\.\d{3},""").containsMatchIn(filas)) {
             "el CSV de un log de CONT lleva milisegundos:\n$filas"
+        }
+
+        // El cursor del grafico ensena la hora con la resolucion de los datos: con un
+        // registro cada ~50-140 ms, milisegundos.
+        rule.onNodeWithTag("chart").performScrollTo().performTouchInput {
+            swipe(Offset(width * 0.3f, height * 0.5f), Offset(width * 0.6f, height * 0.5f), 400)
+        }
+        waitForTag("chart-cursor")
+        val hora = textOf("chart-cursor")
+        assert(Regex("""\d{2}:\d{2}:\d{2}\.\d{3}""").containsMatchIn(hora)) {
+            "el cursor de una captura continua lleva milisegundos: $hora"
         }
     }
 }

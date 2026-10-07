@@ -117,4 +117,15 @@ class StatsTest {
             Stats.channel(records(listOf(1.0)), 0x100F, "Presion")
         }
     }
+
+    @Test
+    fun `la hora sale con la resolucion de los datos`() {
+        val t0 = java.time.LocalDateTime.of(2026, 10, 7, 12, 0, 0)
+        fun log(pasoMs: Long) = List(10) { Record(t0.plusNanos(it * pasoMs * 1_000_000), listOf(1.0)) }
+        val t = t0.plusNanos(142_000_000)
+        assertEquals("07/10/2026 12:00:00.142", Stats.instantFormat(log(142)).format(t))
+        assertEquals("07/10/2026 12:00:00", Stats.instantFormat(log(5_000)).format(t))
+        assertEquals("07/10/2026 12:00", Stats.instantFormat(log(300_000)).format(t))
+        assertEquals("07/10/2026 12:00", Stats.instantFormat(log(142).take(1)).format(t))
+    }
 }
