@@ -36,4 +36,18 @@ class LogDecoderTest {
         assertEquals(1.0, r.values[1])
         assertNull(r.values[2])
     }
+
+    @Test fun `un log de CONT lleva los milisegundos tras los segundos`() {
+        val sig = 0x200F
+        val rec = LogFormat.recordBytes(sig)
+        val d = java.nio.ByteBuffer.allocate(rec * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        // 2026-10-07 12:00:00 = 844689600 s desde 2000; el segundo registro, 143 ms despues.
+        d.putInt(844689600).putShort(999).putShort(1500).putShort(1234).putShort(560).putShort(-12)
+        d.putInt(844689601).putShort(142).putShort(1501).putShort(1235).putShort(561).putShort(-13)
+        val r = LogDecoder.decode(d.array(), sig)
+        assertEquals(2, r.size)
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 7, 12, 0, 0, 999_000_000), r[0].time)
+        assertEquals(java.time.LocalDateTime.of(2026, 10, 7, 12, 0, 1, 142_000_000), r[1].time)
+        assertEquals(listOf(1.5, 12.34, 56.0, -0.12), r[0].values)
+    }
 }

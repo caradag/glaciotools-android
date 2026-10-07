@@ -62,4 +62,29 @@ class ClockSyncTest {
         val conNanos = ahora.withNano(123_456_789)
         assertEquals(0, ClockSync.stampFor(conNanos, ClockSyncMode.BOTH, 0, -3).nano)
     }
+
+    @Test
+    fun `se adelanta medio ida y vuelta, con tope`() {
+        assertEquals(0L, ClockSync.leadMs(null))
+        assertEquals(40L, ClockSync.leadMs(80))
+        assertEquals(ClockSync.MAX_LEAD_MS, ClockSync.leadMs(5_000))
+    }
+
+    @Test
+    fun `el envio cae lead antes del proximo segundo entero`() {
+        // 12:00:00.300 con 40 ms de viaje: se manda a las .960 anunciando 12:00:01.
+        val now = 1_000_000_300L
+        val p = ClockSync.sendPlan(now, leadMs = 40)
+        assertEquals(1_000_001_000L, p.targetMillis)
+        assertEquals(660L, p.waitMs)
+        assertEquals(p.targetMillis - 40, now + p.waitMs)
+    }
+
+    @Test
+    fun `sin tiempo para adelantarse se apunta al segundo siguiente`() {
+        // A .990 con 40 ms de viaje ya no da tiempo: se apunta al otro segundo.
+        val p = ClockSync.sendPlan(1_000_000_990L, leadMs = 40)
+        assertEquals(1_000_002_000L, p.targetMillis)
+        assertTrue(p.waitMs >= ClockSync.MIN_WAIT_MS)
+    }
 }

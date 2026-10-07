@@ -60,4 +60,22 @@ class LogFormatTest {
         assertEquals(600L, TimeUnit.MINUTES.toSeconds(10))
         assertEquals(90L, TimeUnit.SECONDS.toSeconds(90))
     }
+
+    @Test
+    fun `un log de CONT es la version 2 con dos bytes mas de marca de tiempo`() {
+        // Los mismos canales que 0x100F, con milisegundos tras los segundos.
+        assertTrue(LogFormat.isSupported(0x200F))
+        assertTrue(LogFormat.hasMillis(0x200F))
+        assertEquals(6, LogFormat.timestampBytes(0x200F))
+        assertEquals(14, LogFormat.recordBytes(0x200F))
+        assertEquals(LogFormat.fields(0x100F), LogFormat.fields(0x200F))
+        assertFalse(LogFormat.hasMillis(0x100F))
+        assertEquals(12, LogFormat.recordBytes(0x100F))
+    }
+
+    @Test
+    fun `una version desconocida no se da por legible`() {
+        assertFalse(LogFormat.isSupported(0x300F))
+        assertFalse(LogFormat.isSupported(0xFFFF))
+    }
 }

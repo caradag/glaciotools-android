@@ -20,19 +20,23 @@ object LogDecoder {
     fun decode(data: ByteArray, signature: Int): List<Record> {
         val fields = LogFormat.fields(signature)
         val rec = LogFormat.recordBytes(signature)
+        // Un log de CONT (version 2) lleva los milisegundos tras los segundos.
+        val ts = LogFormat.timestampBytes(signature)
+        val conMs = LogFormat.hasMillis(signature)
         val out = ArrayList<Record>()
         var off = 0
         while (off + rec <= data.size) {
             val t = readU32LE(data, off)
             if (t != 0L && t != 0xFFFFFFFFL) {
                 val vals = fields.mapIndexed { i, f ->
-                    val raw = readI16LE(data, off + LogFormat.TIMESTAMP_BYTES + 2 * i)
+                    val raw = readI16LE(data, off + ts + 2 * i)
                     // La humedad nunca es negativa: cualquier valor negativo es una lectura
                     // fallida, lo que ademas cubre el centinela -1 del firmware antiguo.
                     if (raw == LogFormat.INVALID || (f.name == "RH" && raw < 0)) null
                     else raw / f.scale
                 }
-                out.add(Record(EPOCH.plus(Duration.ofSeconds(t)), vals))
+                val ms = if (conMs) readU16LE(data, off + 4).toLong() else 0L
+                out.add(Record(EPOCH.plus(Duration.ofSeconds(t)).plus(Duration.ofMillis(ms)), vals))
             }
             off += rec
         }
@@ -56,6 +60,9 @@ object LogDecoder {
         ((b[o + 1].toLong() and 0xFF) shl 8) or
         ((b[o + 2].toLong() and 0xFF) shl 16) or
         ((b[o + 3].toLong() and 0xFF) shl 24)
+
+    private fun readU16LE(b: ByteArray, o: Int): Int =
+        (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
 
     private fun readI16LE(b: ByteArray, o: Int): Int =
         (((b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)).toShort()).toInt()

@@ -45,8 +45,27 @@ else
 fi
 
 echo "== test instrumentado =="
-./gradlew :app:connectedDebugAndroidTest --console=plain
+CONT_TEST=cl.umag.glaciertemp.app.ContFlowTest
+./gradlew :app:connectedDebugAndroidTest --console=plain \
+    -Pandroid.testInstrumentationRunnerArguments.notClass=$CONT_TEST
 RC=$?
+
+# Segunda pasada: la captura continua necesita el log VACIO y deja detras un log de
+# version 2, asi que va con su propio simulador. Solo si el primero lo arranco este guion:
+# uno ajeno no se puede sustituir.
+if [ -n "${SIM_PID:-}" ]; then
+  echo "== captura continua, con el log vacio =="
+  kill "$SIM_PID" 2>/dev/null; wait "$SIM_PID" 2>/dev/null
+  : > "$SIM_LOG"
+  python3 -u tools/fake_glaciertemp.py --tcp "$PORT" --log-size 0 --mtu 20 --cont-status 1 \
+      > "$SIM_LOG" 2>&1 &
+  SIM_PID=$!
+  for _ in $(seq 1 20); do grep -q "listening on" "$SIM_LOG" && break; sleep 0.5; done
+  ./gradlew :app:connectedDebugAndroidTest --console=plain \
+      -Pandroid.testInstrumentationRunnerArguments.class=$CONT_TEST
+  RC2=$?
+  [ $RC -eq 0 ] && RC=$RC2
+fi
 
 echo "== captura final =="
 adb exec-out screencap -p > "$SHOTS/final.png" 2>/dev/null && \

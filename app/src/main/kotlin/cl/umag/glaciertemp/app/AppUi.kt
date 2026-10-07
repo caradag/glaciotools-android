@@ -38,6 +38,7 @@ import cl.umag.glaciertemp.core.BatteryEstimate
 import cl.umag.glaciertemp.core.BatteryType
 import cl.umag.glaciertemp.core.BatteryUnknown
 import cl.umag.glaciertemp.core.CsvExporter
+import cl.umag.glaciertemp.core.ContCapture
 import cl.umag.glaciertemp.core.LogFormat
 import cl.umag.glaciertemp.core.Protocol
 import cl.umag.glaciertemp.core.Stats
@@ -136,9 +137,15 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
                     modifier = Modifier.testTag("advanced-toggle"),
                 )
             }
+            // Una captura en marcha va ARRIBA y en cualquier modo: tras reconectar a una placa
+            // que capturaba, parar es lo unico que hay que hacer, y la placa no atiende nada
+            // mas. Arrancarla, en cambio, solo en Advanced.
+            if (s.cont.running) ContCard(vm, s)
             InfoCard(s)
             ClockCard(vm, s)
             ConfigCard(vm, s)
+            if (!s.cont.running && s.advanced &&
+                (s.info?.protocol ?: 0) >= ContCapture.PROTOCOL) ContCard(vm, s)
             DownloadCard(vm, s)
             PositionCard(vm, s)
         }
@@ -813,6 +820,81 @@ private fun DownloadCard(vm: DeviceViewModel, s: UiState) {
                 RawLogRow(vm, s)
             }
             ResetCounterRow(vm, s)
+        }
+    }
+}
+
+/**
+ * Captura continua (CONT): la placa graba sin pausa entre registros hasta que se la para,
+ * para perfiles verticales desde un dron. Ver [ContCapture].
+ */
+@Composable
+private fun ContCard(vm: DeviceViewModel, s: UiState) {
+    val c = s.cont
+    val registros = s.info?.recordCount ?: 0L
+    Card(Modifier.fillMaxWidth().testTag("cont-card")) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Continuous capture", style = MaterialTheme.typography.titleMedium)
+            if (c.running) {
+                Text(if (c.stopping) "Stopping..." else "Recording",
+                     style = MaterialTheme.typography.titleSmall,
+                     color = MaterialTheme.colorScheme.error)
+                Text("${c.records} records  ·  ${ContCapture.duration(c.seconds * 1000)}" +
+                     if (c.heater) "  ·  heater on" else "",
+                     Modifier.testTag("cont-progress"))
+                if (c.values.isNotEmpty()) {
+                    val partes = c.values.mapIndexed { i, v ->
+                        val nombre = c.valueNames.getOrNull(i)
+                        if (nombre != null) "$nombre $v ${LogFormat.unitOf(nombre)}".trim() else v
+                    }
+                    Text(partes.joinToString("  ·  "), fontFamily = FontFamily.Monospace,
+                         style = MaterialTheme.typography.bodySmall,
+                         modifier = Modifier.testTag("cont-sample"))
+                    c.sampleTime?.let {
+                        Text("Board time: $it", style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Text("The board reports every ${ContCapture.STATUS_EVERY_S} s. If the link " +
+                     "drops in flight the capture goes on: reconnect after landing and stop it.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = { vm.stopCont() }, enabled = !c.stopping,
+                       colors = ButtonDefaults.buttonColors(
+                           containerColor = MaterialTheme.colorScheme.error),
+                       modifier = Modifier.testTag("cont-stop")) { Text("Stop capture") }
+            } else {
+                Text("Records without pausing between measurements (about 7 per second with " +
+                     "the TMP119 at 8 averages) until you stop it, for up to one hour. For " +
+                     "vertical profiles from a drone. Each record carries milliseconds.",
+                     style = MaterialTheme.typography.bodySmall)
+                Text("With the heater the HDC1080 heats only while it converts, and its " +
+                     "humidity is relative to the warmed sensor, not to the air.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (registros > 0) {
+                    Text("The log has $registros records. Download them and reset the " +
+                         "counter before a capture.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.error,
+                         modifier = Modifier.testTag("cont-not-empty"))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { vm.startCont(heater = false) },
+                           enabled = !s.busy && registros == 0L,
+                           modifier = Modifier.testTag("cont-start")) { Text("Start") }
+                    OutlinedButton(onClick = { vm.startCont(heater = true) },
+                                   enabled = !s.busy && registros == 0L,
+                                   modifier = Modifier.testTag("cont-start-heater")) {
+                        Text("Start with heater")
+                    }
+                }
+            }
+            c.summary?.let {
+                Text("Last capture: $it", Modifier.testTag("cont-summary"),
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.primary)
+            }
         }
     }
 }

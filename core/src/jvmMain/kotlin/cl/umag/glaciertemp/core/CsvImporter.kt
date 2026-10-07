@@ -22,7 +22,8 @@ class CsvFormatException(message: String) : Exception(message)
  */
 object CsvImporter {
 
-    private val TS: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    /** Con milisegundos opcionales: los exporta asi un log de captura continua (CONT). */
+    private val TS: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss[.SSS]")
 
     private val BY_NAME = mapOf(
         "Volt" to 0x0001, "Temp" to 0x0002, "RH" to 0x0004, "HAtemp" to 0x0008,
@@ -90,6 +91,9 @@ object CsvImporter {
 
         val records = ArrayList<Record>(lines.size - 1)
         var skipped = 0
+        // Una hora con milisegundos es un log de CONT: la firma pasa a la version 2, para que
+        // al volver a exportarlo los conserve en vez de truncarlos sin decir nada.
+        var conMs = false
         for (line in lines.drop(1)) {
             val raw = line.split(',').map { it.trim() }
             val cols = if (correctedAt >= 0) raw.filterIndexed { i, _ -> i != correctedAt } else raw
@@ -97,6 +101,7 @@ object CsvImporter {
             val time = try {
                 LocalDateTime.parse(cols[0], TS)
             } catch (_: DateTimeParseException) { skipped++; continue }
+            if (cols[0].contains('.')) conMs = true
             // "NaN" es como el firmware marca una lectura fallida; cualquier otra cosa que
             // no sea un numero se trata igual, que es mejor que perder la fila entera.
             //
@@ -112,6 +117,7 @@ object CsvImporter {
         if (records.isEmpty()) {
             throw CsvFormatException("No data rows could be read")
         }
-        return LoadedLog(signature, records, skipped)
+        val sig = if (conMs) (signature and 0x0FFF) or (LogFormat.FORMAT_CONT shl 12) else signature
+        return LoadedLog(sig, records, skipped)
     }
 }

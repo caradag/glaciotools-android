@@ -50,6 +50,36 @@ object ClockSync {
         return if (resto == 0L) 0L else 1000L - resto
     }
 
+    /**
+     * Lo que tarda el comando en LLEGAR, a partir de un ida y vuelta medido: la mitad, con
+     * tope. Al escribir el registro de segundos, el DS3231 reinicia su cadena de cuenta, de
+     * modo que la placa empieza su segundo cuando le llega la orden, no cuando se envia:
+     * mandar justo en el cambio de segundo la deja atrasada lo que tarde el viaje (decenas
+     * de ms por Bluetooth). Con el ida y vuelta se envia ese tanto ANTES del cambio.
+     *
+     * Es una estimacion: supone el viaje simetrico, y la linea TIME (25 bytes) puede ocupar
+     * un paquete BLE mas que la sonda. Sin medida, 0: el comportamiento de siempre.
+     */
+    fun leadMs(roundTripMs: Long?): Long =
+        roundTripMs?.let { (it / 2).coerceIn(0L, MAX_LEAD_MS) } ?: 0L
+
+    const val MAX_LEAD_MS = 400L
+
+    /** Cuando enviar ([waitMs] desde ahora) y que segundo entero anunciar ([targetMillis]). */
+    data class SendPlan(val waitMs: Long, val targetMillis: Long)
+
+    /**
+     * El proximo cambio de segundo al que da tiempo a llegar adelantandose [leadMs], con
+     * [MIN_WAIT_MS] de margen para que la corrutina se despierte a tiempo.
+     */
+    fun sendPlan(nowMillis: Long, leadMs: Long): SendPlan {
+        var target = nowMillis - Math.floorMod(nowMillis, 1000L) + 1000L
+        while (target - leadMs - nowMillis < MIN_WAIT_MS) target += 1000L
+        return SendPlan(target - leadMs - nowMillis, target)
+    }
+
+    const val MIN_WAIT_MS = 20L
+
     /** La marca a enviar, con los segundos enteros: la placa no guarda fracciones. */
     fun stampFor(
         now: ZonedDateTime,

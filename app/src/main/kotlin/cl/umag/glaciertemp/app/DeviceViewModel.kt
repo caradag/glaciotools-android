@@ -54,6 +54,25 @@ data class LiveState(
     val stale: Boolean = false,
 )
 
+/**
+ * Una captura continua (CONT): la placa graba sin pausa hasta que se la para.
+ *
+ * [valueNames] vacio cuando se reconecto a una placa que ya capturaba: sin INFO no se sabe
+ * que canales son, y los valores se ensenan sin etiqueta antes que con una equivocada.
+ */
+data class ContState(
+    val running: Boolean = false,
+    val stopping: Boolean = false,
+    val heater: Boolean = false,
+    val records: Long = 0,
+    val seconds: Long = 0,
+    val sampleTime: String? = null,
+    val values: List<String> = emptyList(),
+    val valueNames: List<String> = emptyList(),
+    /** Resumen de la ultima captura terminada, para ensenarlo hasta la siguiente. */
+    val summary: String? = null,
+)
+
 data class UiState(
     val connected: Boolean = false,
     val busy: Boolean = false,
@@ -77,6 +96,7 @@ data class UiState(
     val variables: Map<String, String> = emptyMap(),
     val progress: DownloadProgress? = null,
     val live: LiveState = LiveState(),
+    val cont: ContState = ContState(),
     val records: List<Record> = emptyList(),
     val csvPreview: String = "",
     val battery: BatterySettings = BatterySettings(),
@@ -362,6 +382,23 @@ class DeviceViewModel : ViewModel() {
             info = s.info()
         }
         if (info == null) {
+            // Una placa en captura continua ignora INFO y todo lo demas salvo CONT? y CONT
+            // OFF. En vuelo el Bluetooth se cae, y al aterrizar hay que poder reconectar y
+            // pararla: se pregunta antes de concluir que duerme.
+            val q = String(s.exchange(ContCapture.QUERY, quietMs = 1_200))
+            if (ContCapture.parseStatus(q) != null) {
+                transport = espiado; session = s; tap = espiado
+                arrancarPublicador()
+                _state.value = _state.value.copy(
+                    connected = true, info = null, transportNote = describe(t),
+                    status = "The board is running a continuous capture")
+                val fin = seguirCont(s, expected = null, names = emptyList(), heater = false)
+                if (fin == null) return@launchGuarded
+                // Terminada, la placa vuelve a la consola: ahora si, el saludo completo.
+                val tras = s.info() ?: error("The capture ended but the board did not answer INFO")
+                completarConexion(s, t, espiado, tras)
+                return@launchGuarded
+            }
             // La placa solo atiende la consola durante los 30 s siguientes a un reinicio;
             // el resto del tiempo duerme y no escucha. Decir solo "no respondio" deja al
             // usuario buscando un fallo que no existe.
@@ -369,6 +406,12 @@ class DeviceViewModel : ViewModel() {
                   "It only listens on the serial port for 30 s after a reset. " +
                   "Press the RESET button on the board and connect again right away.")
         }
+        completarConexion(s, t, espiado, info)
+    }
+
+    /** El resto del saludo, con INFO ya leido: version, configuracion, reloj y estado. */
+    private fun completarConexion(s: DeviceSession, t: Transport, espiado: SerialTap,
+                                  info: DeviceInfo) {
         // Se RECHAZA una placa con protocolo anterior en vez de degradar. Mantener dos
         // caminos de codigo de los que solo uno se ejerce a diario es peor que actualizar
         // la flota, que en todo caso hay que actualizar. El mensaje dice que hacer.
@@ -386,6 +429,10 @@ class DeviceViewModel : ViewModel() {
         // despues.
         val (boardNow, llegada) = leerRelojPlaca(s, quietMs = 600)
         val drift = boardNow?.let { BoardClock.driftAtArrival(it, llegada) }
+        // Un log que esta app no sabe leer se dice al conectar, no al final de una descarga.
+        val ilegible = if (LogFormat.isSupported(info.signature) || info.recordCount == 0L) null
+            else "The log on this board has format version ${LogFormat.formatVersion(info.signature)}, " +
+                 "which this app cannot read. Update GlacioTools."
 
         transport = espiado; session = s
         tap = espiado
@@ -400,6 +447,7 @@ class DeviceViewModel : ViewModel() {
             transportNote = describe(t),
             effectiveChunk = t.recordsPerRequest,
             status = "Connected  ·  board ${info.displayId}  ·  ${info.recordCount} records",
+            error = ilegible,
         )
     }
 
@@ -708,9 +756,18 @@ class DeviceViewModel : ViewModel() {
         // su silencio final, un par de segundos por radio-- se quedaba como atraso de la placa.
         // Ademas se espera al cambio de segundo: la placa no guarda fracciones, y truncar en
         // un instante cualquiera anadia hasta un segundo mas de atraso.
-        kotlinx.coroutines.delay(ClockSync.msToNextSecond(System.currentTimeMillis()))
-        val now = ClockSync.stampFor(java.time.ZonedDateTime.now(), mode,
-                                     boardOffset, phoneOffset)
+        //
+        // Y desde el protocolo 6 se adelanta lo que tarda la orden en llegar: el DS3231
+        // empieza su segundo al recibirla, asi que mandarla en el cambio de segundo exacto lo
+        // dejaba atrasado todo el viaje. El viaje se mide con CONT?, que responde al
+        // instante; con un firmware anterior no hay sonda inocua y se manda como siempre.
+        val proto = _state.value.info?.protocol ?: 0
+        val ida = if (proto >= ContCapture.PROTOCOL) s.roundTripMs(ContCapture.QUERY) else null
+        val plan = ClockSync.sendPlan(System.currentTimeMillis(), ClockSync.leadMs(ida))
+        kotlinx.coroutines.delay(plan.waitMs)
+        val now = ClockSync.stampFor(
+            java.time.Instant.ofEpochMilli(plan.targetMillis).atZone(java.time.ZoneId.systemDefault()),
+            mode, boardOffset, phoneOffset)
         val offsetHours = effectiveOffset
         var llegada: java.time.ZonedDateTime? = null
         val reply = String(s.exchange(Protocol.setTime(now).trimEnd('\n'), quietMs = 800,
@@ -986,6 +1043,85 @@ class DeviceViewModel : ViewModel() {
         // La placa vuelve a estar sin descargar: el aviso de sincronizar el reloj tiene que
         // volver a salir, porque el desfase de lo que grabe desde ahora aun no se ha medido.
         downloadedFrom = null
+    }
+
+    // ------------------------------ captura continua ------------------------------
+
+    /** Lo pone el boton de parar y lo lee el bucle de la captura, de ahi el @Volatile. */
+    @Volatile private var pararCont = false
+
+    /**
+     * Arranca una captura continua y la acompana hasta que termine. Exige el log vacio: lo
+     * comprueba la placa, y aqui se traduce su respuesta a algo que diga que hacer.
+     */
+    fun startCont(heater: Boolean) = launchGuarded("Starting continuous capture...") {
+        val s = checkNotNull(session) { "not connected" }
+        val info = checkNotNull(_state.value.info) { "no INFO from the board" }
+        pararCont = false
+        val reply = s.contStart(heater)
+        publicarTerminal()
+        val begin = ContCapture.parseBegin(reply)
+        when {
+            ContCapture.needsEmptyLog(reply) -> error(
+                "The log is not empty. Download it, then reset the counter (RC), " +
+                "before starting a continuous capture.")
+            begin == null -> error(
+                "The board did not start the capture. It needs firmware 3.10 built with " +
+                "CONT_CAPTURE (that is, without analog channels).")
+        }
+        val fin = seguirCont(s, ContCapture.valuesPerRecord(begin!!.recordBytes),
+                             LogFormat.fields(info.signature).map { it.name }, begin.heater)
+        if (fin != null) {
+            // El contador y la firma cambiaron: sin releer INFO, la descarga pediria el
+            // rango y el formato de antes.
+            val nuevo = s.info()
+            _state.value = _state.value.copy(
+                info = nuevo ?: _state.value.info,
+                signature = nuevo?.signature ?: _state.value.signature)
+        }
+    }
+
+    fun stopCont() {
+        pararCont = true
+        _state.value = _state.value.copy(
+            status = "Stopping continuous capture...",
+            cont = _state.value.cont.copy(stopping = true))
+    }
+
+    /**
+     * Acompana la captura en curso hasta su "CONT end", publicando cada estado. Bloquea:
+     * se llama desde un bloque de [launchGuarded], que mantiene la app ocupada --y los
+     * demas botones apagados, que la placa ignoraria-- mientras dura.
+     */
+    private fun seguirCont(s: DeviceSession, expected: Int?, names: List<String>,
+                           heater: Boolean): ContCapture.End? {
+        pararCont = false
+        _state.value = _state.value.copy(
+            status = "Continuous capture running",
+            cont = ContState(running = true, heater = heater, valueNames = names))
+        val fin = s.contMonitor(
+            expectedValues = expected,
+            onStatus = { st ->
+                _state.value = _state.value.copy(cont = _state.value.cont.copy(
+                    records = st.records, seconds = st.seconds))
+            },
+            onSample = { m ->
+                _state.value = _state.value.copy(cont = _state.value.cont.copy(
+                    sampleTime = m.time, values = m.values))
+            },
+            onDiagnostic = { appendTerminal(it, fromBoard = true) },
+            isCancelled = { pararCont },
+        )
+        publicarTerminal()
+        _state.value = _state.value.copy(
+            status = fin?.let { "Continuous capture ended: ${ContCapture.reasonText(it.reason)}" }
+                ?: "The board did not confirm the end of the capture",
+            cont = _state.value.cont.copy(
+                running = false, stopping = false,
+                heater = fin?.heater ?: _state.value.cont.heater,
+                records = fin?.records ?: _state.value.cont.records,
+                summary = fin?.let { ContCapture.summary(it) }))
+        return fin
     }
 
     // ------------------------------ datos en directo ------------------------------

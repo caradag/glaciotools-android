@@ -28,10 +28,32 @@ object LogFormat {
     const val INVALID = -32768
     const val TIMESTAMP_BYTES = 4
 
-    /** Version de formato que llevan los bits 12..15. Un valor distinto no es legible. */
+    /** Version de formato que llevan los bits 12..15: la del log normal. */
     const val FORMAT_VERSION = 1
 
+    /**
+     * Version de un log de captura continua (CONT, firmware 3.10): los mismos canales que la
+     * version 1, con un uint16 de milisegundos (0..999) detras de los cuatro bytes de
+     * segundos. Mismos bits de canal y otra version a proposito: un lector que solo conoce
+     * la 1 se niega a leerlo en vez de desalinear cada campo dos bytes.
+     */
+    const val FORMAT_CONT = 2
+
+    /** Bytes de la marca de tiempo de un log v2: segundos y milisegundos. */
+    const val TIMESTAMP_BYTES_CONT = 6
+
     fun formatVersion(signature: Int): Int = (signature ushr 12) and 0x0F
+
+    /** Si esta app sabe leer un log con esta firma. Cualquier otra version, no. */
+    fun isSupported(signature: Int): Boolean =
+        formatVersion(signature) == FORMAT_VERSION || formatVersion(signature) == FORMAT_CONT
+
+    /** Si los registros llevan milisegundos (log de CONT). */
+    fun hasMillis(signature: Int): Boolean = formatVersion(signature) == FORMAT_CONT
+
+    /** Bytes de la marca de tiempo de cada registro. */
+    fun timestampBytes(signature: Int): Int =
+        if (hasMillis(signature)) TIMESTAMP_BYTES_CONT else TIMESTAMP_BYTES
 
     /** Numero de sondas DS18B20 que codifica el signature; 0 si el canal no esta presente. */
     fun dsCount(signature: Int): Int =
@@ -44,8 +66,8 @@ object LogFormat {
         ANALOG.forEach { (name, bit) -> if (signature and bit != 0) add(Field(name, 1000.0, 3)) }
     }
 
-    /** Tamano del registro en bytes: 4 de marca de tiempo mas 2 por campo. */
-    fun recordBytes(signature: Int): Int = TIMESTAMP_BYTES + 2 * fields(signature).size
+    /** Tamano del registro en bytes: la marca de tiempo (4, o 6 con ms) mas 2 por campo. */
+    fun recordBytes(signature: Int): Int = timestampBytes(signature) + 2 * fields(signature).size
 
     /** Nombre completo de cada canal. El corto es el encabezado de la columna del CSV. */
     fun channelDescription(name: String): String = when {

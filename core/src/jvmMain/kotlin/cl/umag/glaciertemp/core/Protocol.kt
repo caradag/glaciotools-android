@@ -67,6 +67,11 @@ object Protocol {
     /** Protocolo a partir del cual la placa entiende [LIVE]. */
     const val LIVE_PROTOCOL = 5
 
+    /** Captura continua; ver [ContCapture]. */
+    fun contOn(heater: Boolean): String = line(if (heater) ContCapture.ON_HEATER else ContCapture.ON)
+    val CONT_OFF: String get() = line(ContCapture.OFF)
+    val CONT_QUERY: String get() = line(ContCapture.QUERY)
+
     fun line(command: String): String = command + TERMINATOR
 
     /**

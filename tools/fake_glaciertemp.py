@@ -28,8 +28,8 @@ NORMAL_BAUD = 115200
 FAST_BAUD = 230400
 # Version de firmware y de protocolo, en UN solo sitio. Estaban escritas dos veces y ya
 # habian divergido: INFO decia fw=2.7 proto=2 y VER seguia contestando fw=2.0 proto=1.
-FW_VERSION = "3.6"
-PROTOCOL = 5
+FW_VERSION = "3.10"
+PROTOCOL = 6
 # Identidad del hardware, como en el firmware: tipo + revision de placa, NO la del firmware.
 BOARD_TYPE = "GT"
 BOARD_HW_VERSION = "001"
@@ -103,6 +103,7 @@ class Board:
     def __init__(self, sig, n_records, seed, uid, drain=None):
         self.drain = drain          # (mv_inicial, mv_final) para el canal Volt
         self.sig = sig
+        self.build_sig = sig        # la de "esta compilacion": RC vuelve a ella
         self.fields = fields(sig)
         self.rec = 4 + 2 * len(self.fields)
         self.uid = uid
@@ -131,6 +132,29 @@ class Board:
 
     def record(self, i):
         return self.data[i * self.rec:(i + 1) * self.rec]
+
+    # --- CONT (firmware 3.10): log de version 2, con un uint16 de ms tras los segundos ---
+    def start_cont(self):
+        self.sig = (self.build_sig & 0x0FFF) | 0x2000
+        self.rec = 6 + 2 * len(self.fields)
+        self.data = bytearray()
+        self.count = 0
+
+    def add_cont_record(self, sec, ms, t):
+        r = bytearray(struct.pack("<IH", sec, ms))
+        for name, scale, dec in self.fields:
+            base = {"Volt": 1500.0, "Temp": 1850.0, "RH": 520.0}.get(name, 1000.0)
+            r += struct.pack("<h", int(base + 20 * math.sin(t / 3.0)))
+        self.data += r
+        self.count += 1
+
+    def reset_count(self):
+        """Como resetCount(): el log vuelve a ser de esta compilacion."""
+        self.count = 0
+        if self.sig != self.build_sig:
+            self.sig = self.build_sig
+            self.rec = 4 + 2 * len(self.fields)
+            self.data = bytearray()
 
     def live_row(self, t):
         """Una muestra en directo: los mismos campos del log, con la hora de ahora.
@@ -211,7 +235,7 @@ class Link:
         self.send((s + "\r\n").encode())
 
 
-def handle(cmd, board, link, args, has_input=None, drain_input=None):
+def handle(cmd, board, link, args, has_input=None, drain_input=None, readline_fn=None):
     c = cmd.strip()
     if not c:
         return
@@ -264,6 +288,61 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None):
         link.line("LIVE end" if parado else "LIVE timeout")
         return
 
+    # CONT: captura continua (firmware 3.10). Graba sin pausa hasta CONT OFF o la hora; en
+    # medio solo atiende CONT? y CONT OFF, como la placa. --cont-period y --cont-status
+    # acortan los tiempos para las pruebas.
+    if up.startswith("CONT"):
+        if not up.startswith("CONT ON"):
+            link.line("CONT idle")
+            return
+        if board.count > 0:
+            link.line("CONT needs an empty log: download it, then RC")
+            return
+        heater = c[7:].upper() == "+H"
+        board.start_cont()
+        ahora = datetime.now() + timedelta(seconds=args.clock_offset)
+        t0 = int((ahora - EPOCH).total_seconds())
+        m0 = time.monotonic()
+        link.line(f"CONT begin heater={'on' if heater else 'off'} rec={board.rec}")
+        ultimo_estado = m0
+        ultimo = m0
+        mayor = 0
+        anterior = m0
+        motivo = "stop"
+        while True:
+            ya = time.monotonic()
+            e = ya - m0
+            if board.count:
+                mayor = max(mayor, int((ya - anterior) * 1000))
+            anterior = ya
+            if e >= 3600:
+                motivo = "time"
+                break
+            board.add_cont_record(t0 + int(e), int(e * 1000) % 1000, e)
+            ultimo = ya
+            if ya - ultimo_estado >= args.cont_status:
+                link.line(f"CONT n={board.count} t={int(e)}s")
+                link.line(f"LIVE {datetime.now():%Y-%m-%d %H:%M:%S}," + board.live_row(e))
+                ultimo_estado = ya
+            fin = time.monotonic() + args.cont_period
+            parar = False
+            while time.monotonic() < fin:
+                if has_input and has_input():
+                    linea = (readline_fn() or "").strip().upper() if readline_fn else ""
+                    if linea == "CONT OFF":
+                        parar = True
+                        break
+                    if linea == "CONT?":
+                        ultimo_estado = 0
+                time.sleep(0.005)
+            if parar:
+                break
+        dur = int((ultimo - m0) * 1000)
+        media = dur // (board.count - 1) if board.count > 1 else 0
+        link.line(f"CONT end reason={motivo} n={board.count} dur={dur}ms mean={media}ms "
+                  f"max={mayor}ms drift=0ms heater={'on' if heater else 'off'}")
+        return
+
     if up == "I":
         link.line(f"GlacierTemp 1-cell rev02")
         link.line(f"Board id: {board.uid:016X}")
@@ -300,7 +379,7 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None):
     if up == "RC":
         # El texto EXACTO de resetCount(): "Memory reset", no "Counter reset". Un simulador
         # que contesta algo parecido pero distinto solo sirve para aprobar codigo roto.
-        board.count = 0
+        board.reset_count()
         link.line("Memory reset")
         return
     if up.startswith("TIME"):
@@ -326,6 +405,9 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None):
 
     if up.startswith("LOGC") or up.startswith("LOG") and not up.startswith("LOGB") \
             and not up.startswith("LOGH"):
+        if board.sig >> 12 == 2:
+            link.line("CONT log: download it with the app (LOGB), or LOGH + decode_logh.py")
+            return
         for row in board.csv_rows(0, board.count - 1):
             link.line(row)
         return
@@ -436,7 +518,7 @@ def serve(readline, write, args, board, has_input=None, drain_input=None):
         line = readline()
         if line is None:
             return
-        if handle(line, board, link, args, has_input, drain_input) == "quit":
+        if handle(line, board, link, args, has_input, drain_input, readline) == "quit":
             return
 
 
@@ -471,6 +553,10 @@ def main():
                     help="emula el buffer de un puente BLE: lo que no cabe se DESCARTA")
     ap.add_argument("--drain-bps", type=float, default=0.0, metavar="B/S",
                     help="velocidad a la que la radio vacia ese buffer")
+    ap.add_argument("--cont-period", type=float, default=0.14, metavar="S",
+                    help="CONT: segundos entre registros (la placa, ~0.14)")
+    ap.add_argument("--cont-status", type=float, default=10.0, metavar="S",
+                    help="CONT: segundos entre lineas de estado (la placa, 10)")
     ap.add_argument("--battery-drain", metavar="MV_INI:MV_FIN",
                     help="hace que el canal Volt decaiga, p.ej. 1500:1400")
     a = ap.parse_args()

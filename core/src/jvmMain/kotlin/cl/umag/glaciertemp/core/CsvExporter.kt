@@ -15,6 +15,13 @@ object CsvExporter {
 
     private val TS: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
+    /** Hora de un log de CONT: con milisegundos, como decode_logh.py. */
+    private val TS_MS: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+
+    /** El formato de la columna Time para esta firma. */
+    fun timeFormat(signature: Int): DateTimeFormatter =
+        if (LogFormat.hasMillis(signature)) TS_MS else TS
+
     /** Prefijo de comentario. Lo reconoce [CsvImporter] y lo ignora cualquier lector de CSV. */
     const val COMMENT = "#"
 
@@ -28,7 +35,7 @@ object CsvExporter {
     private fun row(record: Record, signature: Int, correctedTime: String?): String {
         val fields = LogFormat.fields(signature)
         val cols = record.values.mapIndexed { i, v -> LogDecoder.formatValue(v, fields[i].decimals) }
-        val stamp = TS.format(record.time)
+        val stamp = timeFormat(signature).format(record.time)
         val head = if (correctedTime != null) "$stamp,$correctedTime" else stamp
         return head + "," + cols.joinToString(",")
     }
@@ -113,7 +120,8 @@ object CsvExporter {
             meta?.let { metadataLines(it).forEach { l -> append(l).append('\n') } }
             append(header(signature, fix != null)).append('\n')
             cabeza.forEach { r ->
-                append(row(r, signature, fix?.let { TS.format(it(r)) })).append('\n')
+                append(row(r, signature, fix?.let { timeFormat(signature).format(it(r)) }))
+                    .append('\n')
             }
             if (records.size > cabeza.size) {
                 append("... ${records.size - cabeza.size} more rows\n")
@@ -137,7 +145,8 @@ object CsvExporter {
             meta?.let { metadataLines(it).forEach { l -> append(l).append('\n') } }
             append(header(signature, fix != null)).append('\n')
             records.forEach { r ->
-                append(row(r, signature, fix?.let { TS.format(it(r)) })).append('\n')
+                append(row(r, signature, fix?.let { timeFormat(signature).format(it(r)) }))
+                    .append('\n')
             }
         }
     }

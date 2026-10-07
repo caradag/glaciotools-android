@@ -305,6 +305,16 @@ class DeviceSession(private val transport: Transport) {
 
         /** Lo que se le concede a la placa para confirmar que paro, tras pedirselo. */
         const val STOP_GRACE_MS = 5_000L
+
+        /**
+         * Espera del "CONT end" tras pedir CONT OFF: la placa termina el registro en curso
+         * (~140 ms), espera un cambio de segundo del RTC para medir la deriva (hasta 1 s) y
+         * escribe el resumen.
+         */
+        const val CONT_STOP_GRACE_MS = 6_000L
+
+        /** La placa espera un cambio de segundo del RTC (hasta 1 s) antes del "CONT begin". */
+        const val CONT_START_MS = 4_000L
     }
 
     private val bomba = Bomba(transport).also { it.arrancar() }
@@ -513,6 +523,105 @@ class DeviceSession(private val transport: Transport) {
             porPlazo -> LiveOutcome.PLAZO_DE_LA_PLACA
             else -> LiveOutcome.PARADO
         }
+    }
+
+    /**
+     * Ida y vuelta de una orden corta, en ms: de escribirla a que llega el primer byte de la
+     * respuesta. El menor de [samples] intentos, que es el que menos espera ajena lleva.
+     * Null si la placa no contesta. Lo usa el ajuste del reloj para adelantarse al viaje.
+     */
+    fun roundTripMs(command: String, samples: Int = 3): Long? {
+        var mejor: Long? = null
+        repeat(samples) {
+            var llegada = 0L
+            val t0 = System.nanoTime()
+            val r = exchange(command, quietMs = 200, overallTimeoutMs = 2_000,
+                onChunk = { if (llegada == 0L) llegada = System.nanoTime() })
+            if (r.isNotEmpty() && llegada > 0L) {
+                val ms = (llegada - t0) / 1_000_000L
+                mejor = minOf(mejor ?: ms, ms)
+            }
+        }
+        return mejor
+    }
+
+    /**
+     * Arranca una captura continua y devuelve lo que la placa contesto hasta su "CONT begin"
+     * (o el rechazo). No espera a que la linea calle, como [exchange]: una vez arrancada, la
+     * placa no calla nunca --escribe su estado cada pocos segundos-- y la espera se iria al
+     * tope entero.
+     */
+    fun contStart(heater: Boolean, timeoutMs: Long = CONT_START_MS): String = conElEnlace {
+        bomba.descartarPendiente()
+        transport.write(Protocol.contOn(heater).toByteArray())
+        val out = StringBuilder()
+        val limite = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < limite) {
+            val c = bomba.leer(100)
+            if (c.isEmpty()) continue
+            out.append(String(c, Charsets.ISO_8859_1))
+            val t = out.toString()
+            val respondio = ContCapture.parseBegin(t) != null || ContCapture.needsEmptyLog(t) ||
+                t.contains("Unrecognized command")
+            if (respondio && t.endsWith("\n")) break
+        }
+        out.toString()
+    }
+
+    /**
+     * Acompana una captura continua (CONT) ya en marcha: publica cada linea de estado y su
+     * muestra hasta que [isCancelled] pida parar --entonces manda CONT OFF y espera el
+     * resumen-- o hasta que la placa termine por su cuenta (una hora, memoria llena).
+     *
+     * Devuelve el resumen, o null si la placa no lo envio. Va bajo el cerrojo como LIVE: la
+     * placa en captura ignora cualquier otra orden, y un comando del terminal colado en
+     * medio solo se perderia.
+     *
+     * [expectedValues] null acepta muestras de cualquier ancho: al reconectar a una placa
+     * que ya estaba capturando no hay INFO del que sacarlo, y son solo para mirar.
+     */
+    fun contMonitor(
+        expectedValues: Int?,
+        onStatus: (ContCapture.Status) -> Unit,
+        onSample: (LiveSample) -> Unit,
+        onDiagnostic: (String) -> Unit = {},
+        isCancelled: () -> Boolean = { false },
+    ): ContCapture.End? = conElEnlace {
+        bomba.descartarPendiente()
+        val pendiente = StringBuilder()
+        var pedido = false
+        var pedidoEn = 0L
+        var fin: ContCapture.End? = null
+        while (fin == null) {
+            if (!pedido && isCancelled()) {
+                transport.write(Protocol.CONT_OFF.toByteArray())
+                pedido = true
+                pedidoEn = System.currentTimeMillis()
+            }
+            if (pedido && System.currentTimeMillis() - pedidoEn > CONT_STOP_GRACE_MS) break
+            val c = bomba.leer(100)
+            if (c.isEmpty()) continue
+            pendiente.append(String(c, Charsets.ISO_8859_1))
+            while (true) {
+                val i = pendiente.indexOf("\n")
+                if (i < 0) break
+                val linea = pendiente.substring(0, i).trim()
+                pendiente.delete(0, i + 1)
+                val end = ContCapture.parseEnd(linea)
+                val st = ContCapture.parseStatus(linea)
+                when {
+                    end != null -> { fin = end; onDiagnostic(linea) }
+                    st != null -> onStatus(st)
+                    linea.startsWith(LiveSample.PREFIX) -> {
+                        val n = expectedValues ?: linea.count { it == ',' }
+                        LiveSample.parse(linea, n)?.let(onSample)
+                    }
+                    linea.isNotEmpty() -> onDiagnostic(linea)
+                }
+            }
+        }
+        drenarCola(quietMs = 150, maxMs = 800)
+        fin
     }
 
     /**

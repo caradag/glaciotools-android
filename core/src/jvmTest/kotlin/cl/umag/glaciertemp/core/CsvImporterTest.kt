@@ -106,4 +106,25 @@ class CsvImporterTest {
             CsvImporter.parse("Time,Volt,Temp,RH,HAtemp\nbasura\n")
         }
     }
+
+    @Test
+    fun `un log de CONT exporta e importa sus milisegundos`() {
+        val sig = 0x200F
+        val t0 = java.time.LocalDateTime.of(2026, 10, 7, 12, 0, 0, 45_000_000)
+        val recs = listOf(Record(t0, listOf(1.5, 12.34, 56.0, -0.12)),
+                          Record(t0.plusNanos(143_000_000), listOf(1.5, 12.35, 56.1, -0.11)))
+        val csv = CsvExporter.export(recs, sig)
+        assertTrue(csv.contains("2026-10-07 12:00:00.045,"), csv)
+        assertTrue(csv.contains("2026-10-07 12:00:00.188,"), csv)
+        val back = CsvImporter.parse(csv)
+        assertEquals(sig, back.signature, "con milisegundos el log vuelve como version 2")
+        assertEquals(recs.map { it.time }, back.records.map { it.time })
+        assertEquals(csv, CsvExporter.export(back.records, back.signature))
+    }
+
+    @Test
+    fun `sin milisegundos sigue siendo la version 1`() {
+        val log = CsvImporter.parse("Time,Volt\n2026-01-01 00:00:00,1.50\n")
+        assertEquals(0x1001, log.signature)
+    }
 }
