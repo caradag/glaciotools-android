@@ -73,6 +73,20 @@ data class ContState(
     val summary: String? = null,
 )
 
+/**
+ * Un firmware elegido para subir, con lo que se le dice a quien decide: que hace (el
+ * descriptor GTFW), que cambia respecto de la placa y, si lo hay, por que no se puede subir.
+ */
+data class FirmwarePrompt(
+    val fileName: String,
+    val summary: List<String>,
+    val changes: List<String>,
+    /** Si no es null, la carga esta bloqueada: hardware distinto o archivo sin descriptor. */
+    val problem: String?,
+    val sizeBytes: Int,
+    internal val image: cl.umag.glaciertemp.core.firmware.Urclock.Image,
+)
+
 data class UiState(
     val connected: Boolean = false,
     val busy: Boolean = false,
@@ -97,6 +111,10 @@ data class UiState(
     val progress: DownloadProgress? = null,
     val live: LiveState = LiveState(),
     val cont: ContState = ContState(),
+    /** Firmware elegido esperando confirmacion, o null. */
+    val firmwarePrompt: FirmwarePrompt? = null,
+    /** Avance de una carga de firmware en curso ("Writing page 120/245"), o null. */
+    val firmwareProgress: String? = null,
     val records: List<Record> = emptyList(),
     val csvPreview: String = "",
     val battery: BatterySettings = BatterySettings(),
@@ -342,6 +360,7 @@ class DeviceViewModel : ViewModel() {
 
     fun connect(target: ConnectionTarget) = launchGuarded("Connecting...") {
         stopBleScan()
+        objetivo = target
         if (target is ConnectionTarget.TcpDebug &&
             tcpHost == ConnectionTarget.EMULATOR_HOST && !runningOnEmulator) {
             // Sin esto el usuario ve un error de socket que no explica nada. La causa no es
@@ -387,7 +406,7 @@ class DeviceViewModel : ViewModel() {
             // pararla: se pregunta antes de concluir que duerme.
             val q = String(s.exchange(ContCapture.QUERY, quietMs = 1_200))
             if (ContCapture.parseStatus(q) != null) {
-                transport = espiado; session = s; tap = espiado
+                transport = espiado; session = s; tap = espiado; crudo = t
                 arrancarPublicador()
                 _state.value = _state.value.copy(
                     connected = true, info = null, transportNote = describe(t),
@@ -434,7 +453,7 @@ class DeviceViewModel : ViewModel() {
             else "The log on this board has format version ${LogFormat.formatVersion(info.signature)}, " +
                  "which this app cannot read. Update GlacioTools."
 
-        transport = espiado; session = s
+        transport = espiado; session = s; crudo = t
         tap = espiado
         arrancarPublicador()
         _state.value = _state.value.copy(
@@ -1045,6 +1064,110 @@ class DeviceViewModel : ViewModel() {
         downloadedFrom = null
     }
 
+    // ------------------------------ actualizar el firmware ------------------------------
+
+    /** El destino de la ultima conexion: para volver a conectar despues de subir un firmware. */
+    private var objetivo: ConnectionTarget? = null
+
+    /**
+     * El transporte SIN el espia del terminal. El cargador habla binario con el bootloader, y
+     * ademas necesita la linea DTR, que el envoltorio no reenvia.
+     */
+    private var crudo: Transport? = null
+
+    /**
+     * Lee el .hex elegido y prepara el resumen. No escribe nada: [confirmFirmware] lo hace.
+     * Lo que se muestra sale del descriptor GTFW del propio archivo; lo que cambia, del de la
+     * placa (CFG, protocolo 7) o, con un firmware anterior, de su INFO.
+     */
+    fun prepareFirmware(name: String, bytes: ByteArray) = launchGuarded("Reading $name...") {
+        val s = checkNotNull(session) { "not connected" }
+        val info = _state.value.info
+        val hex = try {
+            cl.umag.glaciertemp.core.firmware.Urclock.parseHex(
+                String(bytes, Charsets.ISO_8859_1), FW_BOOT_START)
+        } catch (e: cl.umag.glaciertemp.core.firmware.Urclock.HexException) {
+            error("$name is not a valid firmware file: ${e.message}")
+        }
+        val desc = cl.umag.glaciertemp.core.firmware.FirmwareDescriptor.find(hex.image.data)
+        val placa = if ((info?.protocol ?: 0) >= Protocol.BUILD_DESCRIPTOR_PROTOCOL)
+            cl.umag.glaciertemp.core.firmware.FirmwareDescriptor.fromCfgLine(
+                String(s.exchange(Protocol.BUILD_DESCRIPTOR, quietMs = 500)))
+        else null
+        publicarTerminal()
+        val FD = cl.umag.glaciertemp.core.firmware.FirmwareDescriptor
+        val problema = FD.hardwareProblem(desc, FD.hardwareOf(info?.shortId)) ?: when {
+            objetivo !is ConnectionTarget.Usb ->
+                "Firmware can only be uploaded over a USB-serial adapter (USB OTG). " +
+                "Connect the board by cable and try again."
+            else -> null
+        }
+        _state.value = _state.value.copy(firmwarePrompt = FirmwarePrompt(
+            fileName = name,
+            summary = desc?.let { FD.describe(it) } ?: emptyList(),
+            changes = desc?.let {
+                FD.changes(placa, info?.signature, info?.recordCount ?: 0L, it)
+            } ?: emptyList(),
+            problem = problema,
+            sizeBytes = hex.image.size,
+            image = hex.image,
+        ), status = "Firmware file read: $name")
+    }
+
+    fun cancelFirmware() {
+        _state.value = _state.value.copy(firmwarePrompt = null)
+    }
+
+    /**
+     * Sube el firmware confirmado. Se despide de la consola, suelta el hilo lector de la
+     * sesion y habla con el bootloader por el puerto USB directo; al terminar cierra y vuelve
+     * a conectar, que reinicia la placa y deja ver la version nueva.
+     */
+    fun confirmFirmware() {
+        val p = _state.value.firmwarePrompt ?: return
+        if (p.problem != null) return
+        val target = objetivo
+        _state.value = _state.value.copy(firmwarePrompt = null)
+        launchGuarded("Updating firmware...") {
+            val s = checkNotNull(session) { "not connected" }
+            val t = checkNotNull(crudo) { "not connected" }
+            check(target is ConnectionTarget.Usb) { "firmware upload needs a USB connection" }
+            runCatching { s.exchange("Q", quietMs = 200, overallTimeoutMs = 1000) }
+            publicarTerminal()
+            publicador?.cancel(); publicador = null
+            s.cerrar()
+            session = null; transport = null; tap = null
+            _state.value = _state.value.copy(connected = false, info = null,
+                firmwareProgress = "Resetting the board into its bootloader...")
+            val resultado = runCatching {
+                FirmwareUploader(t) { appendTerminal("[firmware] $it", fromBoard = false) }
+                    .upload(p.image, onProgress = { pr ->
+                        _state.value = _state.value.copy(firmwareProgress =
+                            if (pr.stage == "Done") "Written and verified, starting the new firmware..."
+                            else "Writing page ${pr.done + 1} of ${pr.total}")
+                    })
+            }
+            publicarTerminal()
+            runCatching { t.close() }
+            crudo = null
+            val e = resultado.exceptionOrNull()
+            if (e != null) {
+                val estado = (e as? FirmwareUploadException)?.boardState
+                _state.value = _state.value.copy(firmwareProgress = null)
+                error((e.message ?: e.toString()) + "\n\n" + when (estado) {
+                    BoardState.UNCHANGED -> "The board still has its previous firmware."
+                    BoardState.PARTIAL -> "The upload was interrupted: the board may not start " +
+                        "properly. Connect again and repeat the update (the bootloader is intact)."
+                    null -> ""
+                })
+            }
+            _state.value = _state.value.copy(firmwareProgress = null,
+                status = "Firmware uploaded and verified. Reconnecting...")
+            kotlinx.coroutines.delay(1500)   // que el firmware nuevo arranque
+            connect(target)
+        }
+    }
+
     // ------------------------------ captura continua ------------------------------
 
     /** Lo pone el boton de parar y lo lee el bucle de la captura, de ahi el @Volatile. */
@@ -1503,6 +1626,8 @@ class DeviceViewModel : ViewModel() {
         "no LOGB header", "did not answer", "no answer", "sent no", "timed out",
         "end-of-file record never arrived",
     )
+
+    private val FW_BOOT_START = 0x7E80   // Urboot de 3 paginas; el cargador lo comprueba en la placa
 
     private fun launchGuarded(busyMsg: String, block: suspend () -> Unit) {
         _state.value = _state.value.copy(busy = true, error = null, status = busyMsg)

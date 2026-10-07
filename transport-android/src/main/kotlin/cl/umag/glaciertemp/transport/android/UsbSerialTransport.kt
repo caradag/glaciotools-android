@@ -7,6 +7,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import cl.umag.glaciertemp.transport.BaudSwitchable
 import cl.umag.glaciertemp.transport.BufferedTransport
+import cl.umag.glaciertemp.transport.ResetLine
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
@@ -25,7 +26,7 @@ class UsbSerialTransport(
     private val context: Context,
     private val device: UsbDevice,
     private val baudRate: Int = BAUD_RATE,
-) : BufferedTransport(writeChunkSize = 4096), BaudSwitchable {
+) : BufferedTransport(writeChunkSize = 4096), BaudSwitchable, ResetLine {
 
     private var port: UsbSerialPort? = null
     private var io: SerialInputOutputManager? = null
@@ -77,6 +78,19 @@ class UsbSerialTransport(
     override fun setBaudRate(baud: Int) {
         val p = port ?: throw java.io.IOException("the link is closed")
         p.setParameters(baud, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+    }
+
+    /**
+     * Reinicia la placa por el condensador de auto-reset: DTR/RTS sin activar y de nuevo
+     * activados, que es el flanco que baja RESET un instante. Es lo que hace el IDE antes de
+     * subir un firmware, y lo unico que abre el bootloader Urboot, que solo atiende tras un
+     * reset EXTERNO.
+     */
+    override fun pulseReset() {
+        val p = port ?: throw java.io.IOException("the link is closed")
+        p.setDTR(false); p.setRTS(false)
+        Thread.sleep(50)
+        p.setDTR(true); p.setRTS(true)
     }
 
     override fun writeChunk(chunk: ByteArray) {

@@ -141,7 +141,7 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
             // que capturaba, parar es lo unico que hay que hacer, y la placa no atiende nada
             // mas. Arrancarla, en cambio, solo en Advanced.
             if (s.cont.running) ContCard(vm, s)
-            InfoCard(s)
+            InfoCard(vm, s)
             ClockCard(vm, s)
             ConfigCard(vm, s)
             if (!s.cont.running && s.advanced &&
@@ -150,6 +150,7 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
             PositionCard(vm, s)
         }
         s.syncPrompt?.let { SyncDialog(vm, it) }
+        s.firmwarePrompt?.let { FirmwareDialog(vm, it) }
         s.locationPrompt?.let { LocationDialog(vm, s, it) }
         if (s.records.isNotEmpty()) {
             s.signature?.let { ChartCard(s.records, it, s.metadata) }
@@ -451,8 +452,34 @@ private fun queryDisplayName(ctx: android.content.Context, uri: android.net.Uri)
     }.getOrNull()
 
 @Composable
-private fun InfoCard(s: UiState) {
+private fun InfoCard(vm: DeviceViewModel, s: UiState) {
+    // Mientras se sube un firmware no hay INFO (la sesion esta cerrada), pero el avance tiene
+    // que seguir viendose aqui, que es donde se pulso Update.
+    s.firmwareProgress?.let { avance ->
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Updating firmware", style = MaterialTheme.typography.titleMedium)
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(avance, Modifier.testTag("firmware-progress"),
+                     style = MaterialTheme.typography.bodySmall)
+                Text("Do not unplug the cable.", style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
     val i = s.info ?: return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val elegirHex = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val name = queryDisplayName(ctx, uri) ?: "firmware.hex"
+            val bytes = runCatching {
+                ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            if (bytes == null) vm.showError("Could not read $name") else vm.prepareFirmware(name, bytes)
+        }
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Board", style = MaterialTheme.typography.titleMedium)
@@ -463,7 +490,18 @@ private fun InfoCard(s: UiState) {
             // a la segunda. Un "ID" solo no dice a cual.
             Text("Hardware ID: ${i.displayId}", Modifier.testTag("board-id"),
                  fontFamily = FontFamily.Monospace)
-            Text("Firmware ${i.firmware}  ·  protocol ${i.protocol}")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Firmware ${i.firmware}  ·  protocol ${i.protocol}", Modifier.weight(1f))
+                // Solo en Advanced: subir un firmware cambia lo que la placa mide y que pines
+                // usa. El resumen y las comprobaciones vienen antes de escribir nada.
+                if (s.advanced) {
+                    TextButton(
+                        // Un .hex no tiene tipo MIME propio: cada gestor lo etiqueta distinto.
+                        onClick = { elegirHex.launch(arrayOf("*/*")) },
+                        enabled = !s.busy,
+                        modifier = Modifier.testTag("firmware-update")) { Text("Update") }
+                }
+            }
             Text("${i.recordCount} records  ·  ${i.recordBytes} B each",
                  Modifier.testTag("record-count"))
             i.sensorErrors?.let { SensorErrorsBlock(it) }
@@ -822,6 +860,54 @@ private fun DownloadCard(vm: DeviceViewModel, s: UiState) {
             ResetCounterRow(vm, s)
         }
     }
+}
+
+/**
+ * Lo que trae un firmware antes de subirlo: que va a medir y con que pines (descriptor GTFW),
+ * que cambia respecto de la placa y, si lo hay, por que no se puede subir.
+ */
+@Composable
+private fun FirmwareDialog(vm: DeviceViewModel, p: FirmwarePrompt) {
+    AlertDialog(
+        onDismissRequest = { vm.cancelFirmware() },
+        title = { Text("Update firmware?") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()).testTag("firmware-dialog"),
+                   verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${p.fileName}  ·  ${p.sizeBytes} bytes", style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                p.problem?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error,
+                         modifier = Modifier.testTag("firmware-problem"))
+                }
+                if (p.summary.isNotEmpty()) {
+                    Text("This firmware", style = MaterialTheme.typography.titleSmall)
+                    p.summary.forEach { linea ->
+                        Text(linea, style = MaterialTheme.typography.bodyMedium,
+                             color = if (linea.contains("POWER OUTPUTS")) MaterialTheme.colorScheme.error
+                                     else MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+                if (p.changes.isNotEmpty()) {
+                    Text("Changes on this board", style = MaterialTheme.typography.titleSmall)
+                    p.changes.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
+                }
+                if (p.problem == null) {
+                    Text("The board configuration (EEPROM) and the data log are not touched.",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.confirmFirmware() }, enabled = p.problem == null,
+                       modifier = Modifier.testTag("firmware-confirm")) { Text("Upload") }
+        },
+        dismissButton = {
+            TextButton(onClick = { vm.cancelFirmware() },
+                       modifier = Modifier.testTag("firmware-cancel")) { Text("Cancel") }
+        },
+    )
 }
 
 /**
