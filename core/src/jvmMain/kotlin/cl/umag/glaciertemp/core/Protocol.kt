@@ -67,6 +67,13 @@ object Protocol {
     /** Protocolo a partir del cual la placa entiende [LIVE]. */
     const val LIVE_PROTOCOL = 5
 
+    /**
+     * Descriptor de compilacion de la placa ("CFG <hex>", firmware 3.12, protocolo 7). Ver
+     * [cl.umag.glaciertemp.core.firmware.FirmwareDescriptor].
+     */
+    const val BUILD_DESCRIPTOR = "CFG"
+    const val BUILD_DESCRIPTOR_PROTOCOL = 7
+
     /** Captura continua; ver [ContCapture]. */
     fun contOn(heater: Boolean): String = line(if (heater) ContCapture.ON_HEATER else ContCapture.ON)
     val CONT_OFF: String get() = line(ContCapture.OFF)
