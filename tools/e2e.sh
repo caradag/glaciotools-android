@@ -46,8 +46,9 @@ fi
 
 echo "== test instrumentado =="
 CONT_TEST=cl.umag.glaciertemp.app.ContFlowTest
+RAW_TEST=cl.umag.glaciertemp.app.RawSerialFlowTest
 ./gradlew :app:connectedDebugAndroidTest --console=plain \
-    -Pandroid.testInstrumentationRunnerArguments.notClass=$CONT_TEST
+    -Pandroid.testInstrumentationRunnerArguments.notClass=$CONT_TEST,$RAW_TEST
 RC=$?
 
 # Segunda pasada: la captura continua necesita el log VACIO y deja detras un log de
@@ -65,6 +66,18 @@ if [ -n "${SIM_PID:-}" ]; then
       -Pandroid.testInstrumentationRunnerArguments.class=$CONT_TEST
   RC2=$?
   [ $RC -eq 0 ] && RC=$RC2
+
+  # Tercera pasada: una placa que no contesta como logger (como el firmware de diagnostico).
+  echo "== placa sin logger: modo conexion serie =="
+  kill "$SIM_PID" 2>/dev/null; wait "$SIM_PID" 2>/dev/null
+  : > "$SIM_LOG"
+  python3 -u tools/fake_silent_board.py --tcp "$PORT" > "$SIM_LOG" 2>&1 &
+  SIM_PID=$!
+  for _ in $(seq 1 20); do grep -q "listening on" "$SIM_LOG" && break; sleep 0.5; done
+  ./gradlew :app:connectedDebugAndroidTest --console=plain \
+      -Pandroid.testInstrumentationRunnerArguments.class=cl.umag.glaciertemp.app.RawSerialFlowTest
+  RC3=$?
+  [ $RC -eq 0 ] && RC=$RC3
 fi
 
 echo "== captura final =="

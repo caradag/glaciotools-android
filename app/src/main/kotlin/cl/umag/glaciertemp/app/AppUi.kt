@@ -122,7 +122,10 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Updating firmware", style = MaterialTheme.typography.titleMedium)
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    // Proporcional a las paginas escritas, como el texto; sin animacion sin fin.
+                    val f = s.firmwareFraction
+                    if (f != null) LinearProgressIndicator({ f }, Modifier.fillMaxWidth().testTag("firmware-bar"))
+                    else LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(avance, Modifier.testTag("firmware-progress"),
                          style = MaterialTheme.typography.bodySmall)
                     Text("Do not unplug the cable.", style = MaterialTheme.typography.bodySmall,
@@ -154,14 +157,19 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
             // Una captura en marcha va ARRIBA y en cualquier modo: tras reconectar a una placa
             // que capturaba, parar es lo unico que hay que hacer, y la placa no atiende nada
             // mas. Arrancarla, en cambio, solo en Advanced.
-            if (s.cont.running) ContCard(vm, s)
-            InfoCard(vm, s)
-            ClockCard(vm, s)
-            ConfigCard(vm, s)
-            if (!s.cont.running && s.advanced &&
-                (s.info?.protocol ?: 0) >= ContCapture.PROTOCOL) ContCard(vm, s)
-            DownloadCard(vm, s)
-            PositionCard(vm, s)
+            if (s.rawSerial) {
+                // Sin INFO no hay reloj, configuracion ni log que mostrar: solo el enlace.
+                RawSerialCard(vm, s)
+            } else {
+                if (s.cont.running) ContCard(vm, s)
+                InfoCard(vm, s)
+                ClockCard(vm, s)
+                ConfigCard(vm, s)
+                if (!s.cont.running && s.advanced &&
+                    (s.info?.protocol ?: 0) >= ContCapture.PROTOCOL) ContCard(vm, s)
+                DownloadCard(vm, s)
+                PositionCard(vm, s)
+            }
         }
         s.syncPrompt?.let { SyncDialog(vm, it) }
         s.firmwarePrompt?.let { FirmwareDialog(vm, it) }
@@ -354,10 +362,11 @@ private fun ConnectCard(vm: DeviceViewModel, s: UiState) {
                         Text(t.label)
                     }
                 }
-                // Para una placa que no contesta como logger: con el firmware de diagnostico
-                // o con uno roto. El bootloader responde igual, por el reset del adaptador.
-                if (s.advanced) FirmwareFileButton(vm, s, "Update firmware (USB)", "firmware-update-offline")
             }
+            // Siempre, no solo en Advanced (el selector de modo solo aparece conectado): es la
+            // via para una placa que no contesta como logger --firmware roto, diagnostico--. El
+            // bootloader responde igual, por el reset del adaptador.
+            FirmwareFileButton(vm, s, "Update firmware (USB)", "firmware-update-offline")
 
             HorizontalDivider()
 
@@ -843,6 +852,28 @@ private fun DownloadCard(vm: DeviceViewModel, s: UiState) {
                 RawLogRow(vm, s)
             }
             ResetCounterRow(vm, s)
+        }
+    }
+}
+
+/**
+ * Enlace serie abierto con una placa que no contesto como logger. Lo normal es el firmware de
+ * diagnostico; tambien un logger dormido, que solo escucha 30 s tras un reinicio.
+ */
+@Composable
+private fun RawSerialCard(vm: DeviceViewModel, s: UiState) {
+    Card(Modifier.fillMaxWidth().testTag("raw-serial")) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Serial connection", style = MaterialTheme.typography.titleMedium)
+            Text("The serial link is open, but the board did not answer as a GlacierTemp " +
+                 "logger. If it runs the diagnostics firmware or another program, talk to it " +
+                 "in the Terminal tab (115200 baud; HELP lists the diagnostics commands).",
+                 style = MaterialTheme.typography.bodySmall)
+            Text("If it is a logger, it is probably asleep: the console only listens for 30 s " +
+                 "after a reset. Press RESET on the board and connect again.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FirmwareFileButton(vm, s, "Update firmware (USB)", "firmware-update-raw")
         }
     }
 }

@@ -66,8 +66,8 @@ data class DiagnosticDescriptor(
                 "Tests the HDC1080 and TMP119 sensors, the A0..A3 inputs and the settling time of " +
                 "switched sensors (SETTLE, STEP and PWR drive A1..A3 as power only when you run them).",
             "It does NOT log: the board stops measuring until a logger firmware is uploaded again. " +
-                "The app cannot talk to it; use a serial terminal at 115200 baud. To go back, use " +
-                "\"Update firmware (USB)\" on the connect screen.",
+                "After the upload the app opens a plain serial connection: use the Terminal tab. " +
+                "To go back, use \"Update firmware (USB)\".",
         )
     }
 }

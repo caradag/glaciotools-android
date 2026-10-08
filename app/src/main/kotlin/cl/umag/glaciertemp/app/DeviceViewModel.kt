@@ -85,7 +85,7 @@ data class FirmwarePrompt(
     val problem: String?,
     val sizeBytes: Int,
     internal val image: cl.umag.glaciertemp.core.firmware.Urclock.Image,
-    /** Firmware de diagnostico: no se reconecta al terminar, porque no habla como logger. */
+    /** Firmware de diagnostico: no registra; al reconectar, la placa queda en modo serie. */
     val diagnostic: Boolean = false,
 )
 
@@ -117,6 +117,14 @@ data class UiState(
     val firmwarePrompt: FirmwarePrompt? = null,
     /** Avance de una carga de firmware en curso ("Writing page 120/245"), o null. */
     val firmwareProgress: String? = null,
+    /** El mismo avance como fraccion 0..1 para la barra; null mientras no hay paginas que contar. */
+    val firmwareFraction: Float? = null,
+    /**
+     * Enlace serie abierto con una placa que no contesto como logger GlacierTemp (sin INFO):
+     * el firmware de diagnostico, otro programa, o un logger dormido. Se deja abierto para
+     * usar el terminal y poder subir un firmware.
+     */
+    val rawSerial: Boolean = false,
     val records: List<Record> = emptyList(),
     val csvPreview: String = "",
     val battery: BatterySettings = BatterySettings(),
@@ -420,12 +428,18 @@ class DeviceViewModel : ViewModel() {
                 completarConexion(s, t, espiado, tras)
                 return@launchGuarded
             }
-            // La placa solo atiende la consola durante los 30 s siguientes a un reinicio;
-            // el resto del tiempo duerme y no escucha. Decir solo "no respondio" deja al
-            // usuario buscando un fallo que no existe.
-            error("The board did not answer.\n\n" +
-                  "It only listens on the serial port for 30 s after a reset. " +
-                  "Press the RESET button on the board and connect again right away.")
+            // Ni logger ni captura: el enlace serie SI esta abierto, y puede haber al otro lado
+            // el firmware de diagnostico u otro programa que no habla este protocolo. Se deja
+            // abierto con el terminal: cerrarlo dejaba sin forma de hablarle ni de verlo. La
+            // tarjeta de conexion serie explica el otro caso, un logger dormido (solo escucha
+            // 30 s tras un reinicio).
+            transport = espiado; session = s; tap = espiado; crudo = t
+            arrancarPublicador()
+            _state.value = _state.value.copy(
+                connected = true, info = null, signature = null, rawSerial = true,
+                transportNote = describe(t),
+                status = "Serial link open, but no GlacierTemp logger answered")
+            return@launchGuarded
         }
         completarConexion(s, t, espiado, info)
     }
@@ -465,6 +479,7 @@ class DeviceViewModel : ViewModel() {
             },
             clockWarning = drift?.let { BoardClock.warning(it) },
             connected = true, info = info, signature = info.signature, variables = vars,
+            rawSerial = false,
             transportNote = describe(t),
             effectiveChunk = t.recordsPerRequest,
             status = "Connected  ·  board ${info.displayId}  ·  ${info.recordCount} records",
@@ -1110,8 +1125,9 @@ class DeviceViewModel : ViewModel() {
                 else -> null
             }
         val cambios = when {
-            desc != null -> FD.changes(placa, info?.signature, info?.recordCount ?: 0L, desc)
-            diag != null && info != null -> listOf("Logger firmware ${info.firmware} → diagnostics " +
+            info == null -> emptyList()
+            desc != null -> FD.changes(placa, info.signature, info.recordCount, desc)
+            diag != null -> listOf("Logger firmware ${info.firmware} → diagnostics " +
                 "${diag.version} (${diag.mode}). The log and the configuration (EEPROM) are kept, " +
                 "but nothing is recorded until a logger firmware is uploaded again.")
             else -> emptyList()
@@ -1119,7 +1135,7 @@ class DeviceViewModel : ViewModel() {
         _state.value = _state.value.copy(firmwarePrompt = FirmwarePrompt(
             fileName = name,
             summary = desc?.let { FD.describe(it) } ?: diag?.let { DD.describe(it) } ?: emptyList(),
-            changes = cambios + if (s == null && problema == null)
+            changes = cambios + if (info == null && problema == null)
                 listOf("The board is not connected as a logger, so its current firmware cannot be " +
                        "compared. The upload resets it through the USB adapter.") else emptyList(),
             problem = problema,
@@ -1170,9 +1186,11 @@ class DeviceViewModel : ViewModel() {
             val resultado = runCatching {
                 FirmwareUploader(t) { appendTerminal("[firmware] $it", fromBoard = false) }
                     .upload(p.image, onProgress = { pr ->
-                        _state.value = _state.value.copy(firmwareProgress =
-                            if (pr.stage == "Done") "Written and verified, starting the new firmware..."
-                            else "Writing page ${pr.done + 1} of ${pr.total}")
+                        _state.value = _state.value.copy(
+                            firmwareProgress =
+                                if (pr.stage == "Done") "Written and verified, starting the new firmware..."
+                                else "Writing page ${pr.done + 1} of ${pr.total}",
+                            firmwareFraction = if (pr.total > 0) pr.done.toFloat() / pr.total else null)
                     })
             }
             publicarTerminal()
@@ -1181,7 +1199,7 @@ class DeviceViewModel : ViewModel() {
             val e = resultado.exceptionOrNull()
             if (e != null) {
                 val estado = (e as? FirmwareUploadException)?.boardState
-                _state.value = _state.value.copy(firmwareProgress = null)
+                _state.value = _state.value.copy(firmwareProgress = null, firmwareFraction = null)
                 error((e.message ?: e.toString()) + "\n\n" + when (estado) {
                     BoardState.UNCHANGED -> "The board still has its previous firmware."
                     BoardState.PARTIAL -> "The upload was interrupted: the board may not start " +
@@ -1189,14 +1207,9 @@ class DeviceViewModel : ViewModel() {
                     null -> ""
                 })
             }
-            if (p.diagnostic) {
-                // El diagnostico no habla el protocolo del logger: reconectar solo daria un error.
-                _state.value = _state.value.copy(firmwareProgress = null,
-                    status = "Diagnostics firmware uploaded and verified. Use a serial terminal at " +
-                             "115200 baud; to go back, Update firmware (USB) on this screen.")
-                return@launchGuarded
-            }
-            _state.value = _state.value.copy(firmwareProgress = null,
+            // Tambien tras el diagnostico: no contesta como logger, asi que la conexion queda
+            // en modo serie, con el terminal listo para usarlo.
+            _state.value = _state.value.copy(firmwareProgress = null, firmwareFraction = null,
                 status = "Firmware uploaded and verified. Reconnecting...")
             kotlinx.coroutines.delay(1500)   // que el firmware nuevo arranque
             connect(target)
