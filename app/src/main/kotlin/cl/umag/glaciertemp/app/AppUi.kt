@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import cl.umag.glaciertemp.transport.SerialSettings
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -874,6 +875,63 @@ private fun RawSerialCard(vm: DeviceViewModel, s: UiState) {
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
             FirmwareFileButton(vm, s, "Update firmware (USB)", "firmware-update-raw")
+            HorizontalDivider()
+            SerialSettingsSection(vm, s)
+        }
+    }
+}
+
+/**
+ * Los parametros de la linea, como en un terminal serie, para hablar tambien con otros
+ * dispositivos. Parten en los de la GlacierTemp (115200 8N1, LF).
+ */
+@Composable
+private fun SerialSettingsSection(vm: DeviceViewModel, s: UiState) {
+    val c = s.serialSettings
+    val linea = s.serialConfigurable && !s.busy
+    Column(Modifier.testTag("serial-settings"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Serial settings  ·  ${c.summary}", style = MaterialTheme.typography.titleSmall,
+                 modifier = Modifier.weight(1f))
+            TextButton(onClick = { vm.setSerialSettings(SerialSettings.GLACIERTEMP) },
+                       enabled = !s.busy && !c.isGlacierTemp,
+                       modifier = Modifier.testTag("serial-defaults")) { Text("GlacierTemp defaults") }
+        }
+        if (!s.serialConfigurable) {
+            Text("Baud rate, data bits, parity and stop bits can only be changed on a USB-serial " +
+                 "adapter. The line ending applies to any link.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        SerialChoice("Baud rate", c.baud.toString(), SerialSettings.COMMON_BAUDS, { it.toString() },
+                     linea, "serial-baud") { vm.setSerialSettings(c.copy(baud = it)) }
+        SerialChoice("Data bits", c.dataBits.toString(), SerialSettings.DATA_BITS, { it.toString() },
+                     linea, "serial-databits") { vm.setSerialSettings(c.copy(dataBits = it)) }
+        SerialChoice("Parity", c.parity.label, SerialSettings.Parity.entries, { it.label },
+                     linea, "serial-parity") { vm.setSerialSettings(c.copy(parity = it)) }
+        SerialChoice("Stop bits", c.stopBits.label, SerialSettings.StopBits.entries, { it.label },
+                     linea, "serial-stopbits") { vm.setSerialSettings(c.copy(stopBits = it)) }
+        SerialChoice("Line ending", c.lineEnding.label, SerialSettings.LineEnding.entries, { it.label },
+                     !s.busy, "serial-lineending") { vm.setSerialSettings(c.copy(lineEnding = it)) }
+    }
+}
+
+@Composable
+private fun <T> SerialChoice(label: String, value: String, options: List<T>, text: (T) -> String,
+                             enabled: Boolean, tag: String, onPick: (T) -> Unit) {
+    var abierto by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.width(96.dp), style = MaterialTheme.typography.bodySmall)
+        Box {
+            OutlinedButton(onClick = { abierto = true }, enabled = enabled,
+                           modifier = Modifier.testTag(tag)) { Text(value) }
+            DropdownMenu(expanded = abierto, onDismissRequest = { abierto = false }) {
+                options.forEach { o ->
+                    DropdownMenuItem(text = { Text(text(o)) },
+                                     onClick = { abierto = false; onPick(o) },
+                                     modifier = Modifier.testTag("$tag-${text(o)}"))
+                }
+            }
         }
     }
 }

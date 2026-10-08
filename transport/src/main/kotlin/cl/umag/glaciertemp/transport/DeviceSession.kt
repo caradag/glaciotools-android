@@ -394,6 +394,11 @@ class DeviceSession(private val transport: Transport) {
          * y nadie lo esta viendo.
          */
         onChunk: (ByteArray) -> Unit = {},
+        /**
+         * Lo que se pone detras de la orden. La GlacierTemp espera LF; en la conexion serie
+         * con otros dispositivos lo elige el usuario ([SerialSettings.lineEnding]).
+         */
+        terminator: String = "\n",
     ): ByteArray {
         // Lo que haya en la cola ANTES de mandar el comando es, por definicion, de la
         // operacion anterior. Leerlo como parte de la respuesta es lo que hacia aparecer un
@@ -403,7 +408,7 @@ class DeviceSession(private val transport: Transport) {
                 // Lo que hay en el buffer ANTES de escribir es de la operacion anterior. Con
                 // la bomba esto es mover un indice, no leer con una espera adivinada.
                 bomba.descartarPendiente()
-                transport.writeLine(command)
+                transport.write((command + terminator).toByteArray(Charsets.ISO_8859_1))
             }
             val out = java.io.ByteArrayOutputStream()
             val deadline = System.currentTimeMillis() + overallTimeoutMs

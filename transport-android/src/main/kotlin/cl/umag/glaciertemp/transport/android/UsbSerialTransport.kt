@@ -8,6 +8,8 @@ import android.hardware.usb.UsbManager
 import cl.umag.glaciertemp.transport.BaudSwitchable
 import cl.umag.glaciertemp.transport.BufferedTransport
 import cl.umag.glaciertemp.transport.ResetLine
+import cl.umag.glaciertemp.transport.SerialConfigurable
+import cl.umag.glaciertemp.transport.SerialSettings
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
@@ -26,7 +28,7 @@ class UsbSerialTransport(
     private val context: Context,
     private val device: UsbDevice,
     private val baudRate: Int = BAUD_RATE,
-) : BufferedTransport(writeChunkSize = 4096), BaudSwitchable, ResetLine {
+) : BufferedTransport(writeChunkSize = 4096), BaudSwitchable, ResetLine, SerialConfigurable {
 
     private var port: UsbSerialPort? = null
     private var io: SerialInputOutputManager? = null
@@ -78,6 +80,24 @@ class UsbSerialTransport(
     override fun setBaudRate(baud: Int) {
         val p = port ?: throw java.io.IOException("the link is closed")
         p.setParameters(baud, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+    }
+
+    /** Baudios, bits de datos, paridad y bits de parada, en vivo (conexion serie). */
+    override fun applySettings(settings: SerialSettings) {
+        val p = port ?: throw java.io.IOException("the link is closed")
+        p.setParameters(settings.baud, settings.dataBits,
+            when (settings.stopBits) {
+                SerialSettings.StopBits.ONE -> UsbSerialPort.STOPBITS_1
+                SerialSettings.StopBits.ONE_POINT_FIVE -> UsbSerialPort.STOPBITS_1_5
+                SerialSettings.StopBits.TWO -> UsbSerialPort.STOPBITS_2
+            },
+            when (settings.parity) {
+                SerialSettings.Parity.NONE -> UsbSerialPort.PARITY_NONE
+                SerialSettings.Parity.ODD -> UsbSerialPort.PARITY_ODD
+                SerialSettings.Parity.EVEN -> UsbSerialPort.PARITY_EVEN
+                SerialSettings.Parity.MARK -> UsbSerialPort.PARITY_MARK
+                SerialSettings.Parity.SPACE -> UsbSerialPort.PARITY_SPACE
+            })
     }
 
     /**

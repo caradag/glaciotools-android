@@ -33,6 +33,18 @@ class RawSerialFlowTest {
         rule.onNodeWithTag("firmware-update-raw").assertExists()
         rule.onNodeWithTag("board-id").assertDoesNotExist()
 
+        // Parametros de la linea: parten en los de la GlacierTemp. Por la conexion de
+        // depuracion (un socket) baudios y paridad no se pueden cambiar; el fin de linea si.
+        rule.onNodeWithTag("serial-settings").performScrollTo()
+        rule.onNodeWithText("115200 8N1", substring = true).assertExists()
+        rule.onNodeWithTag("serial-baud").assertIsNotEnabled()
+        rule.onNodeWithTag("serial-lineending").performScrollTo().assertIsEnabled().performClick()
+        rule.onNodeWithTag("serial-lineending-CR+LF (\\r\\n)").performClick()
+        rule.waitUntil(10_000) {
+            rule.onAllNodesWithText("CR+LF", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        rule.onNodeWithTag("serial-defaults").assertIsEnabled()
+
         rule.onNodeWithTag("tab-terminal").performClick()
         rule.onNodeWithTag("terminal-input").performTextInput("HELP")
         Espresso.closeSoftKeyboard()

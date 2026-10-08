@@ -125,6 +125,10 @@ data class UiState(
      * usar el terminal y poder subir un firmware.
      */
     val rawSerial: Boolean = false,
+    /** Parametros de la conexion serie; parten en los de la GlacierTemp. */
+    val serialSettings: SerialSettings = SerialSettings.GLACIERTEMP,
+    /** Si el enlace admite cambiar baudios/paridad/bits (solo el cable USB). */
+    val serialConfigurable: Boolean = false,
     val records: List<Record> = emptyList(),
     val csvPreview: String = "",
     val battery: BatterySettings = BatterySettings(),
@@ -437,6 +441,7 @@ class DeviceViewModel : ViewModel() {
             arrancarPublicador()
             _state.value = _state.value.copy(
                 connected = true, info = null, signature = null, rawSerial = true,
+                serialSettings = SerialSettings.GLACIERTEMP, serialConfigurable = t is SerialConfigurable,
                 transportNote = describe(t),
                 status = "Serial link open, but no GlacierTemp logger answered")
             return@launchGuarded
@@ -661,7 +666,10 @@ class DeviceViewModel : ViewModel() {
         //
         // El resto de linea se guarda entre trozos porque un fragmento puede cortar una
         // linea por la mitad, y pintarla partida en dos desalinea las columnas.
-        val reply = String(s.exchange(cmd, quietMs = 800, overallTimeoutMs = 10 * 60_000))
+        // En la conexion serie, el fin de linea que haya elegido el usuario; con la GlacierTemp, LF.
+        val fin = if (_state.value.rawSerial) _state.value.serialSettings.lineEnding.bytes else "\n"
+        val reply = String(s.exchange(cmd, quietMs = 800, overallTimeoutMs = 10 * 60_000,
+                                      terminator = fin))
         publicarTerminal()
         if (reply.isBlank()) {
             reportarSilencio("the command \"$cmd\"")
@@ -1081,6 +1089,24 @@ class DeviceViewModel : ViewModel() {
         downloadedFrom = null
     }
 
+    // ------------------------------ conexion serie ------------------------------
+
+    /**
+     * Cambia los parametros de la conexion serie. Baudios, bits, paridad y parada se aplican
+     * al adaptador en el acto; el fin de linea solo cambia lo que la app pone tras cada orden.
+     */
+    fun setSerialSettings(n: SerialSettings) = launchGuarded("Applying serial settings...") {
+        val anterior = _state.value.serialSettings
+        val linea = n.copy(lineEnding = anterior.lineEnding) != anterior
+        if (linea) {
+            val c = crudo as? SerialConfigurable
+                ?: error("This link cannot change its line parameters (only a USB-serial adapter can)")
+            c.applySettings(n)
+        }
+        _state.value = _state.value.copy(serialSettings = n, status = "Serial: ${n.summary}, " +
+            "line ending ${n.lineEnding.label}")
+    }
+
     // ------------------------------ actualizar el firmware ------------------------------
 
     /** El destino de la ultima conexion: para volver a conectar despues de subir un firmware. */
@@ -1166,6 +1192,10 @@ class DeviceViewModel : ViewModel() {
                 // Conectada como logger: despedirse de la consola y soltar el hilo lector; el
                 // cargador habla por el mismo puerto, sin el espia del terminal.
                 val crudoActual = checkNotNull(crudo) { "not connected" }
+                // El bootloader habla a 115200 8N1: si el usuario cambio la linea, se repone.
+                if (!_state.value.serialSettings.isGlacierTemp) {
+                    (crudoActual as? SerialConfigurable)?.applySettings(SerialSettings.GLACIERTEMP)
+                }
                 runCatching { s.exchange("Q", quietMs = 200, overallTimeoutMs = 1000) }
                 publicarTerminal()
                 publicador?.cancel(); publicador = null
