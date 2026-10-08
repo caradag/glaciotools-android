@@ -116,6 +116,20 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
         Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // Arriba y fuera de "conectada": durante la carga la sesion esta cerrada (connected
+        // es false) y la tarjeta Board no se dibuja. Dentro de ella, el avance no se veia.
+        s.firmwareProgress?.let { avance ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Updating firmware", style = MaterialTheme.typography.titleMedium)
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(avance, Modifier.testTag("firmware-progress"),
+                         style = MaterialTheme.typography.bodySmall)
+                    Text("Do not unplug the cable.", style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
         if (!s.connected) {
             ConnectCard(vm, s)
             // Offered without a connection too: reviewing an old download on the phone
@@ -340,6 +354,9 @@ private fun ConnectCard(vm: DeviceViewModel, s: UiState) {
                         Text(t.label)
                     }
                 }
+                // Para una placa que no contesta como logger: con el firmware de diagnostico
+                // o con uno roto. El bootloader responde igual, por el reset del adaptador.
+                if (s.advanced) FirmwareFileButton(vm, s, "Update firmware (USB)", "firmware-update-offline")
             }
 
             HorizontalDivider()
@@ -453,33 +470,7 @@ private fun queryDisplayName(ctx: android.content.Context, uri: android.net.Uri)
 
 @Composable
 private fun InfoCard(vm: DeviceViewModel, s: UiState) {
-    // Mientras se sube un firmware no hay INFO (la sesion esta cerrada), pero el avance tiene
-    // que seguir viendose aqui, que es donde se pulso Update.
-    s.firmwareProgress?.let { avance ->
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Updating firmware", style = MaterialTheme.typography.titleMedium)
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(avance, Modifier.testTag("firmware-progress"),
-                     style = MaterialTheme.typography.bodySmall)
-                Text("Do not unplug the cable.", style = MaterialTheme.typography.bodySmall,
-                     color = MaterialTheme.colorScheme.error)
-            }
-        }
-    }
     val i = s.info ?: return
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val elegirHex = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            val name = queryDisplayName(ctx, uri) ?: "firmware.hex"
-            val bytes = runCatching {
-                ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            }.getOrNull()
-            if (bytes == null) vm.showError("Could not read $name") else vm.prepareFirmware(name, bytes)
-        }
-    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Board", style = MaterialTheme.typography.titleMedium)
@@ -494,13 +485,7 @@ private fun InfoCard(vm: DeviceViewModel, s: UiState) {
                 Text("Firmware ${i.firmware}  ·  protocol ${i.protocol}", Modifier.weight(1f))
                 // Solo en Advanced: subir un firmware cambia lo que la placa mide y que pines
                 // usa. El resumen y las comprobaciones vienen antes de escribir nada.
-                if (s.advanced) {
-                    TextButton(
-                        // Un .hex no tiene tipo MIME propio: cada gestor lo etiqueta distinto.
-                        onClick = { elegirHex.launch(arrayOf("*/*")) },
-                        enabled = !s.busy,
-                        modifier = Modifier.testTag("firmware-update")) { Text("Update") }
-                }
+                if (s.advanced) FirmwareFileButton(vm, s, "Update", "firmware-update")
             }
             Text("${i.recordCount} records  ·  ${i.recordBytes} B each",
                  Modifier.testTag("record-count"))
@@ -860,6 +845,25 @@ private fun DownloadCard(vm: DeviceViewModel, s: UiState) {
             ResetCounterRow(vm, s)
         }
     }
+}
+
+/** Elegir un .hex y prepararlo para subir. Un .hex no tiene tipo MIME propio: se acepta todo. */
+@Composable
+private fun FirmwareFileButton(vm: DeviceViewModel, s: UiState, label: String, tag: String) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val elegirHex = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val name = queryDisplayName(ctx, uri) ?: "firmware.hex"
+            val bytes = runCatching {
+                ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            if (bytes == null) vm.showError("Could not read $name") else vm.prepareFirmware(name, bytes)
+        }
+    }
+    TextButton(onClick = { elegirHex.launch(arrayOf("*/*")) }, enabled = !s.busy,
+               modifier = Modifier.testTag(tag)) { Text(label) }
 }
 
 /**

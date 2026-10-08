@@ -119,14 +119,23 @@ data class FirmwareDescriptor(
          * permite y se explica con [describe] y [changes]. [boardHardware] sale del
          * identificador corto de INFO ("GT001-1B4237" -> "GT001"); null si no se conoce.
          */
-        fun hardwareProblem(file: FirmwareDescriptor?, boardHardware: String?): String? = when {
-            file == null ->
-                "This file has no GlacierTemp build descriptor (firmware 3.12 or later), so the app " +
-                "cannot check what hardware it is for. Upload it with the Arduino IDE instead."
-            file.hardware !in SUPPORTED_HARDWARE ->
-                "This firmware is for hardware ${file.hardware}, not a GlacierTemp this app supports."
-            boardHardware != null && boardHardware != file.hardware ->
-                "This firmware is for ${file.hardware}, but the board is ${boardHardware}."
+        fun hardwareProblem(file: FirmwareDescriptor?, boardHardware: String?): String? =
+            hardwareProblemOf(file?.hardware, boardHardware)
+
+        /**
+         * Lo mismo a partir del hardware que declara el archivo, venga del descriptor del logger
+         * (GTFW) o del de diagnostico ([DiagnosticDescriptor], GTDG). [fileHardware] null: el
+         * archivo no trae ninguno de los dos.
+         */
+        fun hardwareProblemOf(fileHardware: String?, boardHardware: String?): String? = when {
+            fileHardware == null ->
+                "This file has no GlacierTemp build descriptor (logger 3.12 or diagnostics 1.6 and " +
+                "later), so the app cannot check what hardware it is for. Upload it with the " +
+                "Arduino IDE instead."
+            fileHardware !in SUPPORTED_HARDWARE ->
+                "This firmware is for hardware $fileHardware, not a GlacierTemp this app supports."
+            boardHardware != null && boardHardware != fileHardware ->
+                "This firmware is for $fileHardware, but the board is $boardHardware."
             else -> null
         }
 

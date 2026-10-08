@@ -85,6 +85,8 @@ data class FirmwarePrompt(
     val problem: String?,
     val sizeBytes: Int,
     internal val image: cl.umag.glaciertemp.core.firmware.Urclock.Image,
+    /** Firmware de diagnostico: no se reconecta al terminar, porque no habla como logger. */
+    val diagnostic: Boolean = false,
 )
 
 data class UiState(
@@ -1081,7 +1083,7 @@ class DeviceViewModel : ViewModel() {
      * placa (CFG, protocolo 7) o, con un firmware anterior, de su INFO.
      */
     fun prepareFirmware(name: String, bytes: ByteArray) = launchGuarded("Reading $name...") {
-        val s = checkNotNull(session) { "not connected" }
+        val s = session
         val info = _state.value.info
         val hex = try {
             cl.umag.glaciertemp.core.firmware.Urclock.parseHex(
@@ -1089,28 +1091,41 @@ class DeviceViewModel : ViewModel() {
         } catch (e: cl.umag.glaciertemp.core.firmware.Urclock.HexException) {
             error("$name is not a valid firmware file: ${e.message}")
         }
-        val desc = cl.umag.glaciertemp.core.firmware.FirmwareDescriptor.find(hex.image.data)
-        val placa = if ((info?.protocol ?: 0) >= Protocol.BUILD_DESCRIPTOR_PROTOCOL)
-            cl.umag.glaciertemp.core.firmware.FirmwareDescriptor.fromCfgLine(
-                String(s.exchange(Protocol.BUILD_DESCRIPTOR, quietMs = 500)))
+        val FD = cl.umag.glaciertemp.core.firmware.FirmwareDescriptor
+        val DD = cl.umag.glaciertemp.core.firmware.DiagnosticDescriptor
+        val desc = FD.find(hex.image.data)
+        val diag = if (desc == null) DD.find(hex.image.data) else null
+        // Sin sesion (placa que no habla como logger: con el diagnostico, o con un firmware
+        // roto) se sube por el primer adaptador USB, sin nada de la placa con que comparar.
+        if (s == null) objetivo = _state.value.discovery.usb.firstOrNull()
+        val placa = if (s != null && (info?.protocol ?: 0) >= Protocol.BUILD_DESCRIPTOR_PROTOCOL)
+            FD.fromCfgLine(String(s.exchange(Protocol.BUILD_DESCRIPTOR, quietMs = 500)))
         else null
         publicarTerminal()
-        val FD = cl.umag.glaciertemp.core.firmware.FirmwareDescriptor
-        val problema = FD.hardwareProblem(desc, FD.hardwareOf(info?.shortId)) ?: when {
-            objetivo !is ConnectionTarget.Usb ->
-                "Firmware can only be uploaded over a USB-serial adapter (USB OTG). " +
-                "Connect the board by cable and try again."
-            else -> null
+        val problema = FD.hardwareProblemOf(desc?.hardware ?: diag?.hardware, FD.hardwareOf(info?.shortId))
+            ?: when {
+                objetivo !is ConnectionTarget.Usb ->
+                    "Firmware can only be uploaded over a USB-serial adapter (USB OTG). " +
+                    "Connect the board by cable and try again."
+                else -> null
+            }
+        val cambios = when {
+            desc != null -> FD.changes(placa, info?.signature, info?.recordCount ?: 0L, desc)
+            diag != null && info != null -> listOf("Logger firmware ${info.firmware} → diagnostics " +
+                "${diag.version} (${diag.mode}). The log and the configuration (EEPROM) are kept, " +
+                "but nothing is recorded until a logger firmware is uploaded again.")
+            else -> emptyList()
         }
         _state.value = _state.value.copy(firmwarePrompt = FirmwarePrompt(
             fileName = name,
-            summary = desc?.let { FD.describe(it) } ?: emptyList(),
-            changes = desc?.let {
-                FD.changes(placa, info?.signature, info?.recordCount ?: 0L, it)
-            } ?: emptyList(),
+            summary = desc?.let { FD.describe(it) } ?: diag?.let { DD.describe(it) } ?: emptyList(),
+            changes = cambios + if (s == null && problema == null)
+                listOf("The board is not connected as a logger, so its current firmware cannot be " +
+                       "compared. The upload resets it through the USB adapter.") else emptyList(),
             problem = problema,
             sizeBytes = hex.image.size,
             image = hex.image,
+            diagnostic = diag != null,
         ), status = "Firmware file read: $name")
     }
 
@@ -1129,14 +1144,27 @@ class DeviceViewModel : ViewModel() {
         val target = objetivo
         _state.value = _state.value.copy(firmwarePrompt = null)
         launchGuarded("Updating firmware...") {
-            val s = checkNotNull(session) { "not connected" }
-            val t = checkNotNull(crudo) { "not connected" }
             check(target is ConnectionTarget.Usb) { "firmware upload needs a USB connection" }
-            runCatching { s.exchange("Q", quietMs = 200, overallTimeoutMs = 1000) }
-            publicarTerminal()
-            publicador?.cancel(); publicador = null
-            s.cerrar()
-            session = null; transport = null; tap = null
+            val s = session
+            val t: Transport = if (s != null) {
+                // Conectada como logger: despedirse de la consola y soltar el hilo lector; el
+                // cargador habla por el mismo puerto, sin el espia del terminal.
+                val crudoActual = checkNotNull(crudo) { "not connected" }
+                runCatching { s.exchange("Q", quietMs = 200, overallTimeoutMs = 1000) }
+                publicarTerminal()
+                publicador?.cancel(); publicador = null
+                s.cerrar()
+                session = null; transport = null; tap = null
+                crudoActual
+            } else {
+                // Sin sesion: abrir el adaptador. Abrirlo ya reinicia la placa por DTR.
+                val c = checkNotNull(connectivity) { "USB is not available" }
+                if (!c.hasUsbPermission(target)) {
+                    c.requestUsbPermission(target)
+                    error("Grant permission to the USB adapter and try again")
+                }
+                c.open(target).also { it.open() }
+            }
             _state.value = _state.value.copy(connected = false, info = null,
                 firmwareProgress = "Resetting the board into its bootloader...")
             val resultado = runCatching {
@@ -1157,9 +1185,16 @@ class DeviceViewModel : ViewModel() {
                 error((e.message ?: e.toString()) + "\n\n" + when (estado) {
                     BoardState.UNCHANGED -> "The board still has its previous firmware."
                     BoardState.PARTIAL -> "The upload was interrupted: the board may not start " +
-                        "properly. Connect again and repeat the update (the bootloader is intact)."
+                        "properly. Repeat the update (the bootloader is intact)."
                     null -> ""
                 })
+            }
+            if (p.diagnostic) {
+                // El diagnostico no habla el protocolo del logger: reconectar solo daria un error.
+                _state.value = _state.value.copy(firmwareProgress = null,
+                    status = "Diagnostics firmware uploaded and verified. Use a serial terminal at " +
+                             "115200 baud; to go back, Update firmware (USB) on this screen.")
+                return@launchGuarded
             }
             _state.value = _state.value.copy(firmwareProgress = null,
                 status = "Firmware uploaded and verified. Reconnecting...")
