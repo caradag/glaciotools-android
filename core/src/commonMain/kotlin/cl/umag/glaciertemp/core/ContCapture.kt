@@ -14,7 +14,7 @@ package cl.umag.glaciertemp.core
  *     CONT begin heater=on rec=16
  *     CONT n=8412 t=1203s
  *     CONT end reason=stop n=8412 dur=1203456ms mean=143ms max=402ms drift=-4ms heater=on
- *     CONT needs an empty log: download it, then RC
+ *     CONT needs empty log: download & RC
  *     CONT idle
  */
 object ContCapture {
@@ -65,7 +65,9 @@ object ContCapture {
             g[7] == "on")
     }
 
-    fun needsEmptyLog(text: String): Boolean = text.contains("CONT needs an empty log")
+    /** Firmware 3.15 acorto el texto; se aceptan los dos para placas sin actualizar. */
+    fun needsEmptyLog(text: String): Boolean =
+        text.contains("CONT needs empty log") || text.contains("CONT needs an empty log")
 
     fun isIdle(text: String): Boolean = text.contains("CONT idle")
 

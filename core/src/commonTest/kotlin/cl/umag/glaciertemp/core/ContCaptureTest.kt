@@ -44,6 +44,7 @@ class ContCaptureTest {
     }
 
     @Test fun `las respuestas de rechazo y reposo se reconocen`() {
+        assertTrue(ContCapture.needsEmptyLog("CONT needs empty log: download & RC\n"))
         assertTrue(ContCapture.needsEmptyLog("CONT needs an empty log: download it, then RC\n"))
         assertTrue(ContCapture.isIdle("CONT idle\r\n"))
         assertFalse(ContCapture.isIdle("CONT n=1 t=0s"))

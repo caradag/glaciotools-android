@@ -84,9 +84,9 @@ def memory_lifetime(board, link):
     days = free * (interval // 60) // 1440 + free * (interval % 60) // 86400
     link.line(f"Memory: {free} free records, {days} days at {interval} s")
     if free == 0:
-        link.line("Memory is FULL")
+        link.line("Memory FULL")
     elif days > 18250:
-        link.line("Full in more than 50 years")
+        link.line("Full in 50+ years")
     else:
         link.line("Full on: " + (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -296,7 +296,7 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None, readline_fn
             link.line("CONT idle")
             return
         if board.count > 0:
-            link.line("CONT needs an empty log: download it, then RC")
+            link.line("CONT needs empty log: download & RC")
             return
         heater = c[7:].upper() == "+H"
         board.start_cont()
@@ -435,9 +435,9 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None, readline_fn
         link.line("LOGH raw memory dump")
         link.line(f"samples:{board.count}")
         link.line(f"bytes:{n} of {FLASH_BYTES}")
-        link.line(f"this build record size:{board.rec}")
+        link.line(f"build record size:{board.rec}")
         link.line(f"log signature:0x{board.sig:04X}")
-        link.line(f"this build signature:0x{board.sig:04X}")
+        link.line(f"build signature:0x{board.sig:04X}")
         if fast:
             link.line(f"fast:{fast}")
         link.line("Intel HEX follows. Keep from the first ':' to :00000001FF")
