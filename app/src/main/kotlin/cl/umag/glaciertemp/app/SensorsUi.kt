@@ -947,7 +947,8 @@ private fun ResultadoEnDosPosiciones(a: Inclinacion, b: Inclinacion) {
             FilaCorregida("Yaw", yaw?.let { Compass.normalize(it.value) }, yaw?.bias, "sn-two-yaw")
             FilaCorregida("Pitch", pitch?.value, pitch?.bias, "sn-two-pitch")
             FilaCorregida("Roll", roll?.value, roll?.bias, "sn-two-roll")
-            Reversal.warning(listOfNotNull(pitch?.bias, roll?.bias))?.let {
+            val aviso = Reversal.warning(listOfNotNull(pitch?.bias, roll?.bias))
+            aviso?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.error,
                      modifier = Modifier.testTag("sn-two-warn"))
@@ -956,6 +957,11 @@ private fun ResultadoEnDosPosiciones(a: Inclinacion, b: Inclinacion) {
                  "sensor's own offset, and it is gone from the value on the left.",
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BotonCopiar({
+                SensorReport.tiltTwoPositions(yaw?.value, yaw?.bias, pitch?.value, pitch?.bias,
+                                              roll?.value, roll?.bias, aviso,
+                                              AlbedoRun.HOLD_SECONDS, ahora())
+            }, "sn-two-copy")
         }
     }
 }

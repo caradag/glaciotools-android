@@ -187,6 +187,32 @@ object SensorReport {
         append(par("Roll", rollMean, rollMedian))
     }
 
+    /**
+     * El resultado de las dos posiciones, con el sesgo ya quitado.
+     *
+     * VA EL SESGO junto a cada valor, y el aviso si lo hay: un sesgo de grados no es del
+     * sensor sino de que el telefono no se apoyo igual las dos veces, y quien lea el numero
+     * pegado en la libreta tiene que poder saberlo sin la pantalla delante.
+     */
+    fun tiltTwoPositions(
+        yaw: Double?, yawBias: Double?,
+        pitch: Double?, pitchBias: Double?,
+        roll: Double?, rollBias: Double?,
+        warning: String?, segundos: Int, cuando: String,
+    ): String = buildString {
+        appendLine("GlacioTools — tilt (two positions, bias removed)  $cuando")
+        appendLine("Two measurements of $segundos s, the second turned 180° in place")
+        appendLine(corregido("Yaw (azimuth)", yaw?.let { Compass.normalize(it) }, yawBias) +
+                   (yaw?.let { "  (${Compass.cardinal(Compass.normalize(it))})" } ?: ""))
+        appendLine(corregido("Pitch", pitch, pitchBias))
+        append(corregido("Roll", roll, rollBias))
+        warning?.let { append("\nNote: $it") }
+    }
+
+    private fun corregido(rotulo: String, valor: Double?, sesgo: Double?): String =
+        "$rotulo: ${valor?.let { g(it) } ?: "—"}, bias " +
+            (sesgo?.let { (if (it >= 0) "+" else "") + Decimals.fixed(it, 2) + "°" } ?: "—")
+
     private fun par(rotulo: String, media: Double?, mediana: Double?): String =
         "$rotulo: mean ${media?.let { g(it) } ?: "—"}, median ${mediana?.let { g(it) } ?: "—"}"
 

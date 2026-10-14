@@ -305,6 +305,15 @@ real de la bateria, lecturas `NaN` y un hueco de seis horas. `SampleCsvTest` lo 
 entero --importar, graficar, estimar bateria, reexportar-- porque un fichero de prueba que
 no se prueba deja sin saber si lo que falla es el fichero o la app.
 
+## Calibracion de la placa (modo avanzado)
+
+La tarjeta **Calibration** junta tantos pares (valor real, cuenta del ADC) como se quiera para la bateria o un pin del header, ajusta una recta y manda a la placa dos puntos de ella. Cada cuenta se lee con el mismo comando que a mano (`V`, `A0`..), que enciende el sensor conmutado, espera su arranque y lo apaga igual que una medicion normal. La logica vive en `BoardCalibration` (`:core`), con sus pruebas.
+
+- **La recta es cuenta en funcion del valor real**, no al reves: el valor real lo fija quien calibra y el ruido esta en el ADC. El RMSE se da en unidades reales (residuo en cuentas dividido por la pendiente).
+- **Se mandan dos puntos de la recta en los extremos de lo medido**, primero redondeando la cuenta a entero y luego calculando su valor real con tres decimales, que es lo que guarda la placa. Una prueba reproduce la aritmetica entera de `twoPointMv` y comprueba que la placa recupera la recta en todo el rango.
+- **El envio usa `A01=2.000>258`** (firmware 3.16, protocolo 8). Un firmware anterior acepta esa forma sin error y guarda la cuenta que lee en ese momento, asi que el boton solo se habilita con protocolo 8 o mas, y ademas se comprueba que la placa contesta exactamente el par mandado (`2000mV->258`). `CalibrationSimulatorTest` lo prueba contra el simulador con `--protocol 7` y `8`.
+- Los puntos sobreviven a la desconexion (la consola se cierra a los dos minutos y una escalera de profundidades tarda mas) y se borran solo al conectar otra placa.
+
 ## Identidad de placa
 
 El W25Q64 entrega 64 bits unicos de fabrica (opcode `0x4B`), pero Winbond **no documenta como

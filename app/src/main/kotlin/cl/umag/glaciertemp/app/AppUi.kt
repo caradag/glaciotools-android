@@ -166,6 +166,8 @@ private fun DeviceTab(vm: DeviceViewModel, s: UiState) {
                 InfoCard(vm, s)
                 ClockCard(vm, s)
                 ConfigCard(vm, s)
+                // Solo en Advanced: escribe en la EEPROM y cambia lo que la placa registra.
+                if (!s.cont.running && s.advanced) CalibrationCard(vm, s)
                 if (!s.cont.running && s.advanced &&
                     (s.info?.protocol ?: 0) >= ContCapture.PROTOCOL) ContCard(vm, s)
                 DownloadCard(vm, s)

@@ -89,6 +89,29 @@ data class FirmwarePrompt(
     val diagnostic: Boolean = false,
 )
 
+/**
+ * La seccion de calibracion: los pares (real, cuenta) de cada canal y lo que paso al mandarlos.
+ *
+ * Los puntos van POR CANAL y no en una lista sola: calibrar la bateria a mitad de una escalera
+ * de profundidades no puede mezclar voltios con metros. Y SOBREVIVEN a la desconexion, porque
+ * calibrar un sensor de presion es bajarlo marca a marca, y entre una y otra la consola de la
+ * placa se cierra sola: perder lo medido por tener que reconectar seria perderlo siempre.
+ * Solo se borran al conectar OTRA placa ([board]), cuyas cuentas no tienen nada que ver.
+ */
+data class CalibrationState(
+    val channel: String = BoardCalibration.VOLTAGE.key,
+    val points: Map<String, List<BoardCalibration.Point>> = emptyMap(),
+    /** El nombre que la placa da a cada pin ("Depth [m]"), leido de su respuesta. */
+    val names: Map<String, String> = emptyMap(),
+    /** La placa de la que son los puntos. */
+    val board: String? = null,
+    /** Dialogo de confirmacion abierto antes de escribir en la EEPROM de la placa. */
+    val confirmSend: Boolean = false,
+    /** Lo que contesto la placa al mandarle los dos puntos, para enseñarlo. */
+    val sendResult: String? = null,
+    val sendOk: Boolean = false,
+)
+
 data class UiState(
     val connected: Boolean = false,
     val busy: Boolean = false,
@@ -171,6 +194,7 @@ data class UiState(
     val locationPrompt: LocationPrompt? = null,
     /** Los puntos de GPS tools, resueltos. Se piden solo al ir a elegir uno. */
     val savedPoints: List<cl.umag.glaciertemp.core.geo.SavedPoint.Solution> = emptyList(),
+    val calibration: CalibrationState = CalibrationState(),
     val error: String? = null,
 )
 
@@ -477,7 +501,10 @@ class DeviceViewModel : ViewModel() {
         transport = espiado; session = s; crudo = t
         tap = espiado
         arrancarPublicador()
+        val cal = _state.value.calibration
         _state.value = _state.value.copy(
+            calibration = if (cal.board == null || cal.board == info.boardId) cal
+                          else CalibrationState(),
             boardTime = boardNow?.let {
                 java.time.format.DateTimeFormatter
                     .ofPattern("yyyy-MM-dd HH:mm:ss").format(it)
@@ -1089,6 +1116,115 @@ class DeviceViewModel : ViewModel() {
         downloadedFrom = null
     }
 
+    // ------------------------------ calibracion ------------------------------
+
+    fun setCalibrationChannel(key: String) {
+        val c = _state.value.calibration
+        _state.value = _state.value.copy(
+            calibration = c.copy(channel = key, sendResult = null, sendOk = false))
+    }
+
+    /**
+     * Lee la cuenta del canal con el MISMO comando que se usa a mano (V, A0..) y la guarda
+     * junto al valor real que escribio el usuario.
+     *
+     * Ese comando enciende un sensor conmutado, espera su tiempo de arranque y lo apaga, igual
+     * que una medicion normal, asi que la cuenta es la que vera el registro. Se espera 1,5 s
+     * de silencio y no los 0,4 de siempre porque la respuesta llega DESPUES de esa espera, que
+     * en un sensor lento es de cientos de milisegundos.
+     */
+    fun calibrationGetRaw(real: Double) = launchGuarded("Reading the raw count...") {
+        val s = checkNotNull(session) { "not connected" }
+        val cal = _state.value.calibration
+        val canal = BoardCalibration.channels(_state.value.info?.signature)
+            .firstOrNull { it.key == cal.channel } ?: error("Channel ${cal.channel} is not in this build")
+        val reply = String(s.exchange(canal.readCommand, quietMs = 1500))
+        publicarTerminal()
+        if (reply.isBlank()) {
+            reportarSilencio("the ${canal.readCommand} command")
+            return@launchGuarded
+        }
+        val raw = BoardCalibration.rawFromReply(reply)
+            ?: error("The board did not report a count: ${reply.trim()}")
+        // En un pin, lo que va antes de ':' es el nombre que se le dio al compilar.
+        val nombre = if (canal == BoardCalibration.VOLTAGE) null
+            else reply.lineSequence().firstOrNull { BoardCalibration.rawFromReply(it) != null }
+                ?.substringBefore(':', "")?.trim()?.takeIf { it.isNotEmpty() && it != canal.key }
+        val actual = _state.value.calibration
+        _state.value = _state.value.copy(
+            calibration = actual.copy(
+                points = actual.points + (canal.key to
+                    (actual.points[canal.key].orEmpty() + BoardCalibration.Point(real, raw))),
+                names = if (nombre != null) actual.names + (canal.key to nombre) else actual.names,
+                board = _state.value.info?.boardId ?: actual.board,
+                sendResult = null, sendOk = false),
+            status = "${canal.label}: $raw counts at $real")
+    }
+
+    fun removeCalibrationPoint(index: Int) {
+        val c = _state.value.calibration
+        val lista = c.points[c.channel].orEmpty()
+        if (index !in lista.indices) return
+        _state.value = _state.value.copy(calibration = c.copy(
+            points = c.points + (c.channel to lista.filterIndexed { i, _ -> i != index }),
+            sendResult = null, sendOk = false))
+    }
+
+    fun clearCalibrationPoints() {
+        val c = _state.value.calibration
+        _state.value = _state.value.copy(calibration = c.copy(
+            points = c.points - c.channel, sendResult = null, sendOk = false))
+    }
+
+    fun requestSendCalibration() {
+        _state.value = _state.value.copy(
+            calibration = _state.value.calibration.copy(confirmSend = true))
+    }
+
+    fun cancelSendCalibration() {
+        _state.value = _state.value.copy(
+            calibration = _state.value.calibration.copy(confirmSend = false))
+    }
+
+    /**
+     * Manda los dos puntos de la recta ajustada y comprueba que la placa guardo EXACTAMENTE
+     * eso. La comprobacion no es redundante: la placa contesta con lo que quedo en su EEPROM,
+     * y un firmware que no entendiera el '>' no daria error, guardaria otra cuenta.
+     */
+    fun sendCalibration() = launchGuarded("Writing the calibration...") {
+        val s = checkNotNull(session) { "not connected" }
+        val st = _state.value
+        _state.value = st.copy(calibration = st.calibration.copy(confirmSend = false))
+        val proto = st.info?.protocol ?: 0
+        check(proto >= BoardCalibration.PAIR_PROTOCOL) {
+            "This board speaks protocol $proto. Sending a calibration needs firmware 3.16 " +
+            "(protocol ${BoardCalibration.PAIR_PROTOCOL}) or newer."
+        }
+        val cal = st.calibration
+        val canal = BoardCalibration.channels(st.info?.signature)
+            .firstOrNull { it.key == cal.channel } ?: error("Channel ${cal.channel} is not in this build")
+        val puntos = cal.points[canal.key].orEmpty()
+        val fit = BoardCalibration.fit(puntos) ?: error("At least two different real values are needed.")
+        val plan = when (val p = BoardCalibration.plan(fit, puntos)) {
+            is BoardCalibration.Plan.Problem -> error(p.message)
+            is BoardCalibration.Plan.Ok -> p
+        }
+        val respuestas = listOf(1 to plan.first, 2 to plan.second).map { (i, p) ->
+            val cmd = BoardCalibration.command(canal, i, p)
+            val reply = String(s.exchange(cmd, quietMs = 600)).trim()
+            Triple(cmd, reply, BoardCalibration.confirms(reply, p))
+        }
+        publicarTerminal()
+        val ok = respuestas.all { it.third }
+        val texto = respuestas.joinToString("\n") { (cmd, reply, bien) ->
+            "$cmd  →  ${reply.lineSequence().firstOrNull().orEmpty()}" + if (bien) "" else "  (MISMATCH)"
+        }
+        _state.value = _state.value.copy(
+            calibration = _state.value.calibration.copy(sendResult = texto, sendOk = ok),
+            status = if (ok) "Calibration of ${canal.label} written" else "Calibration NOT confirmed",
+            error = if (ok) null else "The board did not store what was sent:\n$texto")
+    }
+
     // ------------------------------ conexion serie ------------------------------
 
     /**
@@ -1446,6 +1582,7 @@ class DeviceViewModel : ViewModel() {
             terminal = _state.value.terminal,
             history = _state.value.history,
             discovery = _state.value.discovery.copy(scanning = false),
+            calibration = _state.value.calibration.copy(confirmSend = false),
         )
     }
 

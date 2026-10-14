@@ -16,7 +16,7 @@ Formato de LOGB (definido aqui, a implementar igual en el firmware):
     linea de texto  "LOGB end"
 El CRC es CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), barato en AVR.
 """
-import argparse, math, os, pty, random, select, selectors, socket, struct, sys, time, zlib
+import argparse, math, os, pty, random, re, select, selectors, socket, struct, sys, time, zlib
 from datetime import datetime, timedelta
 
 EPOCH = datetime(2000, 1, 1)
@@ -110,6 +110,8 @@ class Board:
         self.vars = dict(DEFAULTS)
         self.data = self._build(n_records, seed)
         self.count = n_records
+        # Los dos puntos (milesimas, cuenta) de cada canal, como en la EEPROM.
+        self.cal = {k: [(0, 0), (1000, 1000)] for k in ("V", "A0", "A1", "A2", "A3")}
 
     def _build(self, n, seed):
         rnd = random.Random(seed)
@@ -233,6 +235,54 @@ class Link:
 
     def line(self, s=""):
         self.send((s + "\r\n").encode())
+
+
+def read_scaled(texto, decimales):
+    """readScaled(): el numero tras el '=', en enteros por 10^decimales, truncando."""
+    m = re.match(r"\s*([-+]?)(\d*)(?:\.(\d*))?", texto)
+    signo, entera, frac = m.group(1), m.group(2) or "0", (m.group(3) or "")
+    frac = (frac + "0" * decimales)[:decimales]
+    v = int(entera + frac) if (entera + frac) else 0
+    return -v if signo == "-" else v
+
+
+def two_point_mv(p, count):
+    (v1, c1), (v2, c2) = p
+    if c1 == c2:
+        return count
+    d = c2 - c1
+    n = v1 * d + (v2 - v1) * (count - c1)
+    return int(n / d)                      # trunca hacia cero, como la division en C
+
+
+def calibration_command(c, board, args):
+    """Las respuestas de V, Ax y sus puntos de calibracion; None si no es uno de ellos."""
+    up = c.upper()
+    m = re.fullmatch(r"(V|A([0-3]))([12])?(=.*)?", up)
+    if not m or (m.group(3) is None and m.group(4) is not None):
+        return None
+    pin = m.group(2)
+    if pin is not None and not board.sig & (0x0020 << int(pin)):
+        return ["Pin disabled at compile"]
+    clave = "V" if pin is None else "A" + pin
+    leida = args.battery_raw if pin is None else args.analog_raw
+    if m.group(3) is None:
+        mv = two_point_mv(board.cal[clave], leida)
+        if pin is None:
+            return [f"{mv}mV ({leida})"]
+        return [f"A{pin}:{mv / 1000:.3f}V ({leida})"]
+    punto = int(m.group(3)) - 1
+    resto = c[len(m.group(1)) + 1:]
+    if resto.startswith("=") and len(resto) > 1:
+        cuenta = leida
+        if ">" in resto and PROTOCOL >= 8:
+            cuenta = read_scaled(resto.split(">", 1)[1], 0)
+            if cuenta < 0 or cuenta > 1023:
+                return ["Bad count"]
+        valor = read_scaled(resto[1:].split(">", 1)[0], 3)
+        board.cal[clave][punto] = (valor, cuenta)
+    v, n = board.cal[clave][punto]
+    return [f"{v}mV->{n}"]
 
 
 def handle(cmd, board, link, args, has_input=None, drain_input=None, readline_fn=None):
@@ -485,6 +535,16 @@ def handle(cmd, board, link, args, has_input=None, drain_input=None, readline_fn
         link.line("LOGB end")
         return
 
+    # Calibracion de la bateria (V, V1=, V2=) y de los pines (A0, A01=, A02=..), como
+    # setRefVoltage(). Con '>' (firmware 3.16, protocolo 8) el par se guarda tal cual; un
+    # protocolo anterior se para en el '>' y guarda la cuenta que lee AHORA, sin quejarse:
+    # el simulador lo imita para poder probar que la app detecta ese caso.
+    cal = calibration_command(c, board, args)
+    if cal is not None:
+        for linea in cal:
+            link.line(linea)
+        return
+
     if len(c) >= 3 and c[:3].upper() in DEFAULTS:
         key = c[:3].upper()
         if len(c) > 3 and c[3] == "=":
@@ -525,7 +585,7 @@ def serve(readline, write, args, board, has_input=None, drain_input=None):
 def main():
     # La declaracion va ANTES de cualquier uso del nombre en la funcion: Python rechaza un
     # `global` que aparezca despues de leer la variable, aunque sea para un valor por defecto.
-    global FLASH_BYTES
+    global FLASH_BYTES, PROTOCOL
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--tcp", type=int, metavar="PORT")
@@ -559,7 +619,12 @@ def main():
                     help="CONT: segundos entre lineas de estado (la placa, 10)")
     ap.add_argument("--battery-drain", metavar="MV_INI:MV_FIN",
                     help="hace que el canal Volt decaiga, p.ej. 1500:1400")
+    ap.add_argument("--protocol", type=int, default=PROTOCOL,
+                    help="protocolo que anuncia; con menos de 8 ignora la cuenta tras '>'")
+    ap.add_argument("--battery-raw", type=int, default=712, metavar="CUENTA")
+    ap.add_argument("--analog-raw", type=int, default=300, metavar="CUENTA")
     a = ap.parse_args()
+    PROTOCOL = a.protocol
 
     # La capacidad es global porque la usan INFO, el aviso de memoria y LOGH.
     FLASH_BYTES = a.flash_size

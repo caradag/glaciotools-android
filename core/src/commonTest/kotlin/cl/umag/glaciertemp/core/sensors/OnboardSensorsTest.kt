@@ -119,6 +119,21 @@ class TiltMeasuredTest {
         assertTrue(r.contains("(W)"), "y con su punto cardinal: $r")
     }
 
+    @Test fun `el informe de dos posiciones lleva valor y sesgo de cada angulo`() {
+        val r = SensorReport.tiltTwoPositions(-90.0, 0.4, -12.3, -0.25, 1.5, 0.1,
+                                              null, 5, "2026-10-14 10:00")
+        assertTrue(r.contains("bias removed"), r)
+        assertTrue(r.contains("270.0°") && r.contains("(W)"), "el yaw como rumbo: $r")
+        assertTrue(r.contains("Pitch: -12.3°, bias -0.25°"), r)
+        assertTrue(r.contains("Roll: 1.5°, bias +0.10°"), r)
+        assertTrue(r.contains("2026-10-14 10:00"), r)
+        assertTrue(!r.contains("Note"), "sin aviso no hay nota: $r")
+        val conAviso = SensorReport.tiltTwoPositions(null, null, 1.0, 4.0, 1.0, 0.0,
+                                                     "Repeat.", 5, "x")
+        assertTrue(conAviso.contains("Yaw (azimuth): —"), conAviso)
+        assertTrue(conAviso.endsWith("Note: Repeat."), conAviso)
+    }
+
     @Test fun `un angulo sin muestras se informa con raya`() {
         val r = SensorReport.tiltMeasured(null, null, 1.0, 1.0, 1.0, 1.0, 0, 5, "x")
         assertTrue(r.contains("mean —"), r)
