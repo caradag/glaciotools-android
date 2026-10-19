@@ -2,8 +2,10 @@ package cl.umag.glaciertemp.app
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,6 +17,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
@@ -44,6 +47,16 @@ internal fun CalibrationCard(vm: DeviceViewModel, s: UiState) {
     val proto = s.info?.protocol ?: 0
     var real by remember { mutableStateOf("") }
     val valor = parseNumber(real)
+    var crudo by remember { mutableStateOf("") }
+    val cuenta = crudo.trim().toIntOrNull()?.takeIf { it in 0..BoardCalibration.MAX_RAW }
+    // El valor real se queda: en una escalera se cambia en cada escalon, pero repetir una
+    // lectura al mismo valor no deberia obligar a reescribirlo.
+    val agregarManual = {
+        if (valor != null && cuenta != null) {
+            vm.addCalibrationPoint(valor, cuenta)
+            crudo = ""
+        }
+    }
     val unidad = canal.unit?.let { " $it" } ?: ""
 
     Card(Modifier.fillMaxWidth().testTag("cal-card")) {
@@ -53,6 +66,12 @@ internal fun CalibrationCard(vm: DeviceViewModel, s: UiState) {
                  "its ADC exactly as in a normal measurement. Repeat over the whole range; the " +
                  "line is fitted to all the points.",
                  style = MaterialTheme.typography.bodySmall)
+            Text("If the sensor could not be read while at each value, type the count in Raw " +
+                 "and press +. To make the log record counts instead of calibrated values, " +
+                 "send A01=0>0 and A02=0>0 (A11/A12 for A1...) before deploying: the logged " +
+                 "column then shows the count in thousandths (0.258 = 258).",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Channel", Modifier.width(72.dp), style = MaterialTheme.typography.bodySmall)
@@ -81,8 +100,25 @@ internal fun CalibrationCard(vm: DeviceViewModel, s: UiState) {
                     isError = real.isNotBlank() && valor == null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f).testTag("cal-real"))
+                OutlinedTextField(
+                    value = crudo, onValueChange = { crudo = it },
+                    label = { Text("Raw") },
+                    singleLine = true,
+                    isError = crudo.isNotBlank() && cuenta == null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number,
+                                                      imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { agregarManual() }),
+                    modifier = Modifier.weight(0.7f).testTag("cal-raw"))
+                IconButton(onClick = agregarManual,
+                           enabled = !s.busy && valor != null && cuenta != null,
+                           modifier = Modifier.size(40.dp).testTag("cal-add")) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add point")
+                }
                 Button(onClick = { valor?.let { vm.calibrationGetRaw(it) } },
                        enabled = !s.busy && valor != null,
+                       // Cuatro cosas en una fila de telefono: sin esto los campos quedan
+                       // demasiado estrechos para leer lo escrito.
+                       contentPadding = PaddingValues(horizontal = 12.dp),
                        modifier = Modifier.testTag("cal-get-raw")) { Text("Get raw") }
             }
 

@@ -90,11 +90,14 @@ object BoardCalibration {
 
     /**
      * La cuenta que contesta la placa: el numero entre parentesis al final de la linea.
-     * `V` da "1270mV (712)" y `A0` da "Depth [m]:0.534V (96)". Se toma el ULTIMO parentesis
-     * con solo cifras, porque el nombre del canal puede llevar los suyos.
+     * `V` da "1591 mV (249 )" y `A0` da "Depth [m] : 0.534 V (96 )": lightOStream pone un
+     * separador tras cada numero y cada texto salvo tras "(", asi que hay un espacio antes del
+     * ")" y no despues del "(". Se aceptan espacios a los dos lados para no depender de eso.
+     * Se toma el ULTIMO parentesis con solo cifras, porque el nombre del canal puede llevar
+     * los suyos.
      */
     fun rawFromReply(reply: String): Int? =
-        Regex("""\((-?\d+)\)""").findAll(reply).lastOrNull()?.groupValues?.get(1)?.toIntOrNull()
+        Regex("""\(\s*(-?\d+)\s*\)""").findAll(reply).lastOrNull()?.groupValues?.get(1)?.toIntOrNull()
 
     /** Uno de los dos puntos que se mandan a la placa, ya redondeado a lo que ella guarda. */
     data class BoardPoint(val real: Double, val raw: Int) {
@@ -147,12 +150,12 @@ object BoardCalibration {
         "${channel.setPrefix}$index=${Decimals.fixed(p.real, 3)}>${p.raw}"
 
     /**
-     * Si la placa guardo exactamente lo mandado. Contesta "2000mV->258" con lo que QUEDO en
+     * Si la placa guardo exactamente lo mandado. Contesta "2000 mV-> 258" con lo que QUEDO en
      * la EEPROM, que es lo que se compara: un firmware que entendiera mal el comando no da
      * error, da otro numero.
      */
     fun confirms(reply: String, p: BoardPoint): Boolean {
-        val m = Regex("""(-?\d+)mV->(-?\d+)""").find(reply) ?: return false
+        val m = Regex("""(-?\d+)\s*mV->\s*(-?\d+)""").find(reply) ?: return false
         return m.groupValues[1].toLongOrNull() == p.thousandths &&
                m.groupValues[2].toIntOrNull() == p.raw
     }

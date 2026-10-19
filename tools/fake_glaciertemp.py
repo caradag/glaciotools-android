@@ -268,9 +268,12 @@ def calibration_command(c, board, args):
     leida = args.battery_raw if pin is None else args.analog_raw
     if m.group(3) is None:
         mv = two_point_mv(board.cal[clave], leida)
+        # Con los espacios que pone lightOStream: un separador tras cada numero y cada
+        # texto, salvo tras "(" (y el del final de linea, que se quita). Comprobado
+        # compilando lightOStream.h en el PC: "1591 mV (249 )", "A0 : 0.534 V (96 )".
         if pin is None:
-            return [f"{mv}mV ({leida})"]
-        return [f"A{pin}:{mv / 1000:.3f}V ({leida})"]
+            return [f"{mv} mV ({leida} )"]
+        return [f"A{pin} : {mv / 1000:.3f} V ({leida} )"]
     punto = int(m.group(3)) - 1
     resto = c[len(m.group(1)) + 1:]
     if resto.startswith("=") and len(resto) > 1:
@@ -282,7 +285,7 @@ def calibration_command(c, board, args):
         valor = read_scaled(resto[1:].split(">", 1)[0], 3)
         board.cal[clave][punto] = (valor, cuenta)
     v, n = board.cal[clave][punto]
-    return [f"{v}mV->{n}"]
+    return [f"{v} mV-> {n}"]
 
 
 def handle(cmd, board, link, args, has_input=None, drain_input=None, readline_fn=None):

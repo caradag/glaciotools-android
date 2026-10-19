@@ -39,6 +39,18 @@ class BoardCalibrationTest {
         assertNull(BoardCalibration.fit(emptyList()))
     }
 
+    /**
+     * Las respuestas TAL COMO SALEN de la placa: generadas compilando lightOStream.h en el PC
+     * con los mismos `<<` que el firmware. La primera version de estas pruebas usaba
+     * "1270mV (712)", sin los espacios, y la app fallo con la placa real.
+     */
+    @Test fun `la cuenta se lee de la respuesta real de la placa`() {
+        assertEquals(249, BoardCalibration.rawFromReply("1591 mV (249 )\n"))
+        assertEquals(96, BoardCalibration.rawFromReply("Depth [m] : 0.534 V (96 )\n"))
+        assertEquals(3, BoardCalibration.rawFromReply("A0 : -0.012 V (3 )"))
+        assertEquals(12, BoardCalibration.rawFromReply("Flow (1) [m3/s] : 3.000 V (12 )"))
+    }
+
     @Test fun `la cuenta se lee del ultimo parentesis de la respuesta`() {
         assertEquals(712, BoardCalibration.rawFromReply("1270mV (712)\n"))
         assertEquals(96, BoardCalibration.rawFromReply("Depth [m]:0.534V (96)\n"))
@@ -90,6 +102,10 @@ class BoardCalibrationTest {
     @Test fun `solo confirma si la placa guardo exactamente lo mandado`() {
         val p = BoardPoint(2.0, 258)
         assertTrue(BoardCalibration.confirms("2000mV->258\n", p))
+        // Lo que contesta de verdad (lightOStream, ver arriba).
+        assertTrue(BoardCalibration.confirms("2000 mV-> 258\n", p))
+        assertFalse(BoardCalibration.confirms("2000 mV-> 259\n", p))
+        assertTrue(BoardCalibration.confirms("-500 mV-> 7", BoardPoint(-0.5, 7)))
         assertFalse(BoardCalibration.confirms("2000mV->259\n", p),
                     "un firmware viejo guarda la cuenta que lee, no la mandada")
         assertFalse(BoardCalibration.confirms("1999mV->258\n", p))

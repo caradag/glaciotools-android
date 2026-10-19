@@ -64,7 +64,7 @@ class CalibrationSimulatorTest {
             assertTrue(BoardCalibration.confirms(t.ask(BoardCalibration.command(a0, 2, p2)), p2))
             // Y la placa usa esa recta: 300 cuentas, interpolado entre los dos puntos.
             val esperado = (14 + (3002 - 14) * (300 - 4) / (760 - 4)) / 1000.0
-            assertTrue(t.ask("A0").contains(String.format(java.util.Locale.US, "%.3fV", esperado)))
+            assertTrue(t.ask("A0").contains(String.format(java.util.Locale.US, "%.3f V", esperado)))
         }
 
     @Test fun `una placa vieja guarda otra cuenta y la app lo detecta`() =
@@ -72,7 +72,7 @@ class CalibrationSimulatorTest {
             t.ask("")
             val p = BoardPoint(2.0, 258)
             val reply = t.ask(BoardCalibration.command(a0, 1, p))
-            assertTrue("->300" in reply, "el simulador debe imitar al firmware viejo: $reply")
+            assertTrue("-> 300" in reply, "el simulador debe imitar al firmware viejo: $reply")
             assertFalse(BoardCalibration.confirms(reply, p))
         }
 

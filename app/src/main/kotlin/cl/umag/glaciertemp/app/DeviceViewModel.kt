@@ -1150,15 +1150,33 @@ class DeviceViewModel : ViewModel() {
         val nombre = if (canal == BoardCalibration.VOLTAGE) null
             else reply.lineSequence().firstOrNull { BoardCalibration.rawFromReply(it) != null }
                 ?.substringBefore(':', "")?.trim()?.takeIf { it.isNotEmpty() && it != canal.key }
+        agregarPunto(canal, BoardCalibration.Point(real, raw), nombre)
+    }
+
+    /**
+     * Un punto con la cuenta escrita a mano: la que se leyo en el log de un sensor al que no
+     * se tenia acceso mientras estaba a cada valor conocido (una botella sumergida, por
+     * ejemplo). Para eso la placa tiene que haber grabado cuentas y no valores calibrados, lo
+     * que se consigue con A01=0>0 y A02=0>0: dos puntos con la misma cuenta hacen que
+     * twoPointMv devuelva la cuenta sin tocar.
+     */
+    fun addCalibrationPoint(real: Double, raw: Int) {
+        val cal = _state.value.calibration
+        val canal = BoardCalibration.channels(_state.value.info?.signature)
+            .firstOrNull { it.key == cal.channel } ?: return
+        agregarPunto(canal, BoardCalibration.Point(real, raw), null)
+    }
+
+    private fun agregarPunto(canal: BoardCalibration.Channel, p: BoardCalibration.Point,
+                             nombre: String?) {
         val actual = _state.value.calibration
         _state.value = _state.value.copy(
             calibration = actual.copy(
-                points = actual.points + (canal.key to
-                    (actual.points[canal.key].orEmpty() + BoardCalibration.Point(real, raw))),
+                points = actual.points + (canal.key to (actual.points[canal.key].orEmpty() + p)),
                 names = if (nombre != null) actual.names + (canal.key to nombre) else actual.names,
                 board = _state.value.info?.boardId ?: actual.board,
                 sendResult = null, sendOk = false),
-            status = "${canal.label}: $raw counts at $real")
+            status = "${canal.label}: ${p.raw} counts at ${p.real}")
     }
 
     fun removeCalibrationPoint(index: Int) {
