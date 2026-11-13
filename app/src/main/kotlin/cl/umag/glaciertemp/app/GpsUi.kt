@@ -358,7 +358,10 @@ private fun AveragingExplained(onClose: () -> Unit) {
                     "receiver warms up, and it climbs if you walk under a cliff.\n\n" +
                     "± est. is the uncertainty of the estimate itself: how far the answer is " +
                     "likely to be from the truth. This is the one that improves as you keep " +
-                    "measuring, and the one to watch when deciding whether to stop.")
+                    "measuring, and the one to watch when deciding whether to stop.\n\n" +
+                    "It is never smaller than what the scatter of the fixes supports. And if " +
+                    "a later visit disagrees with the earlier ones by more than their own " +
+                    "uncertainties allow, it grows to say so.")
 
                 Parrafo("What it does not account for",
                     "± est. assumes the leftover errors average out. Some do not: a systematic " +

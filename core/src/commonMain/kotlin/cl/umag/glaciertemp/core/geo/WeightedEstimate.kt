@@ -69,6 +69,15 @@ data class Axis(
  * El efecto practico: dejar el telefono una hora en el mismo sitio mejora mucho menos que
  * volver tres dias a medir veinte minutos, y los numeros de la pantalla lo reflejan en vez
  * de prometer una precision que no existe.
+ *
+ * **La precision declarada pesa, pero la incertidumbre se contrasta con lo que se ve.** Lo
+ * que el receptor dice de cada arreglo decide cuanto cuenta frente a los demas. Pero la
+ * incertidumbre de la estimacion no puede salir SOLO de ahi: un telefono que declara 1,5 m
+ * y dispersa 3 prometeria la mitad de lo que hay, y uno que no declara nada, lo que diera
+ * un metro supuesto. Por eso la varianza de cada sesion se escala por el chi-cuadrado
+ * reducido de sus residuos cuando pasa de uno, es decir, cuando los arreglos se dispersan
+ * mas de lo que sus precisiones declaradas admiten. Solo hacia arriba: la incertidumbre
+ * nunca baja de la declarada, ni de la que respalda la dispersion observada.
  */
 object WeightedEstimate {
 
@@ -122,8 +131,10 @@ object WeightedEstimate {
         val idx = values.indices.filter { guardar[it] }
         if (idx.isEmpty()) return null
 
-        // Sin ninguna precision declarada, todos los pesos iguales: lo que importa es la
-        // proporcion entre ellos, no su valor.
+        // Sin ninguna precision declarada, todos los pesos iguales: para la MEDIA lo que
+        // importa es la proporcion entre ellos, no su valor. Para la incertidumbre si importa
+        // el valor, y este 1 no es una medida: de ahi que mas abajo se contraste con la
+        // dispersion observada.
         val haySigmas = idx.any { sigmas[it] != null && sigmas[it]!! > 0 }
         fun sigmaDe(i: Int): Double =
             if (!haySigmas) 1.0
@@ -146,13 +157,33 @@ object WeightedEstimate {
                 return@mapNotNull Tramo(media, s * s, 1.0, 1)
             }
 
-            // Varianza de la media SI las muestras fueran independientes.
+            // Varianza de la media SI las muestras fueran independientes y la precision
+            // declarada fuera la de verdad.
             val varIndependiente = 1.0 / sw
-            // Y el castigo por no serlo.
             val residuos = orden.map { values[it] - media }
-            val rho = autocorrelacionUno(residuos).coerceIn(0.0, MAX_RHO)
-            val nEf = (n * (1 - rho) / (1 + rho)).coerceIn(1.0, n.toDouble())
-            Tramo(media, varIndependiente * (n / nEf), nEf, n)
+
+            // LO QUE EL RECEPTOR DECLARA FIJA LOS PESOS, PERO NO BASTA PARA LA INCERTIDUMBRE.
+            // 1/sw sale solo de las sigmas declaradas: si el telefono dice 1,5 m y los
+            // arreglos se dispersan 3 m, promete la mitad de lo que hay; y sin ninguna sigma
+            // declarada sale de un metro que nadie midio. El chi-cuadrado reducido dice
+            // cuantas veces mayor que lo declarado es la dispersion que se VE, y si pasa de
+            // uno la varianza se escala por el. Solo hacia arriba: un receptor pesimista se
+            // queda con lo que declara, que es lo prudente.
+            val chi2 = orden.indices.sumOf { w[it] * residuos[it] * residuos[it] } / (n - 1)
+            val escala = max(1.0, chi2)
+
+            // Y el castigo por no ser independientes. VALORES IDENTICOS NO SON n MEDIDAS: son
+            // una, repetida. Con varianza nula la autocorrelacion es 0/0 y lo que salia
+            // dependia del redondeo de la media: cero --independencia total, n_ef = n-- si la
+            // reproducia exacta, o el tope de rho si quedaba un residuo. 1200 arreglos
+            // congelados con 4 m declarados daban +-0,12 m o +-1,15 m, y no los 4 m de un solo
+            // arreglo, que es lo unico que se midio.
+            val congelada = orden.all { values[it] == values[orden[0]] }
+            val nEf = if (congelada) 1.0 else {
+                val rho = autocorrelacionUno(residuos).coerceIn(0.0, MAX_RHO)
+                (n * (1 - rho) / (1 + rho)).coerceIn(1.0, n.toDouble())
+            }
+            Tramo(media, varIndependiente * escala * (n / nEf), nEf, n)
         }
         if (tramos.isEmpty()) return null
 
@@ -160,7 +191,20 @@ object WeightedEstimate {
         val pesos = tramos.map { 1.0 / max(it.varianzaDeLaMedia, 1e-12) }
         val sumaPesos = pesos.sum()
         val estimacion = tramos.indices.sumOf { pesos[it] * tramos[it].media } / sumaPesos
-        val errorEstandar = sqrt(1.0 / sumaPesos)
+
+        // SI LAS SESIONES NO CONCUERDAN, LA INCERTIDUMBRE TIENE QUE DECIRLO. 1/sumaPesos da
+        // por hecho que cada sesion acierta dentro de su propia incertidumbre. Es justo lo
+        // que una segunda visita viene a poner a prueba: otra geometria de satelites y otra
+        // atmosfera dejan un sesgo propio de cada dia, que dentro de una sesion no se ve. Dos
+        // sesiones de +-0,17 m cuyas medias distan 6 m daban +-0,12 m. El mismo contraste que
+        // dentro de cada sesion, un piso mas arriba: el chi-cuadrado reducido de las medias
+        // contra la estimacion, y si pasa de uno escala la varianza. Con dos sesiones iguales
+        // de buenas que discrepan, la incertidumbre queda en la mitad de lo que distan.
+        val desacuerdo = if (tramos.size < 2) 1.0 else max(1.0,
+            tramos.indices.sumOf {
+                pesos[it] * (tramos[it].media - estimacion).let { d -> d * d }
+            } / (tramos.size - 1))
+        val errorEstandar = sqrt(desacuerdo / sumaPesos)
 
         // --- 4. La dispersion, para ensenarla ------------------------------------------
         val w = idx.map { 1.0 / (sigmaDe(it) * sigmaDe(it)) }
