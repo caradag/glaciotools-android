@@ -127,30 +127,82 @@ class StrikeDipTest {
         assertEquals(0.0, rumbo, 1e-6)
     }
 
+    // LAS MATRICES DE ESTAS PRUEBAS SALEN DE LA POSTURA DEL TELEFONO, no de la respuesta que
+    // se espera. Las columnas de la matriz de Android son los ejes del aparato vistos desde
+    // el mundo (este, norte, arriba): la primera es su borde derecho, la segunda su borde
+    // superior y la tercera lo que sale de la pantalla. Las dos pruebas siguientes tenian la
+    // premisa al reves --daban por hecho que la normal se inclina hacia arriba de la
+    // pendiente-- y por eso pasaban con el rumbo girado 180 grados.
+
     @Test fun `una superficie que cae al este da rumbo norte`() {
         // Convenio de skyline.m: rumbo 0 y buzamiento 45 es caer 45 grados hacia el ESTE.
-        // La normal se inclina hacia arriba de la pendiente, o sea hacia el oeste.
+        // El telefono parte tumbado mirando al norte y se le BAJA el borde derecho, que es el
+        // del este: su eje X pasa a (cos d, 0, -sin d) y la pantalla queda mirando hacia
+        // arriba y hacia el este, (sin d, 0, cos d).
         val d = Math.toRadians(45.0)
-        // Normal inclinada hacia el OESTE (arriba de la pendiente): tercera columna
-        // (E, N, U) = (-sin d, 0, cos d).
         val R = matriz(
-            Math.cos(d), 0.0, -Math.sin(d),
+            Math.cos(d), 0.0, Math.sin(d),
             0.0, 1.0, 0.0,
-            Math.sin(d), 0.0, Math.cos(d))
+            -Math.sin(d), 0.0, Math.cos(d))
         val (rumbo, buz) = Shielding.strikeDipFrom(R)
         assertEquals(45.0, buz, 0.5)
         assertEquals(0.0, Angles.wrap(rumbo), 1.0)
     }
 
     @Test fun `una superficie que cae al norte da rumbo oeste`() {
-        // Girando sobre el eje este-oeste la pendiente cae al norte, y el rumbo es 270.
+        // Ahora se le baja el borde superior, que es el del norte: su eje Y pasa a
+        // (0, cos d, -sin d) y la pantalla mira hacia arriba y hacia el norte, (0, sin d, cos d).
         val d = Math.toRadians(45.0)
         val R = matriz(1.0, 0.0, 0.0,
-                       0.0, Math.cos(d), -Math.sin(d),
-                       0.0, Math.sin(d), Math.cos(d))
+                       0.0, Math.cos(d), Math.sin(d),
+                       0.0, -Math.sin(d), Math.cos(d))
         val (rumbo, buz) = Shielding.strikeDipFrom(R)
         assertEquals(45.0, buz, 0.5)
         assertEquals(270.0, rumbo, 1.0)
+    }
+
+    /**
+     * La matriz que entregaria Android con el telefono apoyado, pantalla arriba, en un plano
+     * que cae [buz] grados hacia el acimut [haciaDonde], girado [giro] grados sobre el plano.
+     *
+     * Se arma desde la GEOMETRIA del plano y no desde una rotacion, para que no dependa de
+     * ningun convenio de signos: la normal hacia arriba de z = -(lo que se avanza cuesta
+     * abajo)·tan(buz) es (sin buz·sin A, sin buz·cos A, cos buz).
+     */
+    private fun apoyadoEn(haciaDonde: Double, buz: Double, giro: Double): FloatArray {
+        val a = Math.toRadians(haciaDonde); val d = Math.toRadians(buz); val g = Math.toRadians(giro)
+        val normal = doubleArrayOf(Math.sin(d) * Math.sin(a), Math.sin(d) * Math.cos(a), Math.cos(d))
+        // Dos direcciones sobre el plano: cuesta abajo, y la de rumbo (horizontal).
+        val abajo = doubleArrayOf(Math.cos(d) * Math.sin(a), Math.cos(d) * Math.cos(a), -Math.sin(d))
+        val deRumbo = doubleArrayOf(-Math.cos(a), Math.sin(a), 0.0)
+        // Los bordes del telefono, girados sobre el plano; (x, y, normal) es una terna derecha.
+        val x = DoubleArray(3) { Math.cos(g) * abajo[it] + Math.sin(g) * deRumbo[it] }
+        val y = DoubleArray(3) { -Math.sin(g) * abajo[it] + Math.cos(g) * deRumbo[it] }
+        return matriz(x[0], y[0], normal[0],
+                      x[1], y[1], normal[1],
+                      x[2], y[2], normal[2])
+    }
+
+    @Test fun `el rumbo sale de hacia donde cae el plano y no de como se apoye el telefono`() {
+        for (haciaDonde in 0 until 360 step 30) {
+            for (giro in listOf(0.0, 75.0, 180.0, 290.0)) {
+                val (rumbo, buz) = Shielding.strikeDipFrom(apoyadoEn(haciaDonde.toDouble(), 30.0, giro))
+                assertEquals(30.0, buz, 0.01, "buzamiento con el plano cayendo hacia $haciaDonde")
+                // El buzamiento cae a la derecha del rumbo: rumbo = hacia donde cae - 90.
+                assertEquals(0.0, Angles.wrap(rumbo - (haciaDonde - 90.0)), 0.01,
+                             "rumbo con el plano cayendo hacia $haciaDonde y giro $giro: $rumbo")
+            }
+        }
+    }
+
+    @Test fun `medida con el telefono la superficie tapa el lado de la ladera`() {
+        // Lo que de verdad importa del signo. Una roca que cae 30 grados al este tiene la
+        // ladera al OESTE: su propio horizonte vale el buzamiento hacia el oeste y nada hacia
+        // el este, que es el lado abierto. Con el rumbo girado 180 grados salia al reves.
+        val (rumbo, buz) = Shielding.strikeDipFrom(apoyadoEn(90.0, 30.0, 0.0))
+        val h = Shielding.dippingHorizon(rumbo, buz)
+        assertEquals(30.0, Math.toDegrees(h[269]), 0.01, "hacia el oeste, la ladera")
+        assertEquals(0.0, Math.toDegrees(h[89]), 1e-9, "hacia el este, el lado abierto")
     }
 
     @Test fun `un buzamiento despreciable no inventa un rumbo`() {

@@ -147,10 +147,20 @@ object Shielding {
     /**
      * Rumbo y buzamiento de la superficie sobre la que se apoya el telefono.
      *
-     * La normal de la superficie es el eje +Z del aparato, o sea la tercera columna de la
-     * matriz de rotacion. El buzamiento es lo que esa normal se aparta de la vertical, y la
-     * direccion de maxima pendiente es la de la normal proyectada, al reves: la normal se
-     * inclina hacia ARRIBA de la pendiente.
+     * La normal de la superficie es el eje +Z del aparato --el que sale de la pantalla--, o
+     * sea la tercera columna de la matriz de rotacion: sus componentes este, norte y arriba.
+     * El buzamiento es lo que esa normal se aparta de la vertical.
+     *
+     * LA NORMAL SE INCLINA HACIA ABAJO DE LA PENDIENTE, no hacia arriba. Un plano que cae al
+     * este es z = -x·tan(buz), y su normal hacia arriba es (sin buz, 0, cos buz): la parte
+     * horizontal apunta al este, que es hacia donde cae. Es lo que hace un poste clavado
+     * perpendicular a una ladera: se inclina hacia el valle. La direccion de buzamiento es
+     * por tanto la de la normal proyectada, tal cual.
+     *
+     * Con el signo contrario el rumbo salia girado 180 grados, y el horizonte propio de la
+     * superficie tapaba el lado ABIERTO en vez del de la ladera. Con la superficie sola no se
+     * nota, porque el factor de un plano inclinado no depende de hacia donde mire; si al
+     * combinarlo con el relieve, y en el rumbo que queda anotado en la muestra.
      */
     fun strikeDipFrom(R: FloatArray): Pair<Double, Double> {
         val e = R[2].toDouble()
@@ -159,7 +169,7 @@ object Shielding {
         val dip = grados(kotlin.math.acos(u.coerceIn(-1.0, 1.0)))
         // Sin pendiente apreciable la direccion no significa nada; se devuelve 0 y no ruido.
         if (dip < 0.5) return 0.0 to 0.0
-        val direccionDeBuzamiento = Compass.normalize(grados(kotlin.math.atan2(-e, -n)))
+        val direccionDeBuzamiento = Compass.normalize(grados(kotlin.math.atan2(e, n)))
         // El buzamiento cae a la derecha del rumbo: rumbo = direccion de buzamiento - 90.
         return Compass.normalize(direccionDeBuzamiento - 90.0) to dip.coerceIn(0.0, 90.0)
     }
