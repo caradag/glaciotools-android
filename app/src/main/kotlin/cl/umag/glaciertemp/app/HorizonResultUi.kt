@@ -322,6 +322,10 @@ private fun Apantallamiento(profile: HorizonProfile) {
     val s = parseNumber(rumbo) ?: 0.0
     val d = parseNumber(buzamiento) ?: 0.0
     val r = remember(profile, s, d) { Shielding.compute(profile, s, d) }
+    // Y EL FILTRO DE LOS CAMPOS TIENE QUE DEJAR PASAR ESA COMA. Si la quita, "12,5" llega a
+    // parseNumber como "125" y el factor se calcula con diez veces el angulo, igual de
+    // callado que antes.
+    val soloNumero = { t: String -> t.filter { c -> c.isDigit() || c == '.' || c == ',' } }
 
     Text("Topographic shielding", style = MaterialTheme.typography.titleMedium)
     Text("For cosmogenic nuclide exposure dating. The fraction of the production of an " +
@@ -333,14 +337,14 @@ private fun Apantallamiento(profile: HorizonProfile) {
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
-            value = rumbo, onValueChange = { rumbo = it.filter { c -> c.isDigit() || c == '.' } },
+            value = rumbo, onValueChange = { rumbo = soloNumero(it) },
             label = { Text("Strike °") }, singleLine = true,
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
             modifier = Modifier.weight(1f).testTag("hz-strike"))
         OutlinedTextField(
             value = buzamiento,
-            onValueChange = { buzamiento = it.filter { c -> c.isDigit() || c == '.' } },
+            onValueChange = { buzamiento = soloNumero(it) },
             label = { Text("Dip °") }, singleLine = true,
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
