@@ -491,7 +491,9 @@ class DeviceViewModel : ViewModel() {
         // El reloj se lee al conectar, junto con la configuracion: un desfase deja mal cada
         // marca de tiempo del log y no se nota hasta que alguien compara los datos meses
         // despues.
-        val (boardNow, llegada) = leerRelojPlaca(s, quietMs = 600)
+        // El huso se pasa a mano: el estado todavia no tiene la configuracion recien leida.
+        val (boardNow, llegada) = leerRelojPlaca(s, quietMs = 600,
+                                                 huso = vars["TZN"]?.trim()?.toIntOrNull())
         val drift = boardNow?.let { BoardClock.driftAtArrival(it, llegada) }
         // Un log que esta app no sabe leer se dice al conectar, no al final de una descarga.
         val ilegible = if (LogFormat.isSupported(info.signature) || info.recordCount == 0L) null
@@ -769,13 +771,20 @@ class DeviceViewModel : ViewModel() {
      * Pide TIME y devuelve la hora de la placa junto con la del telefono AL LLEGAR la
      * respuesta. Ver [BoardClock.driftAtArrival]: la hora de acabar el intercambio lleva
      * dentro el silencio que lo cierra, y eso se leia como desfase.
+     *
+     * LA DEL TELEFONO VA EN EL HUSO DE LA PLACA, no en el suyo: con husos distintos, que la
+     * app admite ("Time only"), la diferencia entera salia como desfase aqui, en el aviso al
+     * conectar y en los metadatos de la descarga. Ver [ClockSync.phoneTimeAtBoard]. El huso
+     * es el que la placa imprime junto a la hora; [huso] --el TZN de la configuracion-- solo
+     * se usa si la linea no lo trae.
      */
-    private fun leerRelojPlaca(s: DeviceSession, quietMs: Int):
+    private fun leerRelojPlaca(s: DeviceSession, quietMs: Int, huso: Int? = boardTimeZone()):
             Pair<java.time.LocalDateTime?, java.time.LocalDateTime> {
-        var llegada: java.time.LocalDateTime? = null
+        var llegada: java.time.ZonedDateTime? = null
         val reply = String(s.exchange(Protocol.TIME, quietMs = quietMs,
-            onChunk = { if (llegada == null) llegada = java.time.LocalDateTime.now() }))
-        return BoardClock.parse(reply) to (llegada ?: java.time.LocalDateTime.now())
+            onChunk = { if (llegada == null) llegada = java.time.ZonedDateTime.now() }))
+        return BoardClock.parse(reply) to ClockSync.phoneTimeAtBoard(
+            llegada ?: java.time.ZonedDateTime.now(), BoardClock.offsetHours(reply) ?: huso)
     }
 
     fun checkClock() = launchGuarded("Reading the board clock...") {
@@ -850,6 +859,21 @@ class DeviceViewModel : ViewModel() {
             .withZoneSameInstant(java.time.ZoneOffset.ofHours(effectiveOffset))
             .toLocalDateTime()
         appendTerminal(reply, fromBoard = true)
+        // SIN LA LINEA "Time:" NO HAY RELOJ PUESTO. Se anunciaba "Clock set" con la hora que
+        // se QUISO poner aunque la placa no hubiera contestado --dormida, o con el enlace
+        // caido--, y tambien cuando contestaba "Wrong format" y dejaba su reloj como estaba.
+        when (BoardClock.setResult(reply)) {
+            BoardClock.SetResult.UNCONFIRMED -> {
+                if (reply.isBlank()) reportarSilencio("the TIME command")
+                else error("The board did not confirm the new time, so its clock may not " +
+                           "have been set. Press Check offset to see what it has.")
+                return@launchGuarded
+            }
+            BoardClock.SetResult.REJECTED ->
+                error("The board rejected the new time and kept its own clock:\n\n" +
+                      reply.trim())
+            BoardClock.SetResult.SET -> Unit
+        }
         val shown = java.time.format.DateTimeFormatter
             .ofPattern("yyyy-MM-dd HH:mm:ss").format(now)
         val tz = if (offsetHours >= 0) "UTC+$offsetHours" else "UTC$offsetHours"

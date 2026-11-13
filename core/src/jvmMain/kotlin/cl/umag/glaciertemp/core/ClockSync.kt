@@ -38,6 +38,24 @@ object ClockSync {
         if (mode == ClockSyncMode.TIME_ONLY) (boardTz ?: phoneTz) else phoneTz
 
     /**
+     * La hora del telefono en un instante, expresada en el huso de la PLACA: la unica con la
+     * que se puede comparar la lectura de su reloj.
+     *
+     * Es la otra mitad de la misma trampa. La placa cuenta en su propio huso, y la app admite
+     * a proposito que no sea el del telefono --para eso existe TIME_ONLY--. Comparar su hora
+     * con la hora LOCAL del telefono convierte la diferencia de husos en desfase: una placa
+     * en UTC+0 y en hora, vista desde un telefono en UTC-3, salia "3 hours ahead", y esas
+     * tres horas se grababan en los metadatos de la descarga como deriva del reloj, que es
+     * con lo que despues se corrigen las marcas de tiempo.
+     *
+     * [boardTz] null --no se sabe el huso de la placa-- deja la hora local del telefono, que
+     * es lo que se hacia siempre.
+     */
+    fun phoneTimeAtBoard(now: ZonedDateTime, boardTz: Int?): LocalDateTime =
+        if (boardTz == null || boardTz !in -18..18) now.toLocalDateTime()
+        else now.withZoneSameInstant(ZoneOffset.ofHours(boardTz)).toLocalDateTime()
+
+    /**
      * Cuanto falta, en milisegundos, para el proximo segundo entero del reloj del telefono.
      *
      * La placa solo guarda segundos enteros. Enviar la hora truncada en un instante

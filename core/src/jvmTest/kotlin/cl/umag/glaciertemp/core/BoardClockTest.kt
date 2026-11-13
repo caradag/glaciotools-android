@@ -35,6 +35,46 @@ class BoardClockTest {
     }
 
     @Test
+    fun `lee el huso que la placa imprime junto a la hora`() {
+        // displayDateVec(): " (UTC" << '+' << timeZone << ')'. El '+' fuerza el signo en los
+        // positivos y en el cero; los negativos salen con su menos.
+        assertEquals(-3, BoardClock.offsetHours("Time: 2026-09-04 18:30:00 (UTC-3)"))
+        assertEquals(0, BoardClock.offsetHours("Time:2026-9-4 8:05:03 (UTC+0)"))
+        assertEquals(5, BoardClock.offsetHours("Time: 2026-09-04 18:30:00 (UTC+5)\r\n"))
+        // Al ajustar llegan dos lineas con huso; vale el de la hora, que es la que se lee.
+        assertEquals(-3, BoardClock.offsetHours(
+            "Next Wakeup:2026-09-28 20:30:00 (UTC-3)\r\nTime:2026-09-28 20:15:07 (UTC-3)\r\n"))
+        // Sin huso en la linea de la hora no se inventa uno, ni se toma el de otra linea.
+        assertNull(BoardClock.offsetHours("Time: 2026-09-04 18:30:00"))
+        assertNull(BoardClock.offsetHours("Next Wakeup:2026-09-28 20:30:00 (UTC-3)"))
+        assertNull(BoardClock.offsetHours(""))
+    }
+
+    @Test
+    fun `una orden de ajuste sin la linea de la hora no es un reloj puesto`() {
+        // Placa dormida o enlace caido: no llega nada. Decir "Clock set" ahi era afirmar algo
+        // que no se sabe, con la hora que se QUISO poner en la tarjeta del reloj.
+        assertEquals(BoardClock.SetResult.UNCONFIRMED, BoardClock.setResult(""))
+        // Respuesta cortada antes de la hora: tampoco hay constancia.
+        assertEquals(BoardClock.SetResult.UNCONFIRMED,
+                     BoardClock.setResult("Next Wakeup:2026-09-28 20:30:00 (UTC-3)\r\n"))
+    }
+
+    @Test
+    fun `una hora rechazada por la placa no es un reloj puesto`() {
+        // manualClockAdjust() protesta y el despachador imprime igual el reloj, SIN tocar:
+        // la linea "Time:" esta, pero trae la hora de antes.
+        val reply = "Wrong format:TIME=2026-11-13 12:3\r\nTime:2026-11-13 09:00:41 (UTC-3)\r\n"
+        assertEquals(BoardClock.SetResult.REJECTED, BoardClock.setResult(reply))
+    }
+
+    @Test
+    fun `la respuesta normal a un ajuste es un reloj puesto`() {
+        val reply = "Next Wakeup:2026-09-28 20:30:00 (UTC-3)\r\nTime:2026-09-28 20:15:07 (UTC-3)\r\n"
+        assertEquals(BoardClock.SetResult.SET, BoardClock.setResult(reply))
+    }
+
+    @Test
     fun `una placa en hora no sale atrasada por medir tarde o truncar`() {
         val b = LocalDateTime.of(2026, 9, 28, 20, 15, 7)
         // La placa leyo 20:15:07 en algun punto de ese segundo; la respuesta llega al

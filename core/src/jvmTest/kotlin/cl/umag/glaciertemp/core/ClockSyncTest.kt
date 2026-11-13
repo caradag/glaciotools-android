@@ -58,6 +58,35 @@ class ClockSyncTest {
     }
 
     @Test
+    fun `una placa en hora y en otro huso no sale desfasada`() {
+        // La otra mitad de la misma trampa. Placa en UTC+0, en hora: a las 15:00:00 del
+        // telefono (UTC-3) su reloj dice 18:00:00. Comparada con la hora LOCAL del telefono
+        // salia "3 hours ahead", y esas tres horas iban a los metadatos de la descarga.
+        val placa = java.time.LocalDateTime.of(2026, 3, 14, 18, 0, 0)
+        assertEquals(0L, BoardClock.driftAtArrival(placa, ClockSync.phoneTimeAtBoard(ahora, 0)))
+        // Lo que se media antes, para que se vea de donde salian las tres horas.
+        assertEquals(3 * 3600L, BoardClock.driftAtArrival(placa, ahora.toLocalDateTime()))
+    }
+
+    @Test
+    fun `el desfase verdadero se conserva al comparar en el huso de la placa`() {
+        // Placa en UTC+0 y 7 s adelantada: lo que hay que ver son 7 s, no 3 h y 7 s.
+        val placa = java.time.LocalDateTime.of(2026, 3, 14, 18, 0, 7)
+        assertEquals(7L, BoardClock.driftAtArrival(placa, ClockSync.phoneTimeAtBoard(ahora, 0)))
+        // Con el mismo huso no cambia nada respecto de comparar con la hora local.
+        val local = java.time.LocalDateTime.of(2026, 3, 14, 15, 0, 7)
+        assertEquals(7L, BoardClock.driftAtArrival(local, ClockSync.phoneTimeAtBoard(ahora, -3)))
+    }
+
+    @Test
+    fun `sin huso de placa se compara con la hora local del telefono`() {
+        // Es lo que se hacia siempre, y lo unico posible cuando no se sabe el huso.
+        assertEquals(ahora.toLocalDateTime(), ClockSync.phoneTimeAtBoard(ahora, null))
+        // Un huso imposible se trata igual que uno desconocido, en vez de lanzar.
+        assertEquals(ahora.toLocalDateTime(), ClockSync.phoneTimeAtBoard(ahora, 99))
+    }
+
+    @Test
     fun `la marca no lleva fracciones de segundo`() {
         val conNanos = ahora.withNano(123_456_789)
         assertEquals(0, ClockSync.stampFor(conNanos, ClockSyncMode.BOTH, 0, -3).nano)

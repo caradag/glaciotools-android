@@ -80,6 +80,45 @@ object BoardClock {
         }.getOrNull()
     }
 
+    private val ZONE = Regex(LABELLED.pattern + """\s*\(UTC\s*([+-]?\d{1,2})\s*\)""")
+
+    /**
+     * El huso que la placa declara en la misma linea de la hora: "Time: ... (UTC-3)".
+     *
+     * Viaja CON la lectura, asi que es el que vale para interpretarla. El de la configuracion
+     * (TZN) puede no haberse leido, o haber cambiado desde el terminal sin que la app se
+     * entere. Null si la linea no lo trae.
+     */
+    fun offsetHours(reply: String): Int? =
+        ZONE.find(reply)?.groupValues?.last()?.removePrefix("+")?.toIntOrNull()
+            ?.takeIf { it in -18..18 }
+
+    /** Como termino un `TIME=...`, segun lo que contesto la placa. */
+    enum class SetResult {
+        /** La placa contesto con su reloj y sin protestar: la hora quedo puesta. */
+        SET,
+        /** La placa contesto "Wrong format": NO cambio el reloj, y la hora que ensena es la de antes. */
+        REJECTED,
+        /** No hay linea "Time:" en la respuesta: placa dormida, enlace caido o respuesta cortada. */
+        UNCONFIRMED,
+    }
+
+    /**
+     * Que paso con un ajuste de reloj.
+     *
+     * UNA ORDEN ENVIADA NO ES UN RELOJ PUESTO. Desde el firmware 3.0 la placa cierra SIEMPRE el
+     * comando TIME con la linea "Time:" (printRTCTime), tambien cuando rechaza la hora: ahi
+     * antepone "Wrong format:" y ensena el reloj sin tocar. Sin esa linea no hay constancia
+     * de que la orden llegara --la consola se cierra a los dos minutos sin comandos y la
+     * placa duerme--, y con "Wrong format" hay constancia de que no se aplico. En los dos
+     * casos decir "Clock set" es afirmar algo que no se sabe o que es falso.
+     */
+    fun setResult(reply: String): SetResult = when {
+        parse(reply) == null -> SetResult.UNCONFIRMED
+        reply.contains("Wrong format", ignoreCase = true) -> SetResult.REJECTED
+        else -> SetResult.SET
+    }
+
     /**
      * El desfase en la unidad que le toca. Stats.formatSpan no sirve aqui: esta pensado para
      * despliegues y por debajo de un minuto devuelve "0 min", que para un reloj es
